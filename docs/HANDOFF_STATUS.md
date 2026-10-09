@@ -65,3 +65,14 @@ Not authorized: importing/activating the patched WF1 (`95a5868`), any change to 
 * Corrected the misleading "Dropbox request failed" Action text on 7 items (verified cause: WF1 expression bug).
 * Isolated replay (real n8n 2.39.8, production copies, mocked externals): see `REPLAY_RESULTS.md`.
   12 defects fixed on this branch, **not deployed**. WF1 stays inactive pending owner approval.
+
+## 2026-10-09 19:43–20:05 UTC — release `452da98` deployed, WF1 active (owner-authorized)
+* Backup before deploy: `/root/waset-predeploy-452da98-20261009T194231Z/` (helper, Bondok waset_ops, DB).
+* 29 files verified against the manifest; Bondok `ready`; one-time ownership backfill applied (40 items).
+* WF1 imported identical to the release (version `f1be304a…`) and activated.
+* First run (52214) vs fresh baseline: 0 cleared values, 0 group moves, 20 items all never checked before,
+  0 duplicate subitems, 0 repeated editor instructions (10 queued jobs recognised as already sent),
+  0 reservations/attempts/publications, 2 new caption drafts pending owner approval (0 approvals executed).
+* Second run (52227): 20 more items (2 revisited while waiting for a measurement), 3 first-time editor
+  subitems, 0 clear writes. WF2 every minute and WF3 (20:05) successful; no open findings; errors.log empty.
+* Post-release review items: see `REPLAY_RESULTS.md` → Follow-up.
