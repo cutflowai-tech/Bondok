@@ -1612,7 +1612,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const e=$json.error||{};const msg=String(e.message||e.description||$json.error_summary||'Dropbox request failed');\nconst code=String(e.httpCode||e.status||'');\nconst infra=/^5|^429/.test(code)||/ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|timeout|socket hang up/i.test(msg);\nreturn [{json:{error:msg.slice(0,400),errorKind:infra?'infra':'config'}}];"
+    "jsCode": "const raw=$json.error;const e=(raw&&typeof raw==='object')?raw:{};\n// n8n error outputs may carry the message as a plain string; keep it.\nconst msg=String((typeof raw==='string'&&raw)||e.message||e.description||$json.error_summary||$json.message||'Dropbox request failed');\nconst code=String(e.httpCode||e.status||(msg.match(/\\b([45]\\d\\d)\\b/)||[])[1]||'');\nconst infra=/^5|^429/.test(code)||/ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|timeout|socket hang up/i.test(msg);\nreturn [{json:{error:msg.slice(0,400),errorKind:infra?'infra':'config'}}];"
    },
    "id": "dc798626-db84-58c5-8afa-d91119d55ec9",
    "position": [

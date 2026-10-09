@@ -30,11 +30,13 @@ Granted: read-only inspection, local development, isolated tests, repository pus
 Not authorized: importing/activating the patched WF1 (`95a5868`), any change to the Instagram token, approving captions on the owner's behalf.
 
 ## Incident 2026-10-09 18:14 UTC — legacy dates cleared by first WF1 run
-* Effect: Post Date + Post Time emptied on 12 board items (no other column; captions, Topaz, Posted, publication fields unchanged; 0 reservations/attempts created).
+* Effect (corrected after a full-column audit): run 52060 emptied Post Date + Post Time on 12 items and Publish video links on 14 items; runs 52060 and 52081 together emptied v1 metadata — System update (40 items), Video measurements (30), Processed format (30), Version Check (2). Action required was overwritten on 40 items (v2-owned display; 4 show a misleading "Dropbox request failed"). Captions, Format, Topaz, Notes, Story variety, Posted, post links, IG ids, publication fields unchanged; 0 reservations/attempts/publications.
+* Restored so far: the 12 Post Date/Time values (owner-approved). Remaining restore list (from the read-only pre-v2 board snapshot) kept locally: `restore_technical.json`.
 * Cause: bootstrap recorded v1/human date values as the confirmed projection; for items without a reservation the projection then cleared them as if they were system output.
 * Containment: WF1 deactivated; no pending display jobs; 10 of 12 future values retained in `ops_items.requested_at`; all 12 originals in `.local-snapshots/…/restore_legacy_dates.json` (local only).
-* Fix: projection never clears publish/date/link values it did not write (`PRESERVE_UNLESS_OURS`, tracked as `_ours`). Tests + replay of the 12 items: 0 date/time writes.
-* Pending owner approval: deploy fix to helper + Bondok, restore the 12 values on the board, re-activate WF1.
+* Fix 1 (`1ab5e46`, deployed): never clear dates/links not written by v2 — insufficient (other v1 columns still cleared).
+* Fix 2 (this commit): the projection never clears ANY board value it did not write; WF1 keeps string-form Dropbox errors. Replay of the real first run (40 items, pre-v2 snapshot): 0 clears.
+* WF1 stopped again at 18:26 UTC. Pending owner approval: deploy fix 2, restore the technical values, re-activate WF1.
 
 ## Known blockers / open items
 1. Outage repaired by Change Set A. Rollback record on the server: `/root/waset-changeset-A-20261009T173954Z/` (ACL before/after, stat, DB sha256).

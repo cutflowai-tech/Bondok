@@ -225,3 +225,18 @@ class EditorTaskReuse(unittest.TestCase):
         out = run_js(self.js(), {'data': {'items': [{'id': '99', 'subitems': []}]}}, {'Each Editor Job': job})
         self.assertIsNone(out[0]['json']['taskId'])
         self.assertIn('create_subitem', out[0]['json']['gql']['query'])
+
+
+@unittest.skipUnless(NODE, 'node not installed')
+class DropboxErrorText(unittest.TestCase):
+    """Found at cutover: string error outputs were replaced by a generic message."""
+
+    def js(self):
+        return next(n for n in WF['qI1N5VNgpRjnZAKH']['nodes'] if n['name'] == 'Dropbox Problem')['parameters']['jsCode']
+
+    def test_string_error_kept_and_classified(self):
+        out = run_js(self.js(), {'error': '409 - {"error_summary":"shared_link_already_exists/.."}'})[0]['json']
+        self.assertIn('shared_link_already_exists', out['error'])
+        self.assertEqual(out['errorKind'], 'config')
+        out = run_js(self.js(), {'error': 'Request failed with status code 503'})[0]['json']
+        self.assertEqual(out['errorKind'], 'infra')

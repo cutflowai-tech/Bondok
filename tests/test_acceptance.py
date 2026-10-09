@@ -673,12 +673,16 @@ class CutoverPreservesLegacyBoardValues(OpsCase):
 
     def test_legacy_post_date_kept_when_item_blocks(self):
         legacy = {'post_date': ('2026-10-17', {'date': '2026-10-17'}), 'post_time': ('11:00 AM', {'hour': 11, 'minute': 0}),
-                  'video': ('x', {'url': 'https://www.dropbox.com/s/old/v.mp4'})}
+                  'video': ('x', {'url': 'https://www.dropbox.com/s/old/v.mp4'}),
+                  'system': ('v1 note', {'text': 'v1 note'}), 'measurements': ('1080x1920 | 90 MB', None),
+                  'processed': ('Story', None), 'version_check': ('v.mp4 | rev', None)}
         self.observe(monday_item('500', fmt='Story', status='Needs Review', extra=legacy))
         self.select('500')
         self.duration('500', 63.0)           # item becomes blocked; no reservation
         jobs = self.ops.outbox_take(['monday'], 't', 50)
         cols = {k for j in jobs for k in j['payload']['columns']}
+        empty = [(k, v) for j in jobs for k, v in j['payload']['columns'].items() if v in ({}, '', None, {'text': ''})]
+        self.assertEqual(empty, [])            # nothing the projection did not write is ever cleared
         for key in ('date4', 'hour_mm7xy9cf', 'date_mm7y8s9t', 'link_mm7ywc0w'):
             self.assertNotIn(key, cols)
         self.assertIn('status', cols)          # display status still updates

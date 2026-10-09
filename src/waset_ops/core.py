@@ -28,10 +28,9 @@ ACTIVE_ATTEMPT = ('claimed', 'container_created', 'committed', 'outcome_unknown'
 PRE_COMMIT = ('claimed', 'container_created')
 
 OUTBOX_MAX_ATTEMPTS = 6
-# Board values that may have been written by v1 or by people. The projection may
-# set them, but only clears values it wrote itself (tracked as '_ours').
-PRESERVE_UNLESS_OURS = ('publish_at', 'post_date', 'post_time', 'published_at', 'ig_media', 'post_link',
-                        'video', 'dropbox', 'folder')
+# Board values may have been written by v1 or by people. The projection may set
+# any system column, but only clears values it wrote itself (tracked as '_ours').
+# Found at cutover: clearing v1 dates, delivery links and metadata destroyed data.
 PROPOSAL_TTL = 30 * 60
 RUN_TTL = {'wf1': 900, 'wf3': 600, 'wf2': 300}
 
@@ -365,8 +364,8 @@ class CoreMixin:
             if k in force_keys or base.get(k, '__unset__') != cv:
                 if k not in confirmed and k not in pending and cv is None and k not in force_keys:
                     continue  # never projected and empty: nothing to clear
-                if cv is None and k in PRESERVE_UNLESS_OURS and k not in ours:
-                    continue  # never clear a time/link we did not write (v1 or human values)
+                if cv is None and k not in ours:
+                    continue  # never clear a board value the projection did not write (v1 or human data)
                 changes[k] = v
         group_change = group if base.get('_group') != group else None
         if not changes and not group_change:
@@ -384,7 +383,7 @@ class CoreMixin:
         columns.update({board.COL[k]: board.mutation_value(k, v) for k, v in changes.items()})
         compare.update({k: board.compare_value(k, v) for k, v in changes.items()})
         written = sorted(set(compare.get('_ours') or []) | {k for k, v in compare.items()
-                                                           if k in PRESERVE_UNLESS_OURS and v is not None})
+                                                           if not k.startswith(('_', 'h:')) and v is not None})
         if written:
             compare['_ours'] = written
         if group_change:

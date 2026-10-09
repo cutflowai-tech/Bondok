@@ -523,8 +523,10 @@ error:$json.error?String($json.error.message||$json.error).slice(0,300):(t?null:
     f.chain('Share Final File', 'New File Link')
 
     problem = f.code('Dropbox Problem', r"""
-const e=$json.error||{};const msg=String(e.message||e.description||$json.error_summary||'Dropbox request failed');
-const code=String(e.httpCode||e.status||'');
+const raw=$json.error;const e=(raw&&typeof raw==='object')?raw:{};
+// n8n error outputs may carry the message as a plain string; keep it.
+const msg=String((typeof raw==='string'&&raw)||e.message||e.description||$json.error_summary||$json.message||'Dropbox request failed');
+const code=String(e.httpCode||e.status||(msg.match(/\b([45]\d\d)\b/)||[])[1]||'');
 const infra=/^5|^429/.test(code)||/ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|timeout|socket hang up/i.test(msg);
 return [{json:{error:msg.slice(0,400),errorKind:infra?'infra':'config'}}];""")
     for n in ('Create Project Folder', 'Check Folder Creation', 'Share New Folder', 'Find Folder Link',
