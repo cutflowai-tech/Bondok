@@ -20,35 +20,92 @@ MUTATING = {'pause_item', 'resume_item', 'skip_item', 'request_recheck', 'reques
             'change_format', 'replace_source', 'update_caption', 'approve_existing_caption', 'confirm_topaz',
             'resolve_publication', 'draft_caption', 'approve_all_existing_captions'}
 
-_FORMAT_WORDS = {'Post': r'(بوست|ريل|ريلز|post|reel)', 'Story': r'(ستوري|استوري|story)'}
-_CHANGE = r'(حو[ّ]?ل|غي[ّ]?ر|خلي|خليه|خليها|اعمله|اعملها|change|convert|switch|make\s+(it|this))'
+_DIACRITICS = re.compile('[\u0640\u064B-\u0652]')
+_PREFIX_NOUN = ('', 'ل', 'ال', 'لل', 'و', 'وال', 'ب', 'بال', 'ف', 'فال')
+_PREFIX_VERB = ('', 'و', 'ف')
+_SUFFIX = ('', 'ه', 'ها', 'هم', 'ي', 'و', 'ت', 'وا')
+_QUESTION_START = {'هل', 'ليه', 'ايه', 'امتي', 'ازاي', 'فين', 'مين', 'is', 'are', 'has', 'have', 'did', 'does', 'do',
+                   'was', 'were', 'what', 'why', 'when', 'how', 'can', 'could', 'should', 'will', 'would'}
+_NEGATION = {'مش', 'مو', 'لا', 'لم', 'لن', 'ما', 'مافيش', 'مفيش', 'لسه', 'بلاش', 'not', 'no', 'never', 'dont', 'doesnt',
+             'didnt', 'isnt', 'wasnt', 'arent', 'havent', 'hasnt', 'wont', 'cant', 'yet', 'without'}
+
+
+def _norm(text: str) -> str:
+    t = _DIACRITICS.sub('', (text or '').casefold())
+    t = re.sub('[أإآ]', 'ا', t).replace('ى', 'ي').replace('ة', 'ه').replace("'", '').replace('\u2019', '')
+    return t
+
+
+def _tokens(text: str) -> list[str]:
+    return re.findall(r'[\w]+', _norm(text))
+
+
+def _has(tokens, stems, prefixes=_PREFIX_NOUN, suffixes=_SUFFIX) -> bool:
+    """A whole word from `stems`, allowing Arabic attached prefixes/suffixes (never a substring of
+    another word: 'postpone' is not 'post', 'ابريل' is not 'ريل')."""
+    stems = {_norm(s) for s in stems}
+    for tok in tokens:
+        for p in prefixes:
+            if not tok.startswith(p):
+                continue
+            core = tok[len(p):]
+            for s in suffixes:
+                if s and not core.endswith(s):
+                    continue
+                if (core[:-len(s)] if s else core) in stems:
+                    return True
+    return False
+
+
+def _statement(text: str, tokens) -> bool:
+    """A plain affirmative statement/instruction: no question, no negation anywhere."""
+    if '?' in text or '؟' in text or (tokens and tokens[0] in _QUESTION_START):
+        return False
+    return not any(t in _NEGATION or (t.startswith('م') and t.endswith('ش') and len(t) >= 4) for t in tokens)
+
+
+_FORMAT_WORDS = {'Post': ('بوست', 'ريل', 'ريلز', 'post', 'reel', 'reels'),
+                 'Story': ('ستوري', 'استوري', 'story', 'stories')}
+_CHANGE = ('حول', 'غير', 'خلي', 'اعمل', 'change', 'convert', 'switch', 'make', 'turn')
+_TOPAZ = ('توباز', 'topaz', 'topazed')
+_DONE = ('خلص', 'اتعمل', 'تم', 'اتم', 'جاهز', 'done', 'confirmed', 'finished', 'ready', 'complete', 'completed',
+         'topazed')
+_RESUME = ('كمل', 'استانف', 'رجع', 'شغل', 'resume', 'unpause', 'continue')
+_PAUSE = ('وقف', 'ايقاف', 'pause', 'paused', 'hold')
+_SKIP = ('تخطي', 'اتخطي', 'سكيب', 'skip', 'الغي', 'cancel')
+_PUBLISHED = ('اتنشر', 'نزل', 'منشور', 'published', 'posted', 'live')
+_APPROVE = ('اعتمد', 'موافق', 'approve', 'approved', 'ok', 'okay', 'تمام')
 
 
 def explicit(op: str, args: dict, text: str) -> bool:
-    """True only when the owner's own words state this exact action."""
-    t = (text or '').casefold()
+    """True only when the owner's own words plainly state this exact action. Questions, negations and
+    words that merely contain a keyword never count (fail closed: the action becomes a proposal)."""
+    toks = _tokens(text)
+    if not _statement(text or '', toks):
+        return False
     if op == 'change_format':
         target = args.get('format')
-        if target not in _FORMAT_WORDS or not re.search(_CHANGE, t):
+        if target not in _FORMAT_WORDS or not _has(toks, _CHANGE, _PREFIX_VERB):
             return False
         other = 'Story' if target == 'Post' else 'Post'
-        last_target = max((m.end() for m in re.finditer(_FORMAT_WORDS[target], t)), default=-1)
-        last_other = max((m.end() for m in re.finditer(_FORMAT_WORDS[other], t)), default=-1)
-        return last_target > last_other      # the destination format is the one named last
+        pos = lambda words: max((i for i, t in enumerate(toks) if _has([t], words)), default=-1)
+        return pos(_FORMAT_WORDS[target]) > pos(_FORMAT_WORDS[other])   # the destination is named last
     if op == 'confirm_topaz':
-        return bool(re.search(r'(توباز|topaz)', t) and re.search(r'(خلص|اتعمل|تم|اتم|جاهز|done|confirmed|finished|ready)', t)
-                    and not re.search(r'(لسه|مش|not yet|لم)', t))
+        return _has(toks, _TOPAZ) and _has(toks, _DONE, _PREFIX_VERB)
     if op == 'resume':
-        return bool(re.search(r'(كمل|كم[ّ]?له|استأنف|استئناف|رجع|رجّع|شغ[ّ]?ل|resume|unpause|continue)', t))
+        return _has(toks, _RESUME, _PREFIX_VERB)
     if op == 'skip':
-        return bool(re.search(r'(تخطى|تخطي|اتخطى|سكيب|skip|الغي|الغيه|cancel)', t))
+        return _has(toks, _SKIP, _PREFIX_VERB) and not _has(toks, _PAUSE + _RESUME)
     if op == 'resolve_outcome':
-        if args.get('outcome') == 'published':
-            return bool(re.search(r'(اتنشر|نزل|منشور|published|posted|is live)', t)) and not re.search(r'(مش|لم|not)', t)
-        return bool(re.search(r'(مش منشور|ما ?اتنشرش|متنشرش|لم ينشر|not published|wasn.t posted|not posted)', t))
+        # "Not published" re-opens scheduling and could cause a duplicate post: always an owner approval.
+        return args.get('outcome') == 'published' and _has(toks, _PUBLISHED, _PREFIX_VERB)
+    if op == 'approve_caption':
+        return _has(toks, _APPROVE, _PREFIX_VERB)
     if op == 'update_caption':
         caption = (args.get('text') or '').strip()
-        return len(caption) >= 10 and caption in (text or '')     # owner supplied the exact text
+        body = (text or '').strip()
+        # The owner supplied the exact text, and the message is essentially that text plus a short instruction.
+        return len(caption) >= 10 and caption in body and len(body) - len(caption) <= 80
     return False
 
 
@@ -142,7 +199,7 @@ class Bridge:
                 it = self.ops.item(c, item)
             if not it['caption']:
                 return {'state': 'rejected', 'reason': 'This item has no caption to approve'}
-            if not re.search(r'(اعتمد|موافق|approve|ok|تمام)', (text or '').casefold()):
+            if not explicit('approve_caption', {}, text):
                 return approval_or_run('update_caption', {'text': it['caption']},
                                        f"Approve the existing caption for item {item}:\n\n{it['caption']}")
             return submit('update_caption', {'text': it['caption']}, True)

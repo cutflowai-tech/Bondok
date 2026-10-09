@@ -275,3 +275,55 @@ class ModelCreditsAndConversation(BondokCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ExplicitIntentFailsClosed(unittest.TestCase):
+    """Audit C1/C2: questions, negations and words that merely contain a keyword are not owner instructions."""
+
+    def test_not_instructions(self):
+        cases = [
+            ('confirm_topaz', {}, 'Topaz is not done for LIP12'), ('confirm_topaz', {}, 'is topaz done?'),
+            ('confirm_topaz', {}, "topaz isn't finished"), ('confirm_topaz', {}, 'هل توباز اتعمل؟'),
+            ('change_format', {'format': 'Post'}, 'postpone LIP12'),
+            ('change_format', {'format': 'Post'}, 'مش عايز احوله لبوست'),
+            ('change_format', {'format': 'Post'}, 'غير الميعاد لابريل'),
+            ('change_format', {'format': 'Story'}, 'change the storyboard note'),
+            ('resume', {}, 'ايه الشغل النهارده؟'), ('resume', {}, 'متشغلوش'), ('resume', {}, 'do not resume LIP12'),
+            ('skip', {}, 'cancel the pause on LIP12'),
+            ('resolve_outcome', {'outcome': 'not_published'}, 'هو 350 مش منشور؟'),
+            ('resolve_outcome', {'outcome': 'not_published'}, '350 not published'),
+            ('resolve_outcome', {'outcome': 'published'}, 'هل نزل LIP12؟'),
+            ('resolve_outcome', {'outcome': 'published'}, 'has LIP12 posted?'),
+            ('approve_caption', {}, 'مش موافق على الكابشن'), ('approve_caption', {}, 'look at the caption'),
+            ('update_caption', {'text': 'the LIP12 caption'}, 'what do you think of the LIP12 caption?'),
+        ]
+        for op, args, text in cases:
+            self.assertFalse(explicit(op, args, text), (op, text))
+
+    def test_plain_instructions_still_work(self):
+        cases = [
+            ('change_format', {'format': 'Post'}, 'حوّل الستوري دي لبوست'),
+            ('change_format', {'format': 'Post'}, 'Change this Story to Post'),
+            ('change_format', {'format': 'Story'}, 'خليها ستوري'),
+            ('confirm_topaz', {}, 'توباز خلص للفيديو ده'), ('confirm_topaz', {}, 'Topaz done for LIP12'),
+            ('resume', {}, 'كمل LIP12'), ('resume', {}, 'resume LIP12'), ('resume', {}, 'شغله تاني'),
+            ('skip', {}, 'تخطى LIP12'), ('skip', {}, 'skip LIP12'),
+            ('resolve_outcome', {'outcome': 'published'}, 'LIP12 اتنشر خلاص'),
+            ('approve_caption', {}, 'اعتمد الكابشن'), ('approve_caption', {}, 'تمام'),
+            ('update_caption', {'text': 'Sunlight sets the pace 🔥 #reels'},
+             'غير الكابشن لـ: Sunlight sets the pace 🔥 #reels'),
+        ]
+        for op, args, text in cases:
+            self.assertTrue(explicit(op, args, text), (op, text))
+
+
+class UncertainOutcomeNeedsApproval(BondokCase):
+    def test_not_published_is_always_a_proposal(self):
+        self.make_ready('350', 'Story')
+        with self.ops.store.tx() as c:
+            c.execute("UPDATE ops_items SET publication='outcome_unknown' WHERE item_id='350'")
+        core = self.core(FakeModel([{'tool': 'resolve_publication', 'args': {'item': '350', 'published': False}},
+                                    {'say': 'تمام'}]))
+        reply = self.msg(core, '350 مش منشور، رجعه للجدول')
+        self.assertIn('Proposal', reply)
+        self.assertEqual(self.item('350')['publication'], 'outcome_unknown')
