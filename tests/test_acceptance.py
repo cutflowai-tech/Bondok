@@ -1768,3 +1768,31 @@ class FuzzFindings(OpsCase):
         self.observe(b)
         if self.item('1203')['hold']:
             self.assertIsNone(self.res('1203'))
+
+
+class FuzzRoundThree(OpsCase):
+    """Second fuzz campaign on the fixed code."""
+
+    def test_in_flight_owner_write_yields_to_recorded_person_edit(self):
+        self.make_ready('1300', 'Post')
+        self.drain_monday()
+        self.ops.submit(owner_cmd('c', 'update_caption', '1300', text='Owner caption from Slack, DM us 🔥\n\n#reels'))
+        h = [j for j in self.ops.outbox_take(['monday'], 'w', 10) if j['payload']['compare'].get('h:caption')][0]
+        self.clock.advance(25 * 60)
+        b = board_from_projection(self.ops, '1300', fmt='Post', caption='Person typed this on the board, DM us 🔥\n\n#reels')
+        self.observe(b)                                                   # WF1 records the person's caption
+        r = self.ops.outbox_ack(h['id'], 'w', False, 'conflict: changed on the board by a person (long_text)')
+        self.assertTrue(r.get('superseded'), r)
+        self.assertEqual(self.item('1300')['caption'], 'Person typed this on the board, DM us 🔥\n\n#reels')
+
+    def test_consumed_status_is_not_masked_by_an_older_pending_value(self):
+        self.make_ready('1301', 'Story')
+        self.drain_monday()
+        self.ops.submit(owner_cmd('u', 'request_reschedule', '1301', at=None))   # Needs Review job queued
+        self.ops.outbox_take(['monday'], 'w', 10)                                # ... and taken
+        self.clock.advance(25 * 60)
+        b = board_from_projection(self.ops, '1301')
+        set_cell(b, 'status', 'Posted')
+        self.observe(b)
+        jobs = [json.loads(o['payload']) for o in self.outbox('monday') if o['state'] == 'pending']
+        self.assertTrue(any(board.COL['status'] in j['columns'] for j in jobs), jobs)

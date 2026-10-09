@@ -90,6 +90,26 @@ has caused observable damage yet; "latent" means it would occur once the conditi
 | BV-54 | server_backup.sh never checked integrity_check (corrupt backup got SHA256SUMS) | `873a730` |
 | BV-55 | errors.log never rotated | `873a730` |
 
+## Round 2 — review of the audit fixes and randomized sequence testing
+
+An independent review of the fixes (diff 45b6418..8a1457d^) and a seeded fuzzer (~1 M steps, three code
+snapshots, a simulated board honouring WF2's compare-before-write) found regressions introduced by round 1 and
+a few older display-sync defects. No publication-safety invariant (duplicate, stale or unauthorized
+publication, published reverted, unknown outcome claimed) failed in any fuzz run.
+
+| ID | Sev | Bug | Fix | Test |
+|---|---|---|---|---|
+| BV-65 | HIGH | Round-1 stale-snapshot window (20 min) hid a genuine board Pause typed after a recent v2 write: the item published | `8a1457d` (snapshot floor = WF1 run start) | `RoundTwoRegressions.test_genuine_pause_after_recent_write_is_applied` |
+| BV-66 | HIGH | Board "Posted"/post link re-held and notified every cycle; WF2 conflicted forever; owner answer undone (round-1 regression of BV-04) | `8a1457d` | `RoundTwoRegressions` |
+| BV-67 | MEDIUM | Format write-back carried a guard and never landed; a failed owner-approved write was dropped by any newer display job; project() dropped its own identical replacement | `8a1457d` | `RoundTwoRegressions` |
+| BV-68 | MEDIUM | Meta generic codes 1/2 auto-rescheduled (could duplicate if the post went through) | `8a1457d` (throttling codes only) | `RoundTwoRegressions` |
+| BV-69 | LOW | First file selection counted as a recent change (Slack Topaz always a proposal); Dropbox outage at the slot put the item on an owner hold; intent phrasings 'خلاص', 'اتخطاه', 'زي ما' refused, 'نزلها' (imperative) taken as "published" | `8a1457d` | `RoundTwoRegressions` |
+| BV-70 | MEDIUM | (fuzz F5) a status write already taken by WF2 landed before the next one, which then conflicted forever (board "Scheduled" for a paused item) | `be00eed` | `FuzzFindings` |
+| BV-71 | MEDIUM | (fuzz F3) two owner-approved writes of the same column before a sync: second conflicted forever (board caption A, publish caption B) | `be00eed` | `FuzzFindings` |
+| BV-72 | LOW–MED | (fuzz F7) caption typed while the item was a Story became approved, unvalidated, on conversion to Post | `be00eed` | `FuzzFindings` |
+| BV-73 | LOW | (fuzz F8) rejected board edit's hold kept the reservation | `be00eed` | `FuzzFindings` |
+| BV-74 | LOW (by design) | (fuzz F9) published / unknown items keep their past reservation row (table growth only) | open | — |
+
 ## OPEN (not fixed; see POST_RELEASE_IMPROVEMENTS.md)
 
 | ID | Severity | Item |

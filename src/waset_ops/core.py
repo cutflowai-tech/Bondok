@@ -608,6 +608,24 @@ class CoreMixin:
                               (dumps(pend) if pend else None, r['item_id']))
                     self.project(c, r['item_id'])
                 return {'ok': False, 'superseded': True}
+            if (error or '').startswith('conflict') and r['dedupe_key'].startswith('monday-h:'):
+                it = self.item(c, r['item_id'], required=False)
+                obs = (loads(it['observed'], {}) or {}) if it else {}
+                guard = p.get('guard') or {}
+                cols = {board.COL[k[2:]]: k[2:] for k in (p.get('compare') or {}) if k.startswith('h:') and k[2:] in board.COL}
+                seen = [k for col, k in cols.items() if col in guard and
+                        obs.get(k) not in ([guard[col].get('was')] if not isinstance(guard[col].get('was'), list)
+                                            else guard[col]['was'])]
+                if it and seen:
+                    # WF1 already recorded the person's newer value for this column: it wins (fuzz, round 3).
+                    c.execute("UPDATE ops_outbox SET state='superseded', last_error=?, updated=? WHERE id=?",
+                              ((error or '')[:500], now, job_id))
+                    pend = loads(it['pending_projection'], {}) or {}
+                    for k in seen:
+                        pend.pop('h:' + k, None)
+                    c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?',
+                              (dumps(pend) if pend else None, r['item_id']))
+                    return {'ok': False, 'superseded': True}
             if (error or '').startswith('conflict'):
                 # A person changed the board since v2 last wrote: wait for WF1 to observe that edit.
                 c.execute("UPDATE ops_outbox SET state='failed', last_error=?, next_at=?, updated=? WHERE id=?",

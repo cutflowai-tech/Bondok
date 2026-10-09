@@ -288,7 +288,10 @@ class ItemsMixin:
             cur = self.item(c, iid)
             proj = loads(cur['projected'], {}) or {}
             proj[k] = board.compare_value(k, new) if new is not None else None
-            c.execute('UPDATE ops_items SET projected=? WHERE item_id=?', (dumps(proj), iid))
+            pend = loads(cur['pending_projection'], {}) or {}
+            pend.pop(k, None)       # what the board shows now is known; an older in-flight belief must not mask it
+            c.execute('UPDATE ops_items SET projected=?, pending_projection=? WHERE item_id=?',
+                      (dumps(proj), dumps(pend) if pend else None, iid))
             col = board.COL.get(k)
             for j in c.execute("SELECT id, payload FROM ops_outbox WHERE kind='monday' AND item_id=? AND "
                                "state IN ('pending','failed')", (iid,)).fetchall():
