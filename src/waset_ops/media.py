@@ -7,7 +7,9 @@ Changes from the deployed helper:
   stays 300,000,000 bytes;
 * an explicit recheck re-measures the existing prepared file (ffprobe + sha256)
   instead of returning a cached result;
-* Topaz is evidence bound to the asset by the handler; never a filename.
+* Topaz is evidence bound to the asset by the handler; never a filename;
+* a Story source of 60-65 s is trimmed at the end to 59.9 s while encoding
+  (the Dropbox original is only downloaded, never changed).
 """
 from __future__ import annotations
 
@@ -215,8 +217,9 @@ def job_preflight(b):
     try:
         _download(raw_url(b['sourceUrl']), original, b['contentHash'])
         info = probe(original)
-        bad = rules.story_duration_failure(info['duration'])
+        bad = rules.story_source_failure(info['duration'])
         return {'ready': bad is None, 'duration': info['duration'], 'reason': bad, 'replaceRequired': bad is not None,
+                'trimTo': rules.story_trim_target(info['duration']),
                 'assetKey': b['assetKey'], 'contentHash': b['contentHash'], 'checkedAt': time.time()}
     finally:
         original.unlink(missing_ok=True)
@@ -231,19 +234,23 @@ def job_prepare(b):
     try:
         _download(raw_url(b['sourceUrl']), original, b['contentHash'])
         info = probe(original)
+        trim = None
         if b['format'] == 'Story':
-            bad = rules.story_duration_failure(info['duration'])
+            bad = rules.story_source_failure(info['duration'])
             if bad:
                 return {**base, 'ready': False, 'reason': bad}
+            trim = rules.story_trim_target(info['duration'])
         if min(info['width'], info['height']) < rules.MIN_SHORT_EDGE:
             return {**base, 'ready': False, 'reason': 'Source short edge is below 1080 pixels'}
         scale = "scale=w='if(gte(ih,iw),1080,-2)':h='if(gte(ih,iw),-2,1080)'"
-        bitrate = min(12_000_000, int(TARGET_BYTES * 8 / info['duration']) - 160_000)
+        bitrate = min(12_000_000, int(TARGET_BYTES * 8 / (trim or info['duration'])) - 160_000)
         if bitrate < 500_000:
             return {**base, 'ready': False, 'reason': 'Duration cannot fit the current transfer path at usable quality'}
+        # Automatic Story trim: keep the start, cut the end (output option, same for both passes).
+        cut = ['-t', f'{trim:.3f}'] if trim else []
         common = ['ffmpeg', '-nostdin', '-y', '-v', 'error', '-i', str(original), '-map', '0:v:0', '-threads', '2',
                   '-vf', scale, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-b:v', str(bitrate),
-                  '-passlogfile', str(folder / mid)]
+                  '-passlogfile', str(folder / mid)] + cut
         run(common + ['-pass', '1', '-an', '-f', 'null', '/dev/null'])
         run(common + ['-pass', '2', '-map', '0:a:0?', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart',
                       str(output)])
@@ -252,6 +259,12 @@ def job_prepare(b):
                       contentHash=b['contentHash'], format=b['format'], qaPolicy=rules.QA_POLICY,
                       orientation='vertical' if result['height'] > result['width'] else 'horizontal',
                       sha256=sha256_file(output), checkedAt=time.time())
+        if trim:
+            result.update(trimmedFrom=info['duration'], trimmedTo=trim)
+            if not trim - 0.5 <= result['duration'] < rules.STORY_MAX_SECONDS:
+                output.unlink(missing_ok=True)
+                return {**base, 'ready': False, 'reason': f"Automatic Story trim produced {result['duration']:g} "
+                        'seconds instead of about 59.9; supply an edit under 60 seconds'}
         bad = rules.media_failure(result, b['format'])
         if bad:
             output.unlink(missing_ok=True)

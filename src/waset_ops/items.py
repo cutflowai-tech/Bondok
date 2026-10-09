@@ -781,6 +781,11 @@ class ItemsMixin:
             # the problem is gone. Other blocks (Topaz, duration, media, code, collab) keep their own rules.
             it = self.update_item(c, it['item_id'], cmd.actor, 'source problem resolved', readiness='checking',
                                   block_kind=None, block_reason=None, block_key=None)
+        if it['readiness'] == 'blocked' and it['block_key'] == 'story_duration:' + asset and \
+                it['format'] == 'Story' and self._duration_ok(c, it['item_id'], asset, f['content_hash']):
+            # Blocked under an older duration policy; the same measurement now passes (automatic trim).
+            it = self.update_item(c, it['item_id'], cmd.actor, 'story duration accepted (automatic trim)',
+                                  readiness='checking', block_kind=None, block_reason=None, block_key=None)
         if it['readiness'] == 'ready' and not changed and not recheck:
             return {'next': 'none', 'unchanged': True}
         if it['readiness'] == 'blocked' and not changed and not recheck and it['block_kind'] != 'infra':
@@ -791,12 +796,15 @@ class ItemsMixin:
         if it['format'] == 'Story' and not self._duration_ok(c, it['item_id'], asset, f['content_hash']):
             return {'next': 'preflight', 'media': body}
         if it['topaz_asset'] != asset:
+            trim = self._story_trim(c, it)
+            note = (f' The Story is {trim[0]:g} seconds and will be trimmed automatically to {trim[1]:g} seconds;'
+                    ' no shorter edit is needed.') if trim else ''
             self.update_item(c, it['item_id'], cmd.actor, 'awaiting topaz', readiness='blocked', block_kind='editor',
                              block_key='topaz:' + asset, block_reason='Topaz confirmation is required for the '
                              'selected file version (the filename is not proof)')
             self.editor_task(c, it['item_id'], 'topaz:' + asset,
                              'Apply Topaz, export at least 1080p short edge and under 300 MB, then confirm '
-                             'Topazed on the social board for the selected file version.')
+                             'Topazed on the social board for the selected file version.' + note)
             self._finish_check(c, it['item_id'], 'blocked: Topaz confirmation missing')
             return {'next': 'none', 'blocked': 'topaz'}
         return {'next': 'prepare', 'media': body}
@@ -804,7 +812,20 @@ class ItemsMixin:
     def _duration_ok(self, c, item_id, asset, content_hash) -> bool:
         r = c.execute("SELECT * FROM ops_checks WHERE item_id=? AND kind='duration'", (str(item_id),)).fetchone()
         res = loads(r['result'], {}) if r else {}
-        return bool(r and r['key'] == asset + '|' + content_hash and res.get('ok') is True)
+        # Re-evaluated against the current policy (a stored verdict from an older policy is not final).
+        return bool(r and r['key'] == asset + '|' + content_hash and
+                    rules.story_source_failure(res.get('duration')) is None)
+
+    def _story_trim(self, c, it):
+        """(source seconds, target seconds) when the current Story file gets the automatic end trim."""
+        if it['format'] != 'Story':
+            return None
+        r = c.execute("SELECT * FROM ops_checks WHERE item_id=? AND kind='duration'", (str(it['item_id']),)).fetchone()
+        if not r or r['key'] != (it['asset_key'] or '') + '|' + (it['content_hash'] or ''):
+            return None
+        d = (loads(r['result'], {}) or {}).get('duration')
+        t = rules.story_trim_target(d)
+        return (float(d), t) if t else None
 
     def op_prep_preflight(self, c, cmd: Command):
         a = cmd.args
@@ -818,7 +839,7 @@ class ItemsMixin:
         if r.get('retryable'):
             self.update_item(c, it['item_id'], cmd.actor, 'preflight infra', infra_issue=r.get('reason', '')[:300])
             return {'next': 'none', 'infra': True}
-        bad = rules.story_duration_failure(r.get('duration')) if it['format'] == 'Story' else None
+        bad = rules.story_source_failure(r.get('duration')) if it['format'] == 'Story' else None
         key = it['asset_key'] + '|' + it['content_hash']
         c.execute("INSERT OR REPLACE INTO ops_checks(item_id,kind,key,requested,requested_by,state,result,updated) "
                   "VALUES(?,?,?,?,?,?,?,?)", (it['item_id'], 'duration', key, self.now(), cmd.actor, 'done',

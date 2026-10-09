@@ -2,13 +2,19 @@
 import base64
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from support import ROOT, Clock, OpsCase, monday_item, owner_cmd, rules
+
+from waset_ops import media
+from waset_ops.db import Store
 
 HELPER = ROOT / 'src' / 'helper.py'
 
@@ -115,6 +121,100 @@ class HelperCli(OpsCase):
                                         'url': 'https://www.dropbox.com/s/a/v.mp4'})
         self.assertEqual(r['blocked'], 'topaz')
         self.assertFalse(any(p.name.endswith('.lock') and p.name.startswith('media-capacity') for p in self.dir.iterdir()))
+
+
+@unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg not installed')
+class StoryTrimFfmpeg(unittest.TestCase):
+    """Real FFmpeg: the 60-65 s Story trim on actual video files (download replaced by a local copy)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.src = tempfile.TemporaryDirectory()
+        cls.videos = {}
+        for secs in (58.0, 61.247, 65.0, 66.0):
+            path = Path(cls.src.name) / f'src-{secs}.mp4'
+            subprocess.run(['ffmpeg', '-nostdin', '-y', '-v', 'error', '-f', 'lavfi', '-i',
+                            f'testsrc2=size=1080x1920:rate=10:duration={secs}', '-f', 'lavfi', '-i',
+                            f'sine=frequency=440:duration={secs}', '-c:v', 'libx264', '-preset', 'ultrafast',
+                            '-c:a', 'aac', '-shortest', str(path)], check=True)
+            cls.videos[secs] = path
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.src.cleanup()
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.saved = media.ROOT, media._download, media.raw_url
+        media.ROOT = Path(self.tmp.name)
+        Store(media.ROOT / 'state.sqlite').migrate()
+
+        def fake_download(source, original, content_hash):
+            shutil.copyfile(source, original)
+            if media.dropbox_hash(original) != content_hash:
+                raise ValueError('Dropbox file changed after selection')
+        media._download, media.raw_url = fake_download, (lambda url: url)
+
+    def tearDown(self):
+        media.ROOT, media._download, media.raw_url = self.saved
+        self.tmp.cleanup()
+
+    def body(self, secs):
+        path = self.videos[secs]
+        return {'itemId': '7' + str(int(secs)), 'format': 'Story', 'sourceUrl': str(path), 'fileId': 'id:F' + str(secs),
+                'revision': 'r1', 'contentHash': media.dropbox_hash(path), 'assetKey': f'id:F{secs}@r1'}
+
+    def streams(self, path):
+        d = json.loads(subprocess.run(['ffprobe', '-v', 'error', '-show_entries',
+                                       'format=duration,start_time:stream=codec_type,duration,width,height',
+                                       '-of', 'json', str(path)], capture_output=True, text=True, check=True).stdout)
+        return float(d['format']['duration']), {s['codec_type']: s for s in d['streams']}
+
+    def test_61_seconds_is_trimmed_at_the_end_to_59_9(self):
+        b = self.body(61.247)
+        before = media.sha256_file(self.videos[61.247])
+        pre = media.job_preflight(b)
+        self.assertTrue(pre['ready'], pre)
+        self.assertEqual(pre['trimTo'], 59.9)
+        r = media.job_prepare(b)
+        self.assertTrue(r['ready'], r)
+        total, st = self.streams(r['filePath'])
+        self.assertTrue(59.5 <= total < 60.0, total)
+        self.assertAlmostEqual(float(st['video']['duration']), 59.9, delta=0.15)
+        self.assertLess(float(st['audio']['duration']), 60.0)
+        self.assertEqual((st['video']['width'], st['video']['height']), (1080, 1920))
+        self.assertAlmostEqual(r['trimmedFrom'], 61.247, places=2)
+        self.assertEqual(r['trimmedTo'], 59.9)
+        self.assertIsNone(rules.media_failure(r, 'Story'))
+        self.assertEqual(media.sha256_file(self.videos[61.247]), before)       # original untouched
+        # The start is kept: the first output frame matches the source's first frame (same picture).
+        def first_frame(path):
+            return subprocess.run(['ffmpeg', '-v', 'error', '-i', str(path), '-frames:v', '1', '-vf',
+                                   'scale=27:48,format=gray', '-f', 'rawvideo', '-'], capture_output=True, check=True).stdout
+        a, o = first_frame(self.videos[61.247]), first_frame(r['filePath'])
+        self.assertLess(sum(abs(x - y) for x, y in zip(a, o)) / len(a), 8)
+
+    def test_65_seconds_inclusive_is_trimmed(self):
+        r = media.job_prepare(self.body(65.0))
+        self.assertTrue(r['ready'], r)
+        self.assertTrue(59.5 <= self.streams(r['filePath'])[0] < 60.0)
+
+    def test_under_60_is_not_trimmed(self):
+        r = media.job_prepare(self.body(58.0))
+        self.assertTrue(r['ready'], r)
+        self.assertNotIn('trimmedFrom', r)
+        self.assertAlmostEqual(self.streams(r['filePath'])[0], 58.0, delta=0.15)
+        self.assertIsNone(media.job_preflight(self.body(58.0))['trimTo'])
+
+    def test_above_65_needs_the_editor_and_produces_no_file(self):
+        b = self.body(66.0)
+        pre = media.job_preflight(b)
+        self.assertFalse(pre['ready'])
+        self.assertTrue(pre['replaceRequired'])
+        r = media.job_prepare(b)
+        self.assertFalse(r['ready'])
+        self.assertIn('automatic trimming covers up to 65 seconds', r['reason'])
+        self.assertEqual(list((media.ROOT / 'media').glob('*.mp4')), [])
 
 
 if __name__ == '__main__':

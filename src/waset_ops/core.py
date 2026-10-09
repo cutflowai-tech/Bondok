@@ -292,6 +292,17 @@ class CoreMixin:
         system = []
         if it.get('infra_issue'):
             system.append('Temporary system issue (content not rejected): ' + it['infra_issue'])
+        if ver and ver.get('trimmedFrom') and it['readiness'] == 'ready':
+            system.append(f"Story trimmed automatically from {float(ver['trimmedFrom']):.3f} s to "
+                          f"{float(ver['duration']):.3f} s (end cut; original Dropbox file unchanged)")
+        elif it['format'] == 'Story' and it['readiness'] != 'ready' and it.get('asset_key'):
+            chk = c.execute("SELECT key, result FROM ops_checks WHERE item_id=? AND kind='duration'",
+                            (it['item_id'],)).fetchone()
+            secs = (loads(chk['result'], {}) or {}).get('duration') if chk and \
+                chk['key'] == it['asset_key'] + '|' + (it.get('content_hash') or '') else None
+            if rules.story_trim_target(secs):
+                system.append(f'Story is {float(secs):.3f} s; it will be trimmed automatically to '
+                              f'{rules.STORY_TRIM_SECONDS:g} s when prepared (end cut; no shorter edit needed)')
         if res:
             system.append('Confirmed slot ' + rules.display(rules.instant(res['slot'])))
         d = {
@@ -404,16 +415,36 @@ class CoreMixin:
     # ------------------------------------------------------------ one-time data fixes
     def apply_data_fixes(self) -> list[str]:
         """Idempotent data repairs, each applied once and recorded in ops_meta."""
+        fixes = (('ours_backfill', self._backfill_ours), ('story_trim_nudge', self._nudge_trimmable_stories))
         done = []
         with self.store.read() as c:
-            if c.execute("SELECT 1 FROM ops_meta WHERE key='fix:ours_backfill'").fetchone():
-                return done
-        with self.store.tx() as c:
-            if not c.execute("SELECT 1 FROM ops_meta WHERE key='fix:ours_backfill'").fetchone():
-                n = self._backfill_ours(c)
-                c.execute("INSERT OR REPLACE INTO ops_meta VALUES('fix:ours_backfill',?)", (dumps({'at': self.now(), 'items': n}),))
-                done.append('ours_backfill')
+            have = {r['key'] for r in c.execute("SELECT key FROM ops_meta WHERE key LIKE 'fix:%'")}
+        for name, fn in fixes:
+            if 'fix:' + name in have:
+                continue
+            with self.store.tx() as c:
+                if not c.execute('SELECT 1 FROM ops_meta WHERE key=?', ('fix:' + name,)).fetchone():
+                    n = fn(c)
+                    c.execute('INSERT OR REPLACE INTO ops_meta VALUES(?,?)', ('fix:' + name, dumps({'at': self.now(), 'items': n})))
+                    done.append(name)
         return done
+
+    def _nudge_trimmable_stories(self, c) -> int:
+        """Stories blocked as too long whose measured source now falls under the automatic trim policy
+        (60-65 s): ask WF1 to look at them on its next cycle instead of after the blocked backoff."""
+        n = 0
+        rows = c.execute("SELECT i.item_id, i.observed, k.result FROM ops_items i JOIN ops_checks k ON "
+                         "k.item_id=i.item_id AND k.kind='duration' WHERE i.readiness='blocked' AND "
+                         "i.block_key LIKE 'story_duration:%' AND k.key=i.asset_key||'|'||i.content_hash").fetchall()
+        for r in rows:
+            if rules.story_trim_target((loads(r['result'], {}) or {}).get('duration')) is None:
+                continue
+            obs = loads(r['observed'], {}) or {}
+            obs['_nudge'] = self.now()
+            c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), r['item_id']))
+            audit(c, r['item_id'], 'nudge_story_trim', 'service:migration', {})
+            n += 1
+        return n
 
     def _backfill_ours(self, c) -> int:
         """Display values delivered before ownership tracking (`_ours`) existed were treated as foreign, so

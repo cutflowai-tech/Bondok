@@ -31,7 +31,12 @@ BUSINESS_MAX_BYTES = 300_000_000       # business rule: strictly below
 # or above this are refused until an upload-session path is approved and built.
 TRANSFER_MAX_BYTES = 145_000_000
 MIN_SHORT_EDGE = 1080
-STORY_MAX_SECONDS = 60.0               # strictly below; exactly 60.000 fails
+STORY_MAX_SECONDS = 60.0               # strictly below; exactly 60.000 fails (final prepared file)
+# Owner decision 2026-10-09: a Story source from 60 through 65 seconds inclusive is trimmed at the END to
+# STORY_TRIM_SECONDS during preparation (deterministic FFmpeg, original Dropbox file untouched); a longer
+# source still needs a shorter edit from the editor.
+STORY_TRIM_MAX_SECONDS = 65.0
+STORY_TRIM_SECONDS = 59.9
 QA_POLICY = 3                          # DEFAULT: deployed media verification policy
 
 HORIZON_DAYS = 84                      # DEFAULT
@@ -255,6 +260,29 @@ def story_duration_failure(duration) -> str | None:
     if d >= STORY_MAX_SECONDS:
         return f'Story is {d:g} seconds; it must be strictly under 60 seconds. Supply a shorter edit or ask the owner to convert it to Post'
     return None
+
+
+def story_trim_target(duration) -> float | None:
+    """Target length when a Story source needs the automatic end trim, else None."""
+    try:
+        d = float(duration)
+    except (TypeError, ValueError):
+        return None
+    if math.isfinite(d) and STORY_MAX_SECONDS <= d <= STORY_TRIM_MAX_SECONDS:
+        return STORY_TRIM_SECONDS
+    return None
+
+
+def story_source_failure(duration) -> str | None:
+    """Story gate on the selected SOURCE file: under 60 s as is, 60-65 s trimmed automatically,
+    longer needs a shorter edit. The prepared file is still held to story_duration_failure."""
+    if story_trim_target(duration) is not None:
+        return None
+    bad = story_duration_failure(duration)
+    if bad and bad.startswith('Story is '):
+        return (f'Story is {float(duration):g} seconds; automatic trimming covers up to 65 seconds. '
+                'Supply an edit under 60 seconds or ask the owner to convert it to Post')
+    return bad
 
 
 def media_failure(info: dict, fmt: str) -> str | None:

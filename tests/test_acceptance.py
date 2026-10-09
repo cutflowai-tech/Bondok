@@ -29,20 +29,111 @@ class Scenario01StoryDuration(OpsCase):
         self.assertEqual(r.get('blocked'), 'topaz')
         self.assertIsNone(self.res('1'))
 
-    def test_60_and_63_fail_before_scheduling_and_processing(self):
-        for iid, secs in (('2', 60.0), ('3', 63.0)):
+    def test_60_and_63_are_trimmed_not_blocked(self):
+        # Owner policy 2026-10-09: 60-65 s inclusive -> automatic end trim to 59.9 s during preparation.
+        for iid, secs in (('2', 60.0), ('3', 63.0), ('4', 65.0)):
+            self.observe(monday_item(iid, fmt='Story'))
+            self.select(iid)
+            r = self.duration(iid, secs)
+            self.assertEqual(r['next'], 'continue', r)
+            r = self.select(iid)
+            self.assertEqual(r.get('blocked'), 'topaz')          # Topaz is still required
+            self.assertIsNone(self.res(iid))
+
+    def test_above_65_fails_before_scheduling_and_processing(self):
+        for iid, secs in (('5', 65.001), ('6', 77.4774)):
             self.observe(monday_item(iid, fmt='Story'))
             self.select(iid)
             r = self.duration(iid, secs)
             self.assertEqual(r['blocked'], 'story_duration')
             it = self.item(iid)
             self.assertEqual(it['readiness'], 'blocked')
-            self.assertIn('strictly under 60', it['block_reason'])
+            self.assertIn('automatic trimming covers up to 65 seconds', it['block_reason'])
             self.assertIsNone(self.res(iid))
             # A later cycle with the same file does not start encoding.
             self.assertEqual(self.select(iid).get('next'), 'none')
-            self.assertEqual(rules.story_duration_failure(60.000) is not None, True)
-            self.assertIsNone(rules.story_duration_failure(59.999))
+        # The final prepared file stays strictly under 60 seconds.
+        self.assertIsNotNone(rules.story_duration_failure(60.000))
+        self.assertIsNone(rules.story_duration_failure(59.999))
+
+
+class StoryTrimPolicy(OpsCase):
+    def test_policy_boundaries(self):
+        for d, trim, fail in ((59.999, None, False), (60.0, 59.9, False), (62.5, 59.9, False), (65.0, 59.9, False),
+                              (65.0001, None, True), (90, None, True), (None, None, True), ('nan', None, True),
+                              (0, None, True)):
+            self.assertEqual(rules.story_trim_target(d), trim, d)
+            self.assertEqual(rules.story_source_failure(d) is not None, fail, d)
+        # The prepared-file gate is unchanged: a trimmed result must be strictly under 60 s.
+        self.assertIsNone(rules.media_failure({'width': 1080, 'height': 1920, 'bytes': 9e7, 'duration': 59.92}, 'Story'))
+        self.assertIsNotNone(rules.media_failure({'width': 1080, 'height': 1920, 'bytes': 9e7, 'duration': 61.2}, 'Story'))
+
+    def test_trimmed_story_needs_topaz_then_schedules_with_trimmed_media(self):
+        self.observe(monday_item('20', fmt='Story', extra={'source_item': ('9020', '"9020"')}))
+        self.select('20')
+        self.assertEqual(self.duration('20', 61.247)['next'], 'continue')
+        r = self.select('20')
+        self.assertEqual(r.get('blocked'), 'topaz')
+        with self.ops.store.read() as c:
+            body = c.execute("SELECT payload FROM ops_outbox WHERE kind='editor'").fetchone()['payload']
+        self.assertIn('trimmed automatically to 59.9 seconds; no shorter edit is needed', body)
+        with self.ops.store.read() as c:
+            self.assertIn('Story is 61.247 s; it will be trimmed automatically to 59.9 s',
+                          self.ops.desired_display(c, self.item('20'))['system'])
+        self.topaz('20')
+        r = self.select('20')
+        self.assertEqual(r.get('next'), 'prepare')
+        self.assertEqual(r['media']['format'], 'Story')            # never converted to Post
+        mid = self.add_media('20', 'Story', duration=59.92)
+        with self.ops.store.tx() as c:
+            info = json.loads(c.execute('SELECT metadata FROM media WHERE id=?', (mid,)).fetchone()[0])
+            info.update(trimmedFrom=61.247, trimmedTo=59.9)
+            c.execute('UPDATE media SET metadata=? WHERE id=?', (json.dumps(info), mid))
+        r = self.wf1('prep_media', '20', result={'ready': True, 'mediaId': mid})
+        self.assertEqual(self.item('20')['readiness'], 'ready', r)
+        self.assertIsNotNone(self.res('20'))
+        with self.ops.store.read() as c:
+            d = self.ops.desired_display(c, self.item('20'))
+        self.assertIn('trimmed automatically from 61.247 s to 59.920 s', d['system'])
+        self.assertIn('59.920 s', d['measurements'])
+
+    def test_untrimmed_long_prepared_file_is_still_refused(self):
+        self.observe(monday_item('21', fmt='Story'))
+        self.select('21')
+        self.duration('21', 62.0)
+        self.topaz('21')
+        self.assertEqual(self.select('21').get('next'), 'prepare')
+        mid = self.add_media('21', 'Story', duration=62.0)          # e.g. a trim that did not happen
+        self.wf1('prep_media', '21', result={'ready': True, 'mediaId': mid})
+        self.assertNotEqual(self.item('21')['readiness'], 'ready')
+        self.assertIsNone(self.res('21'))
+
+    def test_item_blocked_under_old_policy_is_released_once(self):
+        self.observe(monday_item('22', fmt='Story'))
+        self.select('22')
+        # Simulate the pre-trim verdict stored in production: blocked, editor asked for a shorter edit.
+        with self.ops.store.tx() as c:
+            key = 'id:FILE1@rev1|hash1'
+            c.execute("INSERT OR REPLACE INTO ops_checks(item_id,kind,key,requested,requested_by,state,result,updated) "
+                      "VALUES('22','duration',?,0,'x','done',?,0)", (key, json.dumps({'ok': False, 'duration': 60.479})))
+            c.execute("UPDATE ops_items SET readiness='blocked', block_kind='content', block_key='story_duration:id:FILE1@rev1', "
+                      "block_reason='Story is 60.479 seconds; it must be strictly under 60 seconds' WHERE item_id='22'")
+        self.clock.advance(60)
+        self.assertEqual(self.ops.apply_data_fixes().count('story_trim_nudge'), 1)
+        self.assertEqual(self.ops.apply_data_fixes().count('story_trim_nudge'), 0)     # once
+        q = [w['item_id'] for w in self.ops.work_queue(limit=5)]
+        self.assertEqual(q[:1], ['22'])
+        r = self.select('22')                     # no re-download: the stored measurement is re-evaluated
+        self.assertEqual(r.get('blocked'), 'topaz', r)
+        self.assertNotEqual(r.get('next'), 'preflight')
+        it = self.item('22')
+        self.assertEqual(it['block_key'], 'topaz:id:FILE1@rev1')
+        # Over-65 item blocked the same way stays blocked and is not nudged.
+        self.observe(monday_item('23', fmt='Story'))
+        self.select('23')
+        self.duration('23', 77.0)
+        self.assertEqual(self.select('23').get('next'), 'none')
+        self.assertEqual(self.item('23')['readiness'], 'blocked')
 
 
 class Scenario02StoryToPost(OpsCase):
@@ -644,7 +735,7 @@ class OwnershipBackfill(OpsCase):
         with self.ops.store.tx() as c:                        # simulate a pre-`_ours` acknowledgement
             p = json.loads(self.item('390')['projected']); p.pop('_ours', None)
             c.execute('UPDATE ops_items SET projected=? WHERE item_id=?', (json.dumps(p), '390'))
-        self.assertEqual(self.ops.apply_data_fixes(), ['ours_backfill'])
+        self.assertIn('ours_backfill', self.ops.apply_data_fixes())
         self.assertEqual(self.ops.apply_data_fixes(), [])     # once only
         ours = json.loads(self.item('390')['projected'])['_ours']
         self.assertIn('action', ours)
