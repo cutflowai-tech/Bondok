@@ -8,7 +8,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import board, rules
-from .core import BONDOK, MONDAY, OWNER, PRE_COMMIT, Command, Rejected, fingerprint
+from .core import BONDOK, MONDAY, OWNER, PRE_COMMIT, STALE_SNAPSHOT_SECONDS, Command, Rejected, fingerprint
 from .db import audit, dumps, loads
 
 PROTECTED_PUBLICATION = ('published', 'outcome_unknown', 'in_progress')
@@ -195,10 +195,14 @@ class ItemsMixin:
         confirmed = loads(it['projected'], {}) or {}
         pending = loads(it['pending_projection'], {}) or {}
         edits = []
+        recent = {k: x['v'] for k, x in (confirmed.get('_prev') or {}).items()
+                  if self.now() - x.get('at', 0) < STALE_SNAPSHOT_SECONDS}
         for k in board.HUMAN:
             new = snap.get(k)
             if new == observed.get(k):
                 continue
+            if 'h:' + k in recent and new == recent['h:' + k]:
+                continue                       # snapshot read before our write landed (not a human edit)
             if 'h:' + k in pending:
                 if new == pending['h:' + k]:
                     observed[k] = new          # our authorized write landed
@@ -211,6 +215,8 @@ class ItemsMixin:
                 continue                       # never projected: nothing to compare
             if new == confirmed.get(k) or (k in pending and new == pending.get(k)):
                 continue
+            if k in recent and new == recent[k]:
+                continue                       # snapshot read before our write landed
             edits.append({'key': k, 'old': pending.get(k, confirmed.get(k)), 'new': new, 'human': False,
                           'snap': {x: snap.get(x) for x in ('publish_at', 'post_date', 'post_time')}})
         c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(observed), it['item_id']))

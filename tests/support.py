@@ -150,3 +150,33 @@ class OpsCase(unittest.TestCase):
         """Simulate WF2's display sync succeeding for all pending Monday jobs."""
         for j in self.ops.outbox_take(['monday'], 'sync-test', 100):
             self.ops.outbox_ack(j['id'], 'sync-test', True)
+
+
+def board_from_projection(ops, iid, fmt='Story', code='LIP12', caption='', topaz='Topazed'):
+    """The board item as it looks after every v2 display write so far has landed."""
+    import json as _json
+    from waset_ops import board as _board
+    with ops.store.read() as c:
+        it = ops.item(c, iid)
+    proj = _json.loads(it['projected'] or '{}')
+    bi = monday_item(iid, fmt=fmt, code=code, status=proj.get('status') or '', caption=caption, topaz=topaz,
+                     asset=proj.get('asset') or '', group=proj.get('_group'), name=it['name'])
+    for k in _board.SYSTEM:
+        v = proj.get(k)
+        if v is None or k in ('status', 'asset'):
+            continue
+        kind = _board.KIND.get(k)
+        if kind == 'link':
+            set_cell(bi, k, v, {'url': v})
+        elif kind == 'long':
+            set_cell(bi, k, v, {'text': v})
+        elif kind == 'datetime':
+            set_cell(bi, k, 'x', rules.monday_publish_at_value(rules.instant(v)))
+        elif kind == 'date':
+            set_cell(bi, k, v, {'date': v})
+        elif kind == 'hour':
+            h, m = v.split(':')
+            set_cell(bi, k, v, {'hour': int(h), 'minute': int(m)})
+        else:
+            set_cell(bi, k, v)
+    return bi

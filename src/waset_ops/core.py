@@ -32,6 +32,7 @@ OUTBOX_MAX_ATTEMPTS = 6
 # any system column, but only clears values it wrote itself (tracked as '_ours').
 # Found at cutover: clearing v1 dates, delivery links and metadata destroyed data.
 PROPOSAL_TTL = 30 * 60
+STALE_SNAPSHOT_SECONDS = 20 * 60   # longer than a WF1 run (lease 15 min): older snapshots can't predate an ack
 RUN_TTL = {'wf1': 900, 'wf3': 600, 'wf2': 300}
 
 
@@ -512,6 +513,17 @@ class CoreMixin:
                         prev = loads(it['projected'], {}) or {}
                         confirmed = {**prev, **{k: v for k, v in compare.items() if not k.startswith('h:')}}
                         confirmed['_ours'] = sorted(set(prev.get('_ours') or []) | set(compare.get('_ours') or []))
+                        # Remember what the board showed before this write: a board snapshot read before the
+                        # write landed still shows it, and must not be mistaken for a human edit (audit M-1).
+                        before = dict(prev.get('_prev') or {})
+                        old_observed = loads(it['observed'], {}) or {}
+                        for k, v in compare.items():
+                            if k.startswith('_'):
+                                continue
+                            was = old_observed.get(k[2:]) if k.startswith('h:') else prev.get(k)
+                            if was != v:
+                                before[k] = {'v': was, 'at': now}
+                        confirmed['_prev'] = {k: x for k, x in before.items() if now - x['at'] < STALE_SNAPSHOT_SECONDS}
                         pending = {k: v for k, v in (loads(it['pending_projection'], {}) or {}).items()
                                    if not (k.startswith('h:') and k[2:] in human and v == human[k[2:]])}
                         if human:

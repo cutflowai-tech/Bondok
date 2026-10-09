@@ -9,7 +9,8 @@ import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from support import (OWNER_ID, T0, Command, OpsCase, monday_item, owner_cmd, rules, set_cell)
+from support import (OWNER_ID, T0, Command, OpsCase, board_from_projection, monday_item, owner_cmd, rules,
+                     set_cell)
 
 from waset_ops import board
 
@@ -949,3 +950,45 @@ class CutoverPreservesLegacyBoardValues(OpsCase):
         jobs = self.ops.outbox_take(['monday'], 't', 50)
         cols = {k for j in jobs for k in j['payload']['columns']}
         self.assertIn('date_mm7y8s9t', cols)   # our own reservation display is cleared
+
+
+class StaleBoardSnapshot(OpsCase):
+    """Audit M-1 (critical): WF1 reads the board, WF2 lands a display write, then WF1 observes the old
+    snapshot. v2's own previous values must not be read back as human edits."""
+
+    OLD = 'Old caption from the board, DM us for edits. 🔥\n\n#reels'
+    NEW = 'Owner approved caption in Slack, DM us. 🔥\n\n#reels'
+
+    def test_owner_caption_not_reverted_by_stale_snapshot(self):
+        self.make_ready('190', 'Post', caption=self.OLD)
+        self.drain_monday()
+        stale = board_from_projection(self.ops, '190', fmt='Post', caption=self.OLD)
+        self.observe(stale)
+        self.ops.submit(owner_cmd('cap2', 'update_caption', '190', text=self.NEW))
+        self.drain_monday()
+        r = self.observe(stale)
+        self.assertEqual(r['edits'], [])
+        self.assertEqual(self.item('190')['caption'], self.NEW)
+
+    def test_owner_reschedule_not_reverted_and_new_slot_not_released(self):
+        self.make_ready('191', 'Story')
+        self.drain_monday()
+        stale = board_from_projection(self.ops, '191')
+        a = self.res('191')['slot']
+        b = rules.iso(rules.instant(a) + timedelta(days=1))
+        self.assertEqual(self.ops.submit(owner_cmd('mv', 'request_reschedule', '191', at=b))['state'], 'completed')
+        self.drain_monday()
+        r = self.observe(stale)
+        self.assertEqual(r['edits'], [])
+        self.assertEqual(self.res('191')['slot'], b)
+        self.assertIsNone(self.item('191')['hold'])
+
+    def test_genuine_edit_after_window_is_still_applied(self):
+        self.make_ready('192', 'Post', caption=self.OLD)
+        self.drain_monday()
+        self.ops.submit(owner_cmd('cap2', 'update_caption', '192', text=self.NEW))
+        self.drain_monday()
+        self.clock.advance(25 * 60)                 # a later snapshot: the person really typed the old text again
+        r = self.observe(board_from_projection(self.ops, '192', fmt='Post', caption=self.OLD))
+        self.assertEqual(len(r['edits']), 1, r)
+        self.assertEqual(self.item('192')['caption'], self.OLD)
