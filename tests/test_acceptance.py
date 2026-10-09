@@ -597,8 +597,10 @@ class PreparationCoverageAndQuietness(OpsCase):
         self.topaz('380')
         self.assertEqual(self.ops.work_queue(limit=20)[0]['item_id'], '380')
         self.clock.advance(60)
-        self.select('380')                                     # prepared once; the nudge is consumed
-        self.assertNotIn('380', [x['item_id'] for x in self.ops.work_queue(limit=20)][:1])
+        r = self.select('380')                                 # prepared once; the nudge is consumed
+        self.assertEqual(r['next'], 'prepare')
+        q = {x['item_id']: x for x in self.ops.work_queue(limit=30)}
+        self.assertEqual(q['380']['priority'], 1)              # now simply waiting for its media result
 
     def test_same_problem_is_not_reapplied(self):
         self.observe(monday_item('330', fmt='Story', code='LIP12', extra={'source_item': ('9330', '"9330"')}))
