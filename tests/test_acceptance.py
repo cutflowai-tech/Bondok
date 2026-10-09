@@ -1530,3 +1530,74 @@ class CairoTimeInput(unittest.TestCase):
         with self.assertRaisesRegex(rules.RuleError, 'Invalid date'):
             rules.cairo_local(2026, 2, 30, 21, 0)
         self.assertEqual(rules.iso(rules.cairo_local(2026, 10, 15, 21, 0)), '2026-10-15T18:00:00Z')
+
+
+class OwnerJourneySequence(OpsCase):
+    """The owner's end-to-end sequence from the audit brief, with the state verified after every transition:
+    schedule -> change caption -> replace video -> pause -> resume -> reschedule -> publish -> provider
+    timeout -> restart -> reconcile."""
+
+    CAP1 = 'Sunlight sets the pace, DM us for edits. 🔥\n\n#reels'
+    CAP2 = 'New angle on the same view, DM us. 🌇\n\n#reels'
+
+    def published_count(self, iid):
+        with self.ops.store.read() as c:
+            return c.execute("SELECT COUNT(*) FROM ops_attempts WHERE item_id=? AND stage='published'", (iid,)).fetchone()[0]
+
+    def ready_again(self, iid, n):
+        self.select(iid, n)
+        self.topaz(iid, n)
+        self.assertEqual(self.select(iid, n).get('next'), 'prepare')
+        mid = self.add_media(iid, 'Post', n)
+        self.wf1('prep_media', iid, result={'ready': True, 'mediaId': mid})
+
+    def test_full_sequence(self):
+        iid = '990'
+        # 1 schedule
+        self.make_ready(iid, 'Post', caption=self.CAP1)
+        s1 = self.res(iid)['slot']
+        rev1 = self.res(iid)['content_rev']
+        # 2 caption change: same slot, re-bound to the new content revision
+        self.assertEqual(self.ops.submit(owner_cmd('cap', 'update_caption', iid, text=self.CAP2))['state'], 'completed')
+        r = self.res(iid)
+        self.assertEqual(r['slot'], s1)
+        self.assertGreater(r['content_rev'], rev1)
+        # 3 editor replaces the video: authorization dropped until the new file is verified
+        self.select(iid, 2)
+        self.assertIsNone(self.res(iid))
+        self.assertNotEqual(self.item(iid)['readiness'], 'ready')
+        self.ready_again(iid, 2)
+        self.assertIsNotNone(self.res(iid))
+        # 4 pause: no reservation, nothing due
+        self.ops.submit(owner_cmd('p', 'pause', iid))
+        self.assertIsNone(self.res(iid))
+        self.assertEqual(self.ops.due('w')['work'], [])
+        # 5 resume: scheduled again
+        self.assertTrue(self.ops.submit(owner_cmd('r', 'resume', iid, explicit=True))['resumed'])
+        self.assertIsNotNone(self.res(iid))
+        # 6 reschedule to an owner time
+        at = rules.iso(rules.cairo_local(2026, 10, 15, 21, 0))
+        self.assertEqual(self.ops.submit(owner_cmd('rs', 'request_reschedule', iid, at=at))['scheduled'], at)
+        # 7 publish: claim, container, commit
+        self.clock.set(rules.instant(at) + timedelta(seconds=30))
+        cl = self.ops.claim(iid, 'wf2-a')
+        self.assertTrue(cl['claimed'])
+        self.assertEqual(cl['payload']['caption'], self.CAP2)
+        self.ops.container(cl['attempt_id'], 'wf2-a', cl['fence'], 'C1')
+        self.assertTrue(self.ops.commit(cl['attempt_id'], 'wf2-a', cl['fence'], source_asset='id:FILE2@rev2',
+                                        container_status='FINISHED')['committed'])
+        # 8 provider timeout: no result arrives; 9 restart: the worker is gone, a new WF2 run starts
+        self.clock.advance(20 * 60)
+        self.ops.due('wf2-b')
+        self.assertEqual(self.item(iid)['publication'], 'outcome_unknown')
+        self.assertFalse(self.ops.claim(iid, 'wf2-b').get('claimed'))       # never re-claimed while unknown
+        self.assertFalse(any(w['kind'] == 'publish' for w in self.ops.due('wf2-c')['work']))
+        # 10 reconcile: container not yet PUBLISHED stays unknown; PUBLISHED confirms exactly once
+        self.assertEqual(self.ops.reconcile(cl['attempt_id'], 'FINISHED')['stage'], 'outcome_unknown')
+        self.assertEqual(self.ops.reconcile(cl['attempt_id'], 'PUBLISHED')['stage'], 'published')
+        self.assertEqual(self.item(iid)['publication'], 'published')
+        self.assertEqual(self.published_count(iid), 1)
+        self.clock.advance(3 * 86400)
+        self.ops.repair()
+        self.assertEqual(self.ops.due('wf2-d')['work'], [])
+        self.assertEqual(self.published_count(iid), 1)
