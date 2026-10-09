@@ -173,7 +173,11 @@ class Agent:
         convo = list(history)[-HISTORY:] + [{'role': 'user', 'content': f'[{"owner" if actor == self.bridge.owner else "member"}] ' + text[:6000]}]
         outcomes = []
         for _ in range(MAX_STEPS):
-            data = self.model(convo, TOOLS)
+            try:
+                data = self.model(convo, TOOLS)
+            except ServiceError as e:
+                e.outcomes = outcomes          # actions already taken must still be reported (audit H1)
+                raise
             out = data['output']
             convo += out
             calls = [x for x in out if x.get('type') == 'function_call']
@@ -181,7 +185,13 @@ class Agent:
                 reply = '\n'.join(y['text'] for x in out if x.get('type') == 'message'
                                   for y in x.get('content', []) if y.get('type') == 'output_text').strip()
                 return reply, outcomes
-            for call in calls[:MAX_CALLS_PER_STEP]:
+            for n, call in enumerate(calls):
+                if n >= MAX_CALLS_PER_STEP:
+                    # Every function_call needs an output or the next request fails (audit H2).
+                    convo.append({'type': 'function_call_output', 'call_id': call['call_id'],
+                                  'output': dumps({'error': f'Not executed: at most {MAX_CALLS_PER_STEP} actions per '
+                                                            'step; ask for the rest separately'})})
+                    continue
                 try:
                     args = json.loads(call.get('arguments') or '{}')
                     value = self.tool(call['name'], args, ctx)

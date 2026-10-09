@@ -4,6 +4,7 @@ Uses the real handler (waset_ops) and the real Bondok Core with a fake model
 and a fake Slack poster; no network, no paid model calls.
 """
 import json
+import sqlite3
 import sys
 import unittest
 
@@ -327,3 +328,95 @@ class UncertainOutcomeNeedsApproval(BondokCase):
         reply = self.msg(core, '350 مش منشور، رجعه للجدول')
         self.assertIn('Proposal', reply)
         self.assertEqual(self.item('350')['publication'], 'outcome_unknown')
+
+
+class FailAfter:
+    """Scripted model that fails with a ServiceError on call number `fail_at`."""
+    model = 'fake'
+
+    def __init__(self, script, fail_at):
+        self.script, self.fail_at, self.calls = list(script), fail_at, 0
+
+    def __call__(self, history, tools):
+        from agent import ServiceError
+        self.calls += 1
+        if self.calls == self.fail_at:
+            raise ServiceError('model_http_502')
+        step = self.script.pop(0)
+        if 'tools' in step:
+            return {'output': [{'type': 'function_call', 'name': t, 'call_id': f'c{self.calls}-{i}',
+                                'arguments': json.dumps(a)} for i, (t, a) in enumerate(step['tools'])]}
+        return {'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': step['say']}]}]}
+
+
+class SlackAuditHigh(BondokCase):
+    """Audit H1-H4, M1 (Bondok service)."""
+
+    def test_actions_taken_before_model_failure_are_reported(self):              # H1
+        self.make_ready('700', 'Story')
+        core = self.core(FailAfter([{'tools': [('pause_item', {'item': '700', 'reason': 'x'})]}], fail_at=2))
+        reply = self.msg(core, 'وقف 700')
+        self.assertEqual(self.item('700')['owner_state'], 'paused')
+        self.assertNotIn('معملتش أي حاجة', reply)
+        self.assertIn('pause item', reply)
+
+    def test_more_than_six_calls_get_outputs(self):                               # H2
+        for i in range(7):
+            self.make_ready(str(710 + i), 'Story', code='LIP%d' % (10 + i))
+        seen = []
+
+        class Strict(FailAfter):
+            def __call__(s, history, tools):
+                calls = {x['call_id'] for x in history if isinstance(x, dict) and x.get('type') == 'function_call'}
+                outs = {x['call_id'] for x in history if isinstance(x, dict) and x.get('type') == 'function_call_output'}
+                seen.append(calls - outs)
+                return FailAfter.__call__(s, history, tools)
+        core = self.core(Strict([{'tools': [('pause_item', {'item': str(710 + i)}) for i in range(7)]},
+                                 {'say': 'وقفت ٦ والسابع محتاج طلب تاني'}], fail_at=99))
+        reply = self.msg(core, 'وقف كل دول')
+        self.assertEqual(seen[-1], set())                     # no unanswered function_call is sent back
+        self.assertIn('وقفت', reply)
+
+    def test_replies_in_proposal_notification_thread_are_accepted(self):          # H3
+        posted = []
+        core = Core(self.env, model=FakeModel(), ops=self.ops, post=lambda t, th=None: posted.append(t) or {'ts': '1700000009.000100'})
+        with self.ops.store.tx() as c:
+            self.ops.notify(c, 'proposal:B-1', 'x', None, proposal_id='B-1')
+        core.deliver_notifications()
+        known = lambda ts: bool(core.store.kv('thread:' + ts))
+        body = {'team_id': 'T1', 'event': {'type': 'message', 'channel': 'C1', 'user': OWNER,
+                                           'thread_ts': '1700000009.000100', 'text': 'اعتمد B-1'}}
+        self.assertTrue(accept_event(body, 'C1', 'T1', known, 'UBOT'))
+
+    def test_watchdog_runs_when_notifications_fail(self):                         # H4
+        core = self.core(FakeModel())
+        core.deliver_notifications = lambda: (_ for _ in ()).throw(sqlite3.DatabaseError('unreadable'))
+        core.ops.health = lambda: (_ for _ in ()).throw(sqlite3.DatabaseError('unreadable'))
+        posted = []
+        core.post = lambda t, th=None: posted.append(t)
+        try:
+            core.deliver_notifications()
+        except sqlite3.DatabaseError:
+            pass
+        core.run_watchdog()
+        self.assertTrue(any('not readable' in p for p in posted), posted)
+
+    def test_bad_error_log_line_does_not_disable_watchdog(self):                  # M1
+        core = self.core(FakeModel())
+        log = self.dir / 'errors.log'
+        log.write_text('{"path": "/v2/prep/step", "kind": "storage", "error": "x"}\n{"path": "/v2/pr\n')
+        self.assertTrue(core.watchdog())
+        self.assertEqual(core.watchdog(), [])
+
+    def test_undelivered_alert_is_reported_again(self):
+        core = self.core(FakeModel())
+        core.ops.health = lambda: (_ for _ in ()).throw(sqlite3.DatabaseError('unreadable'))
+        def broken(t, th=None):
+            raise OSError('slack down')
+        core.post = broken
+        with self.assertRaises(OSError):
+            core.run_watchdog()
+        posted = []
+        core.post = lambda t, th=None: posted.append(t)
+        core.run_watchdog()
+        self.assertTrue(any('not readable' in p for p in posted))

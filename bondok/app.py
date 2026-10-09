@@ -52,6 +52,7 @@ class Core:
 
     def __init__(self, env: dict, *, model=None, monday=None, post=None, ops=None):
         self.env = env
+        self._undo = []
         self.store = Store(Path(env.get('BONDOK_STATE_DIR', '/var/lib/bondok')) / 'bondok.sqlite')
         self.ops = ops or Ops(env['PIPELINE_DB'])
         self.owner = env['SLACK_OWNER_ID']
@@ -82,8 +83,14 @@ class Core:
         try:
             reply, outcomes = self.agent.answer(text, actor=actor, thread=thread, event_id=event_id, history=history)
         except ServiceError as e:
-            # Model unavailable: nothing is guessed or executed; automation continues.
+            # Model unavailable: nothing more is guessed or executed; automation continues.
             LOG.warning('model_error code=%s detail=%s', e.code, e.detail)
+            done = getattr(e, 'outcomes', None)
+            if done:
+                # Actions already ran before the model failed: report them, never "nothing was done" (audit H1).
+                reply = '⚠️ الموديل وقف في النص، بس الخطوات دي اتنفذت:' + ''.join('\n\n' + render_outcome(o) for o in done)
+                self.store.remember(thread, 'assistant', reply)
+                return reply
             return self._fallback(thread, e.code)
         if getattr(self.model, 'last_budget', None):
             LOG.warning('model_low_credit reduced_output_budget=%s', self.model.last_budget)
@@ -125,7 +132,14 @@ class Core:
         for job in self.ops.outbox_take(['slack'], 'bondok', limit, lease=120):
             p = job['payload']
             try:
-                self.post(p['text'], p.get('thread'))
+                sent = self.post(p['text'], p.get('thread'))
+                try:
+                    ts = sent['ts'] if sent is not None else None
+                except (KeyError, TypeError):
+                    ts = None
+                if ts and p.get('proposal_id'):
+                    # Replies in a proposal notification's thread reach Bondok (audit H3).
+                    self.store.kv('thread:' + ts, True)
                 self.ops.outbox_ack(job['id'], 'bondok', True)
                 n += 1
             except Exception as ex:  # noqa: BLE001 - delivery failure is retried with backoff
@@ -136,6 +150,7 @@ class Core:
     def watchdog(self) -> list[str]:
         """Alerts on transitions only; unchanged states stay quiet."""
         alerts = []
+        self._undo = []
         try:
             ages = self.ops.health()['heartbeat_age_seconds']
             db_ok = True
@@ -156,12 +171,25 @@ class Core:
         alerts += self._helper_errors()
         return alerts
 
+    def run_watchdog(self):
+        alerts = self.watchdog()
+        try:
+            for a in alerts:
+                self.post(a)
+        except Exception:
+            for key, prev in reversed(self._undo):     # not delivered: report the transition next time
+                self.store.kv('wd:' + key, prev if prev is not None else False)
+            raise
+
     def _flip(self, key, value) -> bool:
         """Record a boolean state; True when it changed (first observation of a
         healthy state is not a change worth reporting)."""
         prev = self.store.kv('wd:' + key)
         self.store.kv('wd:' + key, value)
-        return prev != value and not (prev is None and value is False)
+        changed = prev != value and not (prev is None and value is False)
+        if changed:
+            self._undo.append((key, prev))      # restored if the alert cannot be posted (audit M1)
+        return changed
 
     def _helper_errors(self) -> list[str]:
         """errors.log is written by helper.py without SQLite, so failures stay
@@ -176,9 +204,14 @@ class Core:
             offset = 0
         if size == offset:
             return []
+        lines = []
         with log.open() as f:
             f.seek(offset)
-            lines = [json.loads(x) for x in f.read().splitlines() if x.strip().startswith('{')]
+            for x in f.read().splitlines():
+                try:
+                    lines.append(json.loads(x)) if x.strip().startswith('{') else None
+                except ValueError:
+                    lines.append({'kind': 'unreadable', 'path': 'errors.log', 'error': x[:200]})  # audit M1
         self.store.kv('errors_offset', size)
         infra = [x for x in lines if x.get('kind') not in ('rejected', 'stale', 'fenced', 'slot_taken', 'retired')]
         if not infra:
@@ -260,11 +293,14 @@ class Runtime(Core):
         while not self.stop.wait(20):
             try:
                 self.deliver_notifications()
-                if int(time.time()) % 60 < 20:
-                    for a in self.watchdog():
-                        self._post(a)
+            except Exception as ex:  # noqa: BLE001 - must not stop the watchdog (audit H4)
+                LOG.error('background_failed part=notifications type=%s', type(ex).__name__)
+            if int(time.time()) % 60 >= 20:
+                continue
+            try:
+                self.run_watchdog()
             except Exception as ex:  # noqa: BLE001
-                LOG.error('background_failed type=%s', type(ex).__name__)
+                LOG.error('background_failed part=watchdog type=%s', type(ex).__name__)
 
     def run(self):
         from slack_bolt.adapter.socket_mode import SocketModeHandler
