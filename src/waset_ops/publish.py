@@ -25,7 +25,9 @@ MAX_TRANSIENT_RETRIES = 3
 MAX_ATTEMPTS_PER_SLOT = 3      # each claim creates an Instagram container; stop retrying a failing slot
 
 
-TRANSIENT_CODES = {1, 2, 4, 17, 32, 341, 613}   # Meta Graph API: temporary / throttling
+# Meta Graph API throttling codes: the request was refused before processing, so nothing was posted. Generic
+# "unknown/temporary" codes (1, 2) do not prove that and stay a normal failure (round-2 review #8).
+TRANSIENT_CODES = {4, 17, 32, 613}
 
 
 def _transient_provider_error(error) -> bool:
@@ -34,7 +36,7 @@ def _transient_provider_error(error) -> bool:
     except ValueError:
         return False
     e = e.get('error', e) if isinstance(e, dict) else {}
-    return isinstance(e, dict) and (e.get('is_transient') is True or e.get('code') in TRANSIENT_CODES)
+    return isinstance(e, dict) and e.get('code') in TRANSIENT_CODES
 
 
 class PublishMixin:
@@ -101,6 +103,19 @@ class PublishMixin:
                 return {'claimed': False, 'reason': reason, 'held': True}
             tries = c.execute("SELECT COUNT(*) FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned'",
                               (str(item_id), res['slot'])).fetchone()[0]
+            if tries >= MAX_ATTEMPTS_PER_SLOT and not self.active_attempt(c, item_id) and \
+                    all('could not be checked' in (r['evidence'] or '') for r in c.execute(
+                        "SELECT evidence FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned'",
+                        (str(item_id), res['slot']))):
+                # Only Dropbox was unreadable at the commit point: nothing is wrong with the item; stop creating
+                # containers for this slot and take the next one without asking the owner (round-2 review #10).
+                self.release(c, it, 'source unverifiable at publication time')
+                out = self.try_schedule(c, item_id, worker)
+                self.notify(c, f"unverifiable:{it['item_id']}:{res['slot']}", f"{it['name']} ({it['item_id']}) was not "
+                            'published because Dropbox could not be read at publication time; nothing was posted. '
+                            f"Next slot: {rules.display(rules.instant(out['scheduled'])) if out.get('scheduled') else 'none yet'}.",
+                            it['item_id'])
+                return {'claimed': False, 'reason': 'Dropbox unreadable at publication time', 'rescheduled': out}
             if tries >= MAX_ATTEMPTS_PER_SLOT and not self.active_attempt(c, item_id):
                 # Container errors or commit refusals repeat every minute, each with a new Instagram container.
                 last = c.execute("SELECT evidence FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned' "

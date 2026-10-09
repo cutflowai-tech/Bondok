@@ -54,7 +54,7 @@ class Core:
 
     def __init__(self, env: dict, *, model=None, monday=None, post=None, ops=None):
         self.env = env
-        self._undo = []
+        self._undo, self._new_offset, self._defer_offset = [], None, False
         self.store = Store(Path(env.get('BONDOK_STATE_DIR', '/var/lib/bondok')) / 'bondok.sqlite')
         self.ops = ops or Ops(env['PIPELINE_DB'])
         self.owner = env['SLACK_OWNER_ID']
@@ -149,10 +149,10 @@ class Core:
         return n
 
     # ------------------------------------------------------------------ watchdog (independent of the helper)
-    def watchdog(self) -> list[str]:
+    def watchdog(self, defer_offset=False) -> list[str]:
         """Alerts on transitions only; unchanged states stay quiet."""
         alerts = []
-        self._undo = []
+        self._undo, self._new_offset, self._defer_offset = [], None, defer_offset
         try:
             ages = self.ops.health()['heartbeat_age_seconds']
             db_ok = True
@@ -174,7 +174,7 @@ class Core:
         return alerts
 
     def run_watchdog(self):
-        alerts = self.watchdog()
+        alerts = self.watchdog(defer_offset=True)
         try:
             for a in alerts:
                 self.post(a)
@@ -182,6 +182,8 @@ class Core:
             for key, prev in reversed(self._undo):     # not delivered: report the transition next time
                 self.store.kv('wd:' + key, prev if prev is not None else False)
             raise
+        if self._new_offset is not None:               # helper errors reported: advance only now (#13)
+            self.store.kv('errors_offset', self._new_offset)
 
     def _flip(self, key, value) -> bool:
         """Record a boolean state; True when it changed (first observation of a
@@ -214,7 +216,10 @@ class Core:
                     lines.append(json.loads(x)) if x.strip().startswith('{') else None
                 except ValueError:
                     lines.append({'kind': 'unreadable', 'path': 'errors.log', 'error': x[:200]})  # audit M1
-        self.store.kv('errors_offset', size)
+        if self._defer_offset:
+            self._new_offset = size
+        else:
+            self.store.kv('errors_offset', size)
         infra = [x for x in lines if x.get('kind') not in ('rejected', 'stale', 'fenced', 'slot_taken', 'retired')]
         if not infra:
             return []

@@ -9,7 +9,7 @@ import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from support import (OWNER_ID, T0, Command, OpsCase, board_from_projection, monday_item, owner_cmd, rules,
+from support import (OWNER_ID, ROOT, T0, Command, OpsCase, board_from_projection, monday_item, owner_cmd, rules,
                      set_cell)
 
 from waset_ops import board
@@ -1615,3 +1615,103 @@ class CaptionBriefRequests(OpsCase):
         self.assertFalse(q())
         self.clock.advance(86400)
         self.assertTrue(q())
+
+
+class RoundTwoRegressions(OpsCase):
+    """Round-2 review of the audit fixes (#1-#7, #9, #10, #12)."""
+
+    def test_genuine_pause_after_recent_write_is_applied(self):                      # 1
+        self.make_ready('1100', 'Story')
+        self.drain_monday()
+        slot = rules.instant(self.res('1100')['slot'])
+        self.ops.submit(owner_cmd('p', 'pause', '1100'))
+        self.drain_monday()
+        self.ops.submit(owner_cmd('r', 'resume', '1100', explicit=True))
+        self.drain_monday()                                  # resume's status write acked now
+        self.clock.advance(60)
+        self.ops.run_finish('wf1', self.run_id)
+        self.run_id = 'run-2'
+        self.fence = self.ops.run_start('wf1', self.run_id)['fence']   # a WF1 run that starts after the ack
+        b = board_from_projection(self.ops, '1100')
+        set_cell(b, 'status', 'Paused')
+        self.ops.observe([b], actor='service:wf1')
+        self.assertEqual(self.item('1100')['owner_state'], 'paused')
+        self.clock.set(slot + timedelta(seconds=30))
+        self.assertFalse(self.ops.claim('1100', 'w').get('claimed'))
+
+    def test_board_posted_holds_once_and_owner_answer_sticks(self):                  # 2
+        self.make_ready('1101', 'Story')
+        self.drain_monday()
+        b = board_from_projection(self.ops, '1101')
+        set_cell(b, 'status', 'Posted')
+        for _ in range(4):
+            self.observe(b)
+            self.clock.advance(11 * 60)
+        self.assertEqual(sum('Held' in o['payload'] for o in self.outbox('slack')), 1)
+        self.ops.submit(owner_cmd('ro', 'resolve_outcome', '1101', explicit=True, outcome='not_published'))
+        self.observe(b)
+        self.assertIsNone(self.item('1101')['hold'])
+        self.assertIsNotNone(self.res('1101'))
+
+    def test_typed_post_link_holds_once(self):                                         # 3
+        self.make_ready('1102', 'Story')
+        self.drain_monday()
+        b = board_from_projection(self.ops, '1102')
+        set_cell(b, 'post_link', 'https://www.instagram.com/p/abc/', {'url': 'https://www.instagram.com/p/abc/'})
+        for _ in range(3):
+            self.observe(b)
+            self.clock.advance(11 * 60)
+        self.assertEqual(sum('Held' in o['payload'] for o in self.outbox('slack')), 1)
+
+    def test_rejected_format_write_back_is_sent_unguarded(self):                       # 4
+        self.make_ready('1103', 'Story')
+        self.drain_monday()
+        b = board_from_projection(self.ops, '1103')
+        set_cell(b, 'format', 'Carousel', {'index': 9})
+        self.observe(b)
+        jobs = [json.loads(o['payload']) for o in self.outbox('monday') if o['state'] == 'pending'
+                and o['dedupe_key'].startswith('monday-h:')]
+        self.assertTrue(jobs)
+        self.assertFalse(any(j.get('guard') for j in jobs))
+
+    def test_failed_human_write_not_dropped_by_newer_display_job(self):              # 6
+        self.make_ready('1104', 'Post')
+        self.drain_monday()
+        self.ops.submit(owner_cmd('c', 'update_caption', '1104', text='Brand new caption, DM us 🔥\n\n#reels'))
+        h = [j for j in self.ops.outbox_take(['monday'], 'w', 10) if j['payload']['compare'].get('h:caption')][0]
+        self.ops.submit(owner_cmd('p', 'pause', '1104'))
+        self.assertFalse(self.ops.outbox_ack(h['id'], 'w', False, 'Monday 500').get('superseded'))
+
+    def test_first_file_selection_is_not_a_recent_change(self):                       # 9
+        self.observe(monday_item('1105', fmt='Story'))
+        self.select('1105', 1)
+        self.assertNotIn('_file_changed_at', json.loads(self.item('1105')['observed']))
+
+    def test_generic_temporary_code_is_not_auto_retried(self):                         # 8
+        from waset_ops.publish import _transient_provider_error
+        self.assertFalse(_transient_provider_error(json.dumps({'error': {'code': 1, 'is_transient': True}})))
+        self.assertTrue(_transient_provider_error(json.dumps({'error': {'code': 4}})))
+
+    def test_dropbox_outage_at_slot_moves_on_without_hold(self):                       # 10
+        self.make_ready('1106', 'Story')
+        self.clock.set(rules.instant(self.res('1106')['slot']) + timedelta(seconds=30))
+        for i in range(4):
+            cl = self.ops.claim('1106', 'w%d' % i)
+            if not cl.get('claimed'):
+                break
+            self.ops.container(cl['attempt_id'], 'w%d' % i, cl['fence'], 'C%d' % i)
+            self.ops.commit(cl['attempt_id'], 'w%d' % i, cl['fence'], source_asset='unverifiable', container_status='FINISHED')
+            self.clock.advance(60)
+        self.assertIsNone(self.item('1106')['hold'])
+        self.assertIsNotNone(self.res('1106'))
+
+    def test_intent_phrasings(self):                                                     # 12
+        import sys
+        sys.path.insert(0, str(ROOT / 'bondok'))
+        from bridge import explicit
+        self.assertTrue(explicit('confirm_topaz', {}, 'التوباز خلاص'))
+        self.assertTrue(explicit('skip', {}, 'اتخطاه'))
+        self.assertTrue(explicit('change_format', {'format': 'Post'}, 'خليها بوست زي ما قلتلك'))
+        self.assertFalse(explicit('resolve_outcome', {'outcome': 'published'}, 'نزلها'))
+        self.assertFalse(explicit('resolve_outcome', {'outcome': 'published'}, 'ما اتنشرش'))
+        self.assertTrue(explicit('resolve_outcome', {'outcome': 'published'}, 'نزلت خلاص'))

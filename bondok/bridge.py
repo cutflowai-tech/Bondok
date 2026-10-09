@@ -27,7 +27,7 @@ _PREFIX_VERB = ('', 'و', 'ف')
 _SUFFIX = ('', 'ه', 'ها', 'هم', 'ي', 'و', 'ت', 'وا')
 _QUESTION_START = {'هل', 'ليه', 'ايه', 'امتي', 'ازاي', 'فين', 'مين', 'is', 'are', 'has', 'have', 'did', 'does', 'do',
                    'was', 'were', 'what', 'why', 'when', 'how', 'can', 'could', 'should', 'will', 'would'}
-_NEGATION = {'مش', 'مو', 'لا', 'لم', 'لن', 'ما', 'مافيش', 'مفيش', 'لسه', 'بلاش', 'not', 'no', 'never', 'dont', 'doesnt',
+_NEGATION = {'مش', 'مو', 'لا', 'لم', 'لن', 'مافيش', 'مفيش', 'لسه', 'بلاش', 'not', 'no', 'never', 'dont', 'doesnt',
              'didnt', 'isnt', 'wasnt', 'arent', 'havent', 'hasnt', 'wont', 'cant', 'yet', 'without'}
 
 
@@ -62,19 +62,23 @@ def _statement(text: str, tokens) -> bool:
     """A plain affirmative statement/instruction: no question, no negation anywhere."""
     if '?' in text or '؟' in text or (tokens and tokens[0] in _QUESTION_START):
         return False
-    return not any(t in _NEGATION or (t.startswith('م') and t.endswith('ش') and len(t) >= 4) for t in tokens)
+    if any(t in _NEGATION or (t.startswith('م') and t.endswith('ش') and len(t) >= 4) for t in tokens):
+        return False
+    # "ما اتنشرش" (negation split over two words); a plain "ما" ("زي ما قلتلك") is not a negation.
+    return not any(a == 'ما' and b.endswith('ش') for a, b in zip(tokens, tokens[1:]))
 
 
 _FORMAT_WORDS = {'Post': ('بوست', 'ريل', 'ريلز', 'post', 'reel', 'reels'),
                  'Story': ('ستوري', 'استوري', 'story', 'stories')}
 _CHANGE = ('حول', 'غير', 'خلي', 'اعمل', 'change', 'convert', 'switch', 'make', 'turn')
 _TOPAZ = ('توباز', 'topaz', 'topazed')
-_DONE = ('خلص', 'اتعمل', 'تم', 'اتم', 'جاهز', 'done', 'confirmed', 'finished', 'ready', 'complete', 'completed',
+_DONE = ('خلص', 'خلاص', 'اتعمل', 'تم', 'اتم', 'جاهز', 'done', 'confirmed', 'finished', 'ready', 'complete', 'completed',
          'topazed')
 _RESUME = ('كمل', 'استانف', 'رجع', 'شغل', 'resume', 'unpause', 'continue')
 _PAUSE = ('وقف', 'ايقاف', 'pause', 'paused', 'hold')
-_SKIP = ('تخطي', 'اتخطي', 'سكيب', 'skip', 'الغي', 'cancel')
-_PUBLISHED = ('اتنشر', 'نزل', 'منشور', 'published', 'posted', 'live')
+_SKIP = ('تخطي', 'اتخطي', 'تخطا', 'اتخطا', 'سكيب', 'skip', 'الغي', 'cancel')
+_PUBLISHED = ('اتنشر', 'منشور', 'published', 'posted', 'live')
+_PUBLISHED_EXACT = {'نزلت', 'نزلتي', 'اتنزل', 'اتنزلت'}
 _APPROVE = ('اعتمد', 'موافق', 'approve', 'approved', 'ok', 'okay', 'تمام')
 
 
@@ -99,7 +103,8 @@ def explicit(op: str, args: dict, text: str) -> bool:
         return _has(toks, _SKIP, _PREFIX_VERB) and not _has(toks, _PAUSE + _RESUME)
     if op == 'resolve_outcome':
         # "Not published" re-opens scheduling and could cause a duplicate post: always an owner approval.
-        return args.get('outcome') == 'published' and _has(toks, _PUBLISHED, _PREFIX_VERB)
+        return args.get('outcome') == 'published' and (_has(toks, _PUBLISHED, _PREFIX_VERB) or
+                                                        any(t in _PUBLISHED_EXACT for t in toks))
     if op == 'approve_caption':
         return _has(toks, _APPROVE, _PREFIX_VERB)
     if op == 'update_caption':

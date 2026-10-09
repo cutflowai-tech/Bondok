@@ -14,6 +14,7 @@ from .db import audit, dumps, loads
 PROTECTED_PUBLICATION = ('published', 'outcome_unknown', 'in_progress')
 RELIST_READY_SECONDS = 30 * 60          # metadata-only revision check for ready items
 INFRA_RECHECK_SECONDS = 20 * 60
+FRESH_READ_SECONDS = 120              # non-WF1 callers read the board right before observing
 TIME_KEYS = ('publish_at', 'post_date', 'post_time')
 RESUMABLE_HOLDS = ('resume', 'rejected_edit', 'publish_retry_limit')
 BACKOFF_STEPS = (600, 1200, 2400, 3600) # waiting/blocked items: fair, bounded backoff
@@ -116,6 +117,12 @@ class ItemsMixin:
         results, created = [], []
         seen = set()
         src = {str(s['id']): s for s in (sources or [])}
+        # Earliest moment this snapshot can have been read: WF1 reads the board after its run started; other
+        # callers read just before observing. Only a write acknowledged after that may be missing from the
+        # snapshot (stale); an older one is not, so a matching value is a genuine edit (round-2 review #1).
+        with self.store.read() as c:
+            r = c.execute("SELECT started FROM ops_runs WHERE kind='wf1'").fetchone()
+        floor = (r['started'] or 0) if actor == 'service:wf1' and r else self.now() - FRESH_READ_SECONDS
         for raw in items:
             iid = str(raw['id'])
             seen.add(iid)
@@ -126,7 +133,7 @@ class ItemsMixin:
                     self._bootstrap(c, iid, snap)
                     created.append(iid)
                     continue
-                edits = self._diff(c, it, snap)
+                edits = self._diff(c, it, snap, floor)
                 c.execute('UPDATE ops_items SET name=? WHERE item_id=?', (snap.get('name'), iid))
             for e in edits:
                 results.append({'item_id': iid, 'edit': e['key'], **self._apply_edit(iid, e)})
@@ -197,13 +204,14 @@ class ItemsMixin:
                         'new system started. Treated as outcome unknown: it will not be published again until you '
                         'confirm on Instagram and tell Bondok.', iid)
 
-    def _diff(self, c, it, snap) -> list[dict]:
+    def _diff(self, c, it, snap, floor=None) -> list[dict]:
         observed = loads(it['observed'], {}) or {}
         confirmed = loads(it['projected'], {}) or {}
         pending = loads(it['pending_projection'], {}) or {}
         edits = []
+        floor = self.now() - FRESH_READ_SECONDS if floor is None else floor
         recent = {k: x['v'] for k, x in (confirmed.get('_prev') or {}).items()
-                  if self.now() - x.get('at', 0) < STALE_SNAPSHOT_SECONDS}
+                  if x.get('at', 0) > floor and self.now() - x.get('at', 0) < STALE_SNAPSHOT_SECONDS}
         for k in board.HUMAN:
             new = snap.get(k)
             if new == observed.get(k):
@@ -226,6 +234,13 @@ class ItemsMixin:
                 continue                       # snapshot read before our write landed
             if k == 'publish_at' and it.get('requested_at') and new == board.compare_value('publish_at', it['requested_at']):
                 continue                       # already recorded as the requested time (not yet reservable)
+            if k in ('post_date', 'post_time') and it.get('requested_at') and not snap.get('publish_at'):
+                try:
+                    at = board.requested_instant({'post_date': snap.get('post_date'), 'post_time': snap.get('post_time')})
+                except Exception:   # noqa: BLE001 - unreadable values are handled as edits below
+                    at = None
+                if at is not None and rules.iso(at) == it['requested_at']:
+                    continue                   # the legacy pair names the recorded request: not a new edit
             edits.append({'key': k, 'old': pending.get(k, confirmed.get(k)), 'new': new, 'human': False,
                           'snap': {x: snap.get(x) for x in ('publish_at', 'post_date', 'post_time')}})
         c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(observed), it['item_id']))
@@ -246,7 +261,7 @@ class ItemsMixin:
                 r = run('propose', {'kind': 'change_format', 'format': new})
                 if r.get('state') == 'rejected':
                     with self.store.tx() as c:            # write-back survives the rejection (audit MS8)
-                        self.write_human(c, self.item(c, iid), {'format': self.item(c, iid)['format']})
+                        self.write_human(c, self.item(c, iid), {'format': self.item(c, iid)['format']}, guarded=False)
             elif k == 'caption':
                 r = run('update_caption', {'text': new or ''})
             elif k == 'topaz':
@@ -265,6 +280,24 @@ class ItemsMixin:
             self._mark_observed(iid, k, new, r)
             return r
         r = self._system_edit(iid, e, run)
+        # The board value was handled (applied or refused): it is what the board shows now, so it is not an
+        # edit again next cycle (a person's Posted / post link no longer re-holds every run; a value that cannot
+        # be reverted is not re-rejected every run), and the next display write compares against it and
+        # restores the system value where it owns one (round-2 review #2, #3).
+        with self.store.tx() as c:
+            cur = self.item(c, iid)
+            proj = loads(cur['projected'], {}) or {}
+            proj[k] = board.compare_value(k, new) if new is not None else None
+            c.execute('UPDATE ops_items SET projected=? WHERE item_id=?', (dumps(proj), iid))
+            col = board.COL.get(k)
+            for j in c.execute("SELECT id, payload FROM ops_outbox WHERE kind='monday' AND item_id=? AND "
+                               "state IN ('pending','failed')", (iid,)).fetchall():
+                pl = loads(j['payload'], {})
+                if col in (pl.get('guard') or {}):     # jobs queued by the command itself compare against it too
+                    pl['guard'][col]['was'] = proj[k]
+                    c.execute('UPDATE ops_outbox SET payload=? WHERE id=?', (dumps(pl), j['id']))
+            if r.get('state') != 'rejected' or r.get('reverted'):
+                self.project(c, iid)
         if r.get('state') == 'rejected' and not r.get('reverted'):
             # The command's own revert/notice were rolled back with it: restore the board here (audit S7).
             keys = TIME_KEYS if k in TIME_KEYS else (k,)
@@ -315,6 +348,15 @@ class ItemsMixin:
             observed = loads(it['observed'], {}) or {}
             observed[key] = value
             c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(observed), iid))
+            # A person's edit wins over our unsent write of the same column (round-2 review #5) - except our
+            # write-back of a refused edit, which is meant to overwrite it.
+            for j in [] if result.get('state') == 'rejected' else c.execute("SELECT id, payload FROM ops_outbox WHERE kind='monday' AND item_id=? AND "
+                               "dedupe_key LIKE 'monday-h:%' AND state IN ('pending','failed')", (iid,)).fetchall():
+                if 'h:' + key in (loads(j['payload'], {}).get('compare') or {}):
+                    c.execute("UPDATE ops_outbox SET state='superseded', updated=? WHERE id=?", (self.now(), j['id']))
+            pend = loads(self.item(c, iid)['pending_projection'], {}) or {}
+            if result.get('state') != 'rejected' and pend.pop('h:' + key, None) is not None:
+                c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?', (dumps(pend) or None, iid))
             if result.get('state') == 'rejected' and key in ('caption', 'topaz', 'collab', 'code'):
                 self.update_item(c, iid, 'monday', 'rejected board edit',
                                  hold=dumps({'kind': 'rejected_edit', 'reason': f'Board change to {key} was not accepted: '
@@ -328,7 +370,7 @@ class ItemsMixin:
             audit(c, iid, 'revert_system_column', 'monday', {'key': keys, 'why': why})
         return {'state': 'rejected', 'reason': why, 'reverted': key}
 
-    def write_human(self, c, it, values: dict):
+    def write_human(self, c, it, values: dict, guarded=True):
         """Apply an authorized change to a human column (e.g. owner-approved
         caption or format). Recorded as pending so the old board value is not
         mistaken for a new human edit while the write is in flight."""
@@ -339,8 +381,11 @@ class ItemsMixin:
             cols[board.COL[k]] = board.mutation_value(k, v)
             compare['h:' + k] = board.compare_value(k, v)
             # Skip the write if a person typed something else meanwhile (WF2 compare-before-write).
-            guard[board.COL[k]] = {'kind': board.KIND.get(k, 'text'), 'was': observed.get(k), 'new': compare['h:' + k]}
-        payload = {'item_id': it['item_id'], 'columns': cols, 'compare': compare, 'group': None, 'guard': guard}
+            if guarded:
+                guard[board.COL[k]] = {'kind': board.KIND.get(k, 'text'), 'was': observed.get(k), 'new': compare['h:' + k]}
+        payload = {'item_id': it['item_id'], 'columns': cols, 'compare': compare, 'group': None}
+        if guard:
+            payload['guard'] = guard
         self.enqueue(c, 'monday', 'monday-h:' + it['item_id'] + ':' + fingerprint(payload)[:16], payload, it['item_id'])
         c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?',
                   (dumps({**pending, **compare}), it['item_id']))
@@ -598,6 +643,8 @@ class ItemsMixin:
         it = self.item(c, cmd.item_id)
         if it['publication'] == 'published':
             return {'held': False, 'note': 'already published'}
+        if (loads(it['hold'], {}) or {}).get('kind') == cmd.args.get('kind') and not self.reservation(c, it['item_id']):
+            return {'held': True, 'unchanged': True}       # same hold already in place: no new notice
         self.release(c, it, 'hold: ' + cmd.args.get('kind', ''))
         self.update_item(c, it['item_id'], cmd.actor, 'hold', hold=dumps({'kind': cmd.args.get('kind'),
                                                                           'reason': cmd.args.get('reason')}))
@@ -814,12 +861,14 @@ class ItemsMixin:
                 raise Rejected('Source changed while a publication may be in progress', 'in_progress')
             self.release(c, it, 'source file changed', keep_request=True)
             obs = loads(self.item(c, it['item_id'])['observed'], {}) or {}
-            obs['_file_changed_at'] = self.now()       # Slack Topaz confirmations near a change need approval
+            if it['asset_key']:
+                obs['_file_changed_at'] = self.now()   # Slack Topaz confirmations near a change need approval
             if obs.get('topaz') == 'Topazed' and it['topaz_asset'] != asset:
                 # The confirmation belonged to the previous file: show that on the board, so the editor's next
                 # "Topazed" for this version is a visible change (audit MS9).
                 self.write_human(c, self.item(c, it['item_id']), {'topaz': 'Not yet'})
-                obs = {**(loads(self.item(c, it['item_id'])['observed'], {}) or {}), '_file_changed_at': self.now()}
+                obs = {**(loads(self.item(c, it['item_id'])['observed'], {}) or {}),
+                       **({'_file_changed_at': self.now()} if it['asset_key'] else {})}
             c.execute('UPDATE ops_items SET content_rev=content_rev+1, observed=? WHERE item_id=?',
                       (dumps(obs), it['item_id']))
             it = self.update_item(c, it['item_id'], cmd.actor, 'source file changed', asset_key=asset, file_id=f['id'],

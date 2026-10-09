@@ -408,17 +408,20 @@ class CoreMixin:
         guard = {}
         for o in older:
             guard.update(loads(o['payload'], {}).get('guard') or {})
+        for k in force_keys:      # a forced write (revert) overwrites deliberately: no inherited guard (#7)
+            if k in board.COL:
+                guard.pop(board.COL[k], None)
         if 'status' in changes and 'status' not in force_keys and confirmed.get('status') is not None:
             # WF2 reads the board first and skips the write if a person changed the status since v2 last wrote
             # it (e.g. Paused typed between WF1 observations): the edit must reach observe, not be overwritten.
-            guard.setdefault(board.COL['status'], {'kind': 'status', 'was': confirmed.get('status')})
-            guard[board.COL['status']]['new'] = compare.get('status')
+            # Always the latest confirmed board value (a consumed human edit updates it), never an older job's.
+            guard[board.COL['status']] = {'kind': 'status', 'was': confirmed.get('status'), 'new': compare.get('status')}
         payload = {'item_id': str(item_id), 'columns': columns, 'compare': compare, 'group': group_out}
         if guard:
             payload['guard'] = guard
         key = 'monday:' + str(item_id) + ':' + fingerprint(payload)[:16]
-        prior = c.execute('SELECT state FROM ops_outbox WHERE dedupe_key=?', (key,)).fetchone()
-        if prior and prior['state'] not in ('pending', 'failed'):
+        prior = c.execute('SELECT id, state FROM ops_outbox WHERE dedupe_key=?', (key,)).fetchone()
+        if prior and (prior['state'] not in ('pending', 'failed') or prior['id'] in {o['id'] for o in older}):
             # Same values as an earlier job that already ran (A -> B -> A): a new write is needed, not a
             # duplicate of the old one, which INSERT OR IGNORE would silently drop.
             key += ':' + str(next_counter(c, 'outbox:monday'))
@@ -582,9 +585,11 @@ class CoreMixin:
                               'WHERE item_id=? AND issue_key=?',
                               ((result or {}).get('task_id'), now, r['item_id'], p.get('issue_key')))
                 return {'ok': True}
-            if r['kind'] == 'monday' and c.execute(
-                    "SELECT 1 FROM ops_outbox WHERE kind='monday' AND item_id=? AND id>? AND state!='superseded'",
-                    (r['item_id'], job_id)).fetchone():
+            if r['kind'] == 'monday' and r['dedupe_key'].startswith('monday:') and c.execute(
+                    "SELECT 1 FROM ops_outbox WHERE kind='monday' AND item_id=? AND id>? AND state!='superseded' "
+                    "AND dedupe_key LIKE 'monday:%'", (r['item_id'], job_id)).fetchone():
+                # Display jobs only: owner-approved human-column writes (monday-h:) are not re-derived by project()
+                # and must keep retrying (round-2 review #6).
                 # A newer display job exists: never retry these older values after it (audit MS5). Whatever
                 # this job carried is re-derived from the current state instead.
                 c.execute("UPDATE ops_outbox SET state='superseded', last_error=?, updated=? WHERE id=?",
