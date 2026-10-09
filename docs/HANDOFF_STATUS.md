@@ -17,7 +17,7 @@ Nothing is DEPLOYED or ACTIVE. Production is unchanged by this work.
 | Operational DB schema v1 (additive) | **DEPLOYED** — 16 `ops_*` tables; legacy rows unchanged; integrity ok |
 | WF2 Publish When Due v2 | **DEPLOYED, ACTIVE** — active version `4c6e30a8…`; runs every minute, empty queue ends without Monday calls |
 | WF3 Schedule Supervisor v2 | **DEPLOYED, ACTIVE** — active version `b037b023…`; first run 18:05 UTC |
-| WF1 Prepare & Schedule v2 | **IMPORTED (inactive), NOT ACTIVE** — imported version `36b9fcb7…` (release `60bbab0`). Held: cutover gap found (duplicate editor subitems). Fix in `95a5868` (tested), needs owner approval to import + activate |
+| WF1 Prepare & Schedule v2 | **DEPLOYED, STOPPED** — patched version `8d6686d8…` (`95a5868`) ran once (52060, 18:10–18:14 UTC, success; no duplicate editor subitems). Stopped 18:16 UTC: display projection cleared legacy Post Date/Time on 12 items. Fix in `waset_ops/core.py` (this commit, tested + replayed), not deployed |
 | Bondok v2 service | **DEPLOYED, ACTIVE** — 17/17 files hash-verified; `.env` +2 authorized keys; started 17:59:19 UTC, Slack identity/channel checks passed, Socket Mode connected, ops DB read/write verified in-service |
 | Change Set A | DEPLOYED (17:39 UTC) |
 | Backup | `/root/waset-v2-backup-20261009T175434Z/` (DB, v1 helper, ACLs, Bondok tarball, unit, v1 workflow JSON) |
@@ -28,6 +28,13 @@ Granted: read-only inspection, local development, isolated tests, repository pus
 **only during an approved v2 deployment**.
 **Change Set B authorized** (2026-10-09) and executed through step 8; WF1 activation held (see above).
 Not authorized: importing/activating the patched WF1 (`95a5868`), any change to the Instagram token, approving captions on the owner's behalf.
+
+## Incident 2026-10-09 18:14 UTC — legacy dates cleared by first WF1 run
+* Effect: Post Date + Post Time emptied on 12 board items (no other column; captions, Topaz, Posted, publication fields unchanged; 0 reservations/attempts created).
+* Cause: bootstrap recorded v1/human date values as the confirmed projection; for items without a reservation the projection then cleared them as if they were system output.
+* Containment: WF1 deactivated; no pending display jobs; 10 of 12 future values retained in `ops_items.requested_at`; all 12 originals in `.local-snapshots/…/restore_legacy_dates.json` (local only).
+* Fix: projection never clears publish/date/link values it did not write (`PRESERVE_UNLESS_OURS`, tracked as `_ours`). Tests + replay of the 12 items: 0 date/time writes.
+* Pending owner approval: deploy fix to helper + Bondok, restore the 12 values on the board, re-activate WF1.
 
 ## Known blockers / open items
 1. Outage repaired by Change Set A. Rollback record on the server: `/root/waset-changeset-A-20261009T173954Z/` (ACL before/after, stat, DB sha256).

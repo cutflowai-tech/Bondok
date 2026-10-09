@@ -28,6 +28,10 @@ ACTIVE_ATTEMPT = ('claimed', 'container_created', 'committed', 'outcome_unknown'
 PRE_COMMIT = ('claimed', 'container_created')
 
 OUTBOX_MAX_ATTEMPTS = 6
+# Board values that may have been written by v1 or by people. The projection may
+# set them, but only clears values it wrote itself (tracked as '_ours').
+PRESERVE_UNLESS_OURS = ('publish_at', 'post_date', 'post_time', 'published_at', 'ig_media', 'post_link',
+                        'video', 'dropbox', 'folder')
 PROPOSAL_TTL = 30 * 60
 RUN_TTL = {'wf1': 900, 'wf3': 600, 'wf2': 300}
 
@@ -354,12 +358,15 @@ class CoreMixin:
         confirmed = loads(it.get('projected'), {}) or {}
         pending = loads(it.get('pending_projection'), {}) or {}
         base = {**confirmed, **pending}
+        ours = set(confirmed.get('_ours') or []) | set(pending.get('_ours') or [])
         changes = {}
         for k, v in desired.items():
             cv = board.compare_value(k, v)
             if k in force_keys or base.get(k, '__unset__') != cv:
                 if k not in confirmed and k not in pending and cv is None and k not in force_keys:
                     continue  # never projected and empty: nothing to clear
+                if cv is None and k in PRESERVE_UNLESS_OURS and k not in ours:
+                    continue  # never clear a time/link we did not write (v1 or human values)
                 changes[k] = v
         group_change = group if base.get('_group') != group else None
         if not changes and not group_change:
@@ -376,6 +383,10 @@ class CoreMixin:
             group_out = op.get('group') or group_out
         columns.update({board.COL[k]: board.mutation_value(k, v) for k, v in changes.items()})
         compare.update({k: board.compare_value(k, v) for k, v in changes.items()})
+        written = sorted(set(compare.get('_ours') or []) | {k for k, v in compare.items()
+                                                           if k in PRESERVE_UNLESS_OURS and v is not None})
+        if written:
+            compare['_ours'] = written
         if group_change:
             compare['_group'] = group_change
             group_out = group_change
@@ -431,8 +442,9 @@ class CoreMixin:
                     if it:
                         compare = p.get('compare', {})
                         human = {k[2:]: v for k, v in compare.items() if k.startswith('h:')}
-                        confirmed = {**(loads(it['projected'], {}) or {}),
-                                     **{k: v for k, v in compare.items() if not k.startswith('h:')}}
+                        prev = loads(it['projected'], {}) or {}
+                        confirmed = {**prev, **{k: v for k, v in compare.items() if not k.startswith('h:')}}
+                        confirmed['_ours'] = sorted(set(prev.get('_ours') or []) | set(compare.get('_ours') or []))
                         pending = {k: v for k, v in (loads(it['pending_projection'], {}) or {}).items()
                                    if not (k.startswith('h:') and k[2:] in human and v == human[k[2:]])}
                         if human:

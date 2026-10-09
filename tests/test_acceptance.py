@@ -666,3 +666,27 @@ class LegacyMigrationBehaviour(OpsCase):
         r = self.ops.submit(owner_cmd('ap2', 'approve_proposal', None, proposal_id=p2['proposal_id']))
         self.assertEqual(r['approved'], ['410'])
         self.assertEqual(self.item('410')['caption_state'], 'approved')
+
+
+class CutoverPreservesLegacyBoardValues(OpsCase):
+    """Found at the first live WF1 run: v2 must not clear v1/human dates it never wrote."""
+
+    def test_legacy_post_date_kept_when_item_blocks(self):
+        legacy = {'post_date': ('2026-10-17', {'date': '2026-10-17'}), 'post_time': ('11:00 AM', {'hour': 11, 'minute': 0}),
+                  'video': ('x', {'url': 'https://www.dropbox.com/s/old/v.mp4'})}
+        self.observe(monday_item('500', fmt='Story', status='Needs Review', extra=legacy))
+        self.select('500')
+        self.duration('500', 63.0)           # item becomes blocked; no reservation
+        jobs = self.ops.outbox_take(['monday'], 't', 50)
+        cols = {k for j in jobs for k in j['payload']['columns']}
+        for key in ('date4', 'hour_mm7xy9cf', 'date_mm7y8s9t', 'link_mm7ywc0w'):
+            self.assertNotIn(key, cols)
+        self.assertIn('status', cols)          # display status still updates
+
+    def test_slot_we_wrote_is_cleared_when_released(self):
+        self.make_ready('501', 'Story')
+        self.drain_monday()
+        self.ops.submit(owner_cmd('p', 'pause', '501'))
+        jobs = self.ops.outbox_take(['monday'], 't', 50)
+        cols = {k for j in jobs for k in j['payload']['columns']}
+        self.assertIn('date_mm7y8s9t', cols)   # our own reservation display is cleared
