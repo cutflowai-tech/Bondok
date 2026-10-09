@@ -65,6 +65,18 @@ class PublishMixin:
                 return self._refuse(c, it, 'Source project was canceled', notify=True)
             if not res:
                 return self._refuse(c, it, 'No confirmed reservation', quiet=True)
+            legacy = c.execute("SELECT stage FROM publications WHERE item=? AND owner NOT LIKE 'ops:%'",
+                               (str(item_id),)).fetchone()
+            if legacy and not (loads(it['observed'], {}) or {}).get('_v1_receipt_resolved'):
+                # A v1 publication receipt (any stage): the item may already be on Instagram (audit P7).
+                reason = (f"A v1 publication record exists for this item (stage {legacy['stage']}). Publication is "
+                          'held; confirm in Slack whether it was posted.')
+                self.release(c, it, 'v1 publication receipt')
+                self.update_item(c, it['item_id'], worker, 'v1 receipt hold',
+                                 hold=dumps({'kind': 'external_posted', 'reason': reason}))
+                self.notify(c, f"v1-receipt:{it['item_id']}", f"Held {it['name']} ({it['item_id']}): {reason}",
+                            it['item_id'])
+                return {'claimed': False, 'reason': reason, 'held': True}
             slot = rules.instant(res['slot'])
             late = (now_dt - slot).total_seconds()
             if late < 0 or late > rules.LATE_WINDOW.total_seconds():
@@ -319,6 +331,10 @@ class PublishMixin:
         if not a:
             if outcome == 'not_published' and (external or it['publication'] in ('failed', 'outcome_unknown')):
                 # Failed attempt, board "Posted" mark, or an unknown state imported without an attempt row.
+                if external:      # the owner answered for any v1 receipt that caused the hold too
+                    obs = loads(it['observed'], {}) or {}
+                    obs['_v1_receipt_resolved'] = self.now()
+                    c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
                 self.update_item(c, it['item_id'], cmd.actor, 'resolved not published', publication='not_started',
                                  hold=None if external else it['hold'])
                 return {'publication': 'not_started', **self.try_schedule(c, it['item_id'], cmd.actor)}

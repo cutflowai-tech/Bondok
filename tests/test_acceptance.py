@@ -1056,3 +1056,21 @@ class PublishingAuditCritical(OpsCase):
         self.assertEqual(r['state'], 'completed', r)
         self.assertIsNone(self.item('406')['hold'])
         self.assertIsNotNone(self.res('406'))
+
+    def test_v1_publication_receipt_holds_until_owner_answers(self):
+        self.make_ready('407', 'Story')
+        with self.ops.store.tx() as c:
+            c.execute("INSERT INTO publications VALUES('407','v1-wf2','published','{}',0)")
+        self.clock.set(rules.instant(self.res('407')['slot']) + timedelta(seconds=30))
+        r = self.ops.claim('407', 'w')
+        self.assertFalse(r['claimed'])
+        self.assertTrue(r.get('held'))
+        self.assertIsNone(self.res('407'))
+        with self.ops.store.read() as c:
+            self.assertEqual(c.execute("SELECT owner FROM publications WHERE item='407'").fetchone()[0], 'v1-wf2')
+        r = self.ops.submit(owner_cmd('r407', 'resolve_outcome', '407', explicit=True, outcome='not_published'))
+        self.assertEqual(r['state'], 'completed', r)
+        res = self.res('407')
+        self.assertIsNotNone(res)
+        self.clock.set(rules.instant(res['slot']) + timedelta(seconds=30))
+        self.assertTrue(self.ops.claim('407', 'w2')['claimed'])
