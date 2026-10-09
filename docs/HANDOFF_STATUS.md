@@ -36,7 +36,7 @@ Keep WF1 inactive until the cutover.
    Official Instagram Story video size limit NOT VERIFIED.
 4. Monday native automations/webhooks not visible through the connector (3 board automations known, all inactive).
 5. Instagram account scopes and `PUBLISHED` container-status reconciliation not exercised live.
-6. No backup arrangement found for `state.sqlite`; server disk is 91% used.
+6. No backup arrangement found for `state.sqlite`. Disk: 12.67 GB free after authorized cleanup (build cache + npm download cache only; images, volumes, backups untouched).
 7. 35 legacy Post captions have unknown approval status → owner approval needed after cutover (one bulk proposal).
 
 ## Next actions (in order)

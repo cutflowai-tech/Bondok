@@ -24,7 +24,7 @@ Full list: `release/60bbab0/MANIFEST.json`.
 - [ ] Owner has explicitly authorized Change Set B and is reachable on Slack for ~1 hour.
 - [ ] WF1 still inactive; no running/waiting executions of WF1/WF2/WF3.
 - [ ] `reservations`, `publications` (legacy) = 0 or every row accounted for; board shows no item due in the next 60 min.
-- [ ] Free disk ≥ 8 GB (today 8.7 GB; media preparation refuses to start below 6 GB). Consider cleanup first.
+- [x] Free disk ≥ 8 GB — 12.67 GB after the authorized cleanup on 2026-10-09 17:48 UTC (unused Docker build cache 2.59 GB + npm `_cacache` 1.7 GB). Media preparation needs ≥ 6 GB to start a job. `/root/.cache` (≈2.5 GB) intentionally not cleaned.
 - [ ] Release built from a clean tree at the approved commit; MANIFEST hashes match this table.
 - [ ] Instagram token validity/expiry checked in Meta Business Settings (owner).
 
