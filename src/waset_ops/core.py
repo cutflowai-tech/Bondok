@@ -401,6 +401,43 @@ class CoreMixin:
                   (dumps({**pending, **compare}), str(item_id)))
         return payload
 
+    # ------------------------------------------------------------ one-time data fixes
+    def apply_data_fixes(self) -> list[str]:
+        """Idempotent data repairs, each applied once and recorded in ops_meta."""
+        done = []
+        with self.store.read() as c:
+            if c.execute("SELECT 1 FROM ops_meta WHERE key='fix:ours_backfill'").fetchone():
+                return done
+        with self.store.tx() as c:
+            if not c.execute("SELECT 1 FROM ops_meta WHERE key='fix:ours_backfill'").fetchone():
+                n = self._backfill_ours(c)
+                c.execute("INSERT OR REPLACE INTO ops_meta VALUES('fix:ours_backfill',?)", (dumps({'at': self.now(), 'items': n}),))
+                done.append('ours_backfill')
+        return done
+
+    def _backfill_ours(self, c) -> int:
+        """Display values delivered before ownership tracking (`_ours`) existed were treated as foreign, so
+        v2 could never clear its own outdated messages. Rebuild ownership from v2's own delivered jobs;
+        values imported from the v1 board at bootstrap stay foreign."""
+        owned = {}
+        for r in c.execute("SELECT item_id, payload FROM ops_outbox WHERE kind='monday' AND state='done'"):
+            cmp_ = (loads(r['payload'], {}) or {}).get('compare', {})
+            owned.setdefault(r['item_id'], set()).update(
+                k for k, v in cmp_.items() if not k.startswith(('_', 'h:')) and v is not None)
+        n = 0
+        for iid, keys in owned.items():
+            it = self.item(c, iid, required=False)
+            if not it:
+                continue
+            proj = loads(it['projected'], {}) or {}
+            ours = set(proj.get('_ours') or [])
+            if keys - ours:
+                proj['_ours'] = sorted(ours | keys)
+                c.execute('UPDATE ops_items SET projected=? WHERE item_id=?', (dumps(proj), iid))
+                audit(c, iid, 'backfill_projection_ownership', 'service:migration', {'keys': sorted(keys - ours)})
+                n += 1
+        return n
+
     # ------------------------------------------------------------ outbox
     def enqueue(self, c, kind, dedupe_key, payload, item_id=None):
         now = self.now()

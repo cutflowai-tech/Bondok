@@ -3,6 +3,7 @@
 Scenarios needing Bondok/Slack or workflow JSON live in test_bondok.py and
 test_workflows.py; they are referenced here by number.
 """
+import json
 import sqlite3
 import threading
 import unittest
@@ -621,6 +622,26 @@ class PreparationCoverageAndQuietness(OpsCase):
         self.wf1('prep_source', '331', error='No final video found in the project folder', error_kind='editor')
         self.assertEqual(self.outbox('editor'), [])
         self.assertEqual(self.item('331')['block_reason'], 'No final video found in the project folder')
+
+
+class OwnershipBackfill(OpsCase):
+    """Replay finding: Action texts v2 delivered before `_ours` existed could never be cleared by v2."""
+
+    def test_backfill_from_delivered_jobs_only(self):
+        self.observe(monday_item('390', fmt='Story', code='LIP12'))
+        self.wf1('prep_source', '390', error='Folder "x" does not match this item', error_kind='config')
+        self.drain_monday()                                   # delivered: action written by v2
+        with self.ops.store.tx() as c:                        # simulate a pre-`_ours` acknowledgement
+            p = json.loads(self.item('390')['projected']); p.pop('_ours', None)
+            c.execute('UPDATE ops_items SET projected=? WHERE item_id=?', (json.dumps(p), '390'))
+        self.assertEqual(self.ops.apply_data_fixes(), ['ours_backfill'])
+        self.assertEqual(self.ops.apply_data_fixes(), [])     # once only
+        ours = json.loads(self.item('390')['projected'])['_ours']
+        self.assertIn('action', ours)
+        self.select('390')                                    # source now resolves: old message must go
+        jobs = self.ops.outbox_take(['monday'], 't', 50)
+        cleared = {k for j in jobs for k, v in j['payload']['columns'].items() if v in ({}, '', None, {'text': ''})}
+        self.assertIn(board.COL['action'], cleared)
 
 
 class Scenario23ZeroRow(OpsCase):

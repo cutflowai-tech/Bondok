@@ -536,7 +536,16 @@ const code=String(e.httpCode||e.status||(msg.match(/\b([45]\d\d)\b/)||[])[1]||''
 // Only a Dropbox 4xx answer says something about the folder/file; anything else (5xx, 429, network,
 // or an n8n-internal failure with no HTTP status) is a system problem and must not block the content.
 const config=/^4/.test(code)&&code!=='429';
-return [{json:{error:msg.slice(0,400),errorKind:config?'config':'infra'}}];""")
+// Owner-readable text instead of raw API JSON; the Dropbox error tag is kept in brackets.
+const tag=String(e.error_summary||$json.error_summary||(msg.match(/"error_summary"\s*:\s*"([^"]+)"/)||[])[1]||'').replace(/\/+(\.\.)?$/,'');
+const known={'shared_link_not_found':'The Dropbox link on the board no longer works. Replace the folder link on the board.',
+'shared_link_access_denied':'Dropbox refused access to the link on the board. Check the link\'s sharing settings.',
+'path/not_found':'The Dropbox folder or file was not found. Check the folder link on the board.',
+'path/malformed_path':'The Dropbox path is invalid. Check the folder link on the board.'};
+const head=tag.split('/')[0],text=known[tag]||known[head]||null;
+const out=config?(text||('Dropbox rejected the request'+(tag?'':': '+msg.slice(0,200))))+(tag?' (Dropbox: '+tag+')':'')
+  :'Temporary Dropbox problem'+(code?' ('+code+')':'')+': '+msg.slice(0,200);
+return [{json:{error:out.slice(0,400),errorKind:config?'config':'infra'}}];""")
     for n in ('Create Project Folder', 'Check Folder Creation', 'Share New Folder', 'Find Folder Link',
               'New Folder Ready', 'Folder Metadata', 'Plan Listing', 'List Files', 'Collect Files', 'Candidates',
               'Existing File Link', 'File Share Context', 'Share Final File', 'New File Link', sel):

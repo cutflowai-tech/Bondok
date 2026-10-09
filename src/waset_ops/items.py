@@ -690,7 +690,7 @@ class ItemsMixin:
                 except rules.RuleError:
                     rot = 'INVALID'
                 out.append({'item_id': it['item_id'], 'rotation': rot, 'priority': 0 if requested else 1, '_last': last,
-                            '_pending': it['readiness'] == 'checking',
+                            '_pending': it['readiness'] == 'checking' or bool(it['infra_issue']),
                             'waiting_since': it['waiting_since'] or it['created'], 'format': it['format'],
                             'code': it['code'], 'name': it['name'], 'source_item_id': it['source_item_id'],
                             'folder_url': it['folder_url'], 'file_url': it['source_override_url'] or it['file_url'],

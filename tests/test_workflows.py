@@ -289,6 +289,18 @@ class DropboxErrorText(unittest.TestCase):
         out = run_js(self.js(), {'error': 'Request failed with status code 503'})[0]['json']
         self.assertEqual(out['errorKind'], 'infra')
 
+    def test_owner_readable_dropbox_text(self):
+        out = run_js(self.js(), {'error': '409 - {"error_summary":"shared_link_not_found/","error":{".tag":"shared_link_not_found"}}'})[0]['json']
+        self.assertEqual(out['errorKind'], 'config')
+        self.assertTrue(out['error'].startswith('The Dropbox link on the board no longer works'), out['error'])
+        self.assertIn('(Dropbox: shared_link_not_found)', out['error'])
+        self.assertNotIn('{', out['error'])
+        out = run_js(self.js(), {'error': '409 - {"error_summary":"path/not_found/..","error":{}}'})[0]['json']
+        self.assertIn('folder or file was not found', out['error'])
+        out = run_js(self.js(), {'error': '503 - "Service Unavailable"'})[0]['json']
+        self.assertEqual(out['errorKind'], 'infra')
+        self.assertTrue(out['error'].startswith('Temporary Dropbox problem (503)'), out['error'])
+
     def test_internal_failure_without_status_does_not_block_content(self):
         # n8n's own "invalid syntax" (cutover finding) must never be blamed on the folder or the editor.
         for err in ('invalid syntax', {'message': 'invalid syntax'}, 'socket hang up', '429 - rate limited'):

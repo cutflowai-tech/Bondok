@@ -34,6 +34,7 @@ def ops():
     o = Ops(ROOT / 'state.sqlite')
     if o.store.schema_version() < 1:     # read-only check first; DDL only when needed
         o.store.migrate()
+    o.apply_data_fixes()                 # cheap once applied: one indexed read per call
     return o
 
 
