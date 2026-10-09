@@ -26,7 +26,8 @@ Full list: `release/60bbab0/MANIFEST.json`.
 - [ ] `reservations`, `publications` (legacy) = 0 or every row accounted for; board shows no item due in the next 60 min.
 - [x] Free disk ≥ 8 GB — 12.67 GB after the authorized cleanup on 2026-10-09 17:48 UTC (unused Docker build cache 2.59 GB + npm `_cacache` 1.7 GB). Media preparation needs ≥ 6 GB to start a job. `/root/.cache` (≈2.5 GB) intentionally not cleaned.
 - [ ] Release built from a clean tree at the approved commit; MANIFEST hashes match this table.
-- [ ] Instagram token validity/expiry checked in Meta Business Settings (owner).
+- [x] Instagram credential validated read-only on 2026-10-09 17:51 UTC (temporary inactive workflow, 4 GET calls, archived): token valid; IG account 17841479950766455 = @wasetcostudio; granted instagram_basic, instagram_content_publish, pages_show_list, pages_read_engagement, public_profile; publishing quota 0/100 per 24 h.
+- [ ] **Token expiry: owner check in the Access Token Debugger.** The token is a Facebook *user* token (user tokens usually expire, long-lived ≈ 60 days); expiry is only exposed by `debug_token`, which would require handling the token itself.
 
 ## Steps (stop at the first failed check; rollback section below)
 1. **Backup** — `deploy/server_backup.sh` (root). Record the backup directory and `SHA256SUMS`. Export WF1/WF2/WF3 JSON + version ids (v1: `e520d122…`, `9351a690…`, `e37aa4f0…`) into the same directory.
