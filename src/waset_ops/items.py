@@ -294,7 +294,7 @@ class ItemsMixin:
                                "state IN ('pending','failed')", (iid,)).fetchall():
                 pl = loads(j['payload'], {})
                 if col in (pl.get('guard') or {}):     # jobs queued by the command itself compare against it too
-                    pl['guard'][col]['was'] = proj[k]
+                    pl['guard'][col]['was'] = [proj[k]]
                     c.execute('UPDATE ops_outbox SET payload=? WHERE id=?', (dumps(pl), j['id']))
             if r.get('state') != 'rejected' or r.get('reverted'):
                 self.project(c, iid)
@@ -358,6 +358,7 @@ class ItemsMixin:
             if result.get('state') != 'rejected' and pend.pop('h:' + key, None) is not None:
                 c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?', (dumps(pend) or None, iid))
             if result.get('state') == 'rejected' and key in ('caption', 'topaz', 'collab', 'code'):
+                self.release(c, self.item(c, iid), 'rejected board edit')     # a held item keeps no slot (fuzz F8)
                 self.update_item(c, iid, 'monday', 'rejected board edit',
                                  hold=dumps({'kind': 'rejected_edit', 'reason': f'Board change to {key} was not accepted: '
                                              + result.get('reason', '')}))
@@ -377,12 +378,25 @@ class ItemsMixin:
         pending = loads(it.get('pending_projection'), {}) or {}
         observed = loads(it.get('observed'), {}) or {}
         cols, compare, guard = {}, {}, {}
+        # Earlier writes of the same column: an unsent one is replaced by this write; one already taken by WF2
+        # may land first, so its value is an expected board state, not a person's edit (fuzz F3).
+        landing = {}
+        for j in c.execute("SELECT id, state, payload FROM ops_outbox WHERE kind='monday' AND item_id=? AND "
+                           "dedupe_key LIKE 'monday-h:%' AND state IN ('pending','failed','in_flight')",
+                           (it['item_id'],)).fetchall():
+            jp = loads(j['payload'], {}) or {}
+            same = [k for k in values if 'h:' + k in (jp.get('compare') or {})]
+            for k in same:
+                landing.setdefault(k, []).append(jp['compare']['h:' + k])
+            if same and j['state'] != 'in_flight' and set(jp.get('columns') or {}) <= {board.COL[k] for k in values}:
+                c.execute("UPDATE ops_outbox SET state='superseded', updated=? WHERE id=?", (self.now(), j['id']))
         for k, v in values.items():
             cols[board.COL[k]] = board.mutation_value(k, v)
             compare['h:' + k] = board.compare_value(k, v)
             # Skip the write if a person typed something else meanwhile (WF2 compare-before-write).
             if guarded:
-                guard[board.COL[k]] = {'kind': board.KIND.get(k, 'text'), 'was': observed.get(k), 'new': compare['h:' + k]}
+                guard[board.COL[k]] = {'kind': board.KIND.get(k, 'text'), 'was': [observed.get(k), *landing.get(k, [])],
+                                       'new': compare['h:' + k]}
         payload = {'item_id': it['item_id'], 'columns': cols, 'compare': compare, 'group': None}
         if guard:
             payload['guard'] = guard
@@ -496,8 +510,10 @@ class ItemsMixin:
         c.execute('UPDATE ops_items SET content_rev=content_rev+1 WHERE item_id=?', (it['item_id'],))
         caption_state = it['caption_state']
         if new == 'Post':
-            caption_state = 'approved' if it['caption_origin'] in ('human', 'approved_draft') and it['caption'] else (
-                'legacy_unapproved' if it['caption'] else 'missing')
+            # A caption typed while the item was a Story was never validated: it is approved only if it passes
+            # the Post caption checks now (fuzz F7: an invalid caption became approved).
+            caption_state = 'approved' if it['caption_origin'] in ('human', 'approved_draft') and it['caption'] and \
+                rules.validate_caption(it['caption']) is None else ('legacy_unapproved' if it['caption'] else 'missing')
         it = self.update_item(c, it['item_id'], cmd.actor, f'format {it["format"]}->{new}', format=new,
                               verification_id=None, readiness='checking', block_kind=None, block_reason=None,
                               block_key=None, caption_state=caption_state if new == 'Post' else None, hold=None,

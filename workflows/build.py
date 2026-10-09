@@ -215,8 +215,10 @@ const cols=$json.data.items[0].column_values||[];
 const norm=(c,kind)=>{if(!c)return null;
   if(kind==='long'){try{const v=JSON.parse(c.value||'null');if(v&&typeof v.text==='string')return v.text.trim()||null}catch(e){}}
   return String(c.text||'').trim()||null};
+// 'was' lists every value the board may legitimately show (last confirmed + writes already in flight).
 const changed=Object.entries(m.guard).filter(([id,g])=>{const cur=norm(cols.find(c=>c.id===id),g.kind);
-  return cur!==(g.was??null)&&cur!==(g.new??null)}).map(([id])=>id);
+  const ok=[].concat(g.was===undefined?null:g.was).map(v=>v??null);
+  return !ok.includes(cur)&&cur!==(g.new??null)}).map(([id])=>id);
 return {json:{...m,conflict:changed.length?'conflict: changed on the board by a person ('+changed.join(',')+')':null}};
 """, each=True)
     conflict = f.cond('Sync Conflict?', '!!$json.conflict || !!$json.readError')

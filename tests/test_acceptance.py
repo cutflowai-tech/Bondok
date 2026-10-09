@@ -1400,7 +1400,7 @@ class DisplaySyncGuardCore(OpsCase):
         self.ops.submit(owner_cmd('p', 'pause', '950'))
         job = [j for j in self.ops.outbox_take(['monday'], 'w', 10) if j['payload'].get('guard')][0]
         g = job['payload']['guard'][board.COL['status']]
-        self.assertEqual((g['was'], g['new']), (board.LABELS['scheduled'], board.LABELS['paused']))
+        self.assertEqual((g['was'], g['new']), ([board.LABELS['scheduled']], board.LABELS['paused']))
         for _ in range(8):
             r = self.ops.outbox_ack(job['id'], 'w', False, 'conflict: changed on the board by a person (status)')
             self.assertTrue(r.get('conflict'), r)
@@ -1715,3 +1715,56 @@ class RoundTwoRegressions(OpsCase):
         self.assertFalse(explicit('resolve_outcome', {'outcome': 'published'}, 'نزلها'))
         self.assertFalse(explicit('resolve_outcome', {'outcome': 'published'}, 'ما اتنشرش'))
         self.assertTrue(explicit('resolve_outcome', {'outcome': 'published'}, 'نزلت خلاص'))
+
+
+class FuzzFindings(OpsCase):
+    """Randomized sequence testing (about 1 M steps): F3, F5, F7, F8."""
+
+    def sync_once(self, board_status, jobs):
+        """WF2 compare-before-write as built: board_status is a one-element list holding the shown status."""
+        for j in jobs:
+            g = (j['payload'].get('guard') or {}).get(board.COL['status'])
+            if g and board_status[0] not in [*([g['was']] if not isinstance(g['was'], list) else g['was']), g['new']]:
+                self.ops.outbox_ack(j['id'], 'w', False, 'conflict: changed on the board by a person (status)')
+                continue
+            st = j['payload']['columns'].get(board.COL['status'])
+            if st:
+                board_status[0] = st['label']
+            self.ops.outbox_ack(j['id'], 'w', True)
+
+    def test_status_write_after_an_in_flight_one_lands(self):                     # F5
+        self.make_ready('1200', 'Story')
+        shown = [board.LABELS['checking']]                          # what the board showed before these writes
+        flying = self.ops.outbox_take(['monday'], 'w', 10)       # WF2 took "Scheduled"
+        self.ops.submit(owner_cmd('p', 'pause', '1200'))
+        self.sync_once(shown, flying)
+        for _ in range(3):
+            self.clock.advance(1000)
+            self.sync_once(shown, self.ops.outbox_take(['monday'], 'w', 10))
+        self.assertEqual(shown[0], board.LABELS['paused'])
+
+    def test_two_caption_writes_before_sync_both_settle(self):                    # F3
+        self.make_ready('1201', 'Post')
+        self.drain_monday()
+        for n, text in enumerate(('First new caption, DM us 🔥\n\n#reels', 'Second new caption, DM us 🔥\n\n#reels')):
+            self.ops.submit(owner_cmd('c%d' % n, 'update_caption', '1201', text=text))
+        live = [o for o in self.outbox('monday') if o['state'] == 'pending' and o['dedupe_key'].startswith('monday-h:')]
+        self.assertEqual(len(live), 1)
+        self.assertIn('Second', json.loads(live[0]['payload'])['compare']['h:caption'])
+
+    def test_caption_typed_while_story_is_validated_on_conversion(self):           # F7
+        self.make_ready('1202', 'Post')
+        self.ops.submit(owner_cmd('f1', 'change_format', '1202', explicit=True, format='Story'))
+        bad = 'x ' + ' '.join('#t%d' % i for i in range(31))
+        self.ops.submit(Command('m1', 'update_caption', 'monday', 'monday', '1202', {'text': bad}))
+        self.ops.submit(owner_cmd('f2', 'change_format', '1202', explicit=True, format='Post'))
+        self.assertNotEqual(self.item('1202')['caption_state'], 'approved')
+
+    def test_rejected_edit_hold_releases_the_slot(self):                             # F8
+        self.make_ready('1203', 'Story')
+        self.drain_monday()
+        b = board_from_projection(self.ops, '1203')
+        set_cell(b, 'code', 'NOT A CODE')
+        self.observe(b)
+        if self.item('1203')['hold']:
+            self.assertIsNone(self.res('1203'))

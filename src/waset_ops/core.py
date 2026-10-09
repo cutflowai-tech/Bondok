@@ -415,7 +415,13 @@ class CoreMixin:
             # WF2 reads the board first and skips the write if a person changed the status since v2 last wrote
             # it (e.g. Paused typed between WF1 observations): the edit must reach observe, not be overwritten.
             # Always the latest confirmed board value (a consumed human edit updates it), never an older job's.
-            guard[board.COL['status']] = {'kind': 'status', 'was': confirmed.get('status'), 'new': compare.get('status')}
+            # A status write WF2 already took may land before this one: its value is an expected board state too
+            # (fuzz F5: the in-flight write landed and this job then conflicted forever).
+            flying = [ (loads(j['payload'], {}).get('compare') or {}).get('status') for j in c.execute(
+                "SELECT payload FROM ops_outbox WHERE kind='monday' AND item_id=? AND state='in_flight'",
+                (str(item_id),)).fetchall()]
+            guard[board.COL['status']] = {'kind': 'status', 'was': [confirmed.get('status'), *[f for f in flying if f]],
+                                          'new': compare.get('status')}
         payload = {'item_id': str(item_id), 'columns': columns, 'compare': compare, 'group': group_out}
         if guard:
             payload['guard'] = guard
