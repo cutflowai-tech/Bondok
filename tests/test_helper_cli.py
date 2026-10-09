@@ -219,3 +219,24 @@ class StoryTrimFfmpeg(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class StorageFailureIsReported(OpsCase):
+    """Audit I3: a read-only database inside a command was printed as ok:true and never logged."""
+
+    def test_readonly_database_reported_and_logged(self):
+        import base64 as b64
+        self.observe(monday_item('42', fmt='Story'))
+        self.ops.apply_data_fixes()
+        os.chmod(self.dir / 'state.sqlite', 0o444)
+        try:
+            arg = b64.b64encode(json.dumps({'path': '/v2/caption/draft', 'body': {
+                'requestId': 'draft:x', 'itemId': '42', 'inputHash': 'x', 'text': 'hi'}}).encode()).decode()
+            p = subprocess.run([sys.executable, str(HELPER), arg], capture_output=True, text=True, timeout=60,
+                               env={**os.environ, 'WASET_SOCIAL_DATA_DIR': str(self.dir)})
+            out = json.loads(p.stdout)
+            self.assertFalse(out['ok'], out)
+            self.assertEqual(out['kind'], 'storage')
+            self.assertIn('storage', (self.dir / 'errors.log').read_text())
+        finally:
+            os.chmod(self.dir / 'state.sqlite', 0o644)

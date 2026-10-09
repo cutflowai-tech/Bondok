@@ -1353,3 +1353,39 @@ class MediaAudit(OpsCase):
         self.observe(monday_item('899', fmt='Post', name='Fresh LIP99', code='LIP99'))
         self.clock.advance(60)
         self.assertIn('899', [w['item_id'] for w in self.ops.work_queue(limit=20)])
+
+
+class CaptionDraftAndRepairAudit(OpsCase):
+    """Audit S9 and I6."""
+
+    TEXT = 'Golden hour on the water 🌅\n\n' + ' '.join('#tag%d' % i for i in range(13))
+
+    def test_draft_on_scheduled_post_keeps_approved_caption_and_slot(self):
+        self.make_ready('900', 'Post')
+        slot = self.res('900')['slot']
+        r = self.wf1('caption_draft', '900', input_hash='h900', text=self.TEXT, model='m')
+        self.assertEqual(r['draft_state'], 'pending_approval', r)
+        self.assertEqual(self.item('900')['caption_state'], 'approved')
+        self.assertEqual(self.ops.repair()['repairs'], [])
+        self.assertEqual(self.res('900')['slot'], slot)
+        a = self.ops.submit(owner_cmd('a', 'approve_proposal', None, proposal_id=r['proposal_id']))
+        self.assertEqual(a['state'], 'completed', a)
+        self.assertEqual(self.item('900')['caption'], self.TEXT)
+
+    def test_rejected_draft_keeps_board_text_unapproved_not_missing(self):
+        self.observe(monday_item('901', fmt='Post', caption='Old board text from v1, DM us 🔥\n\n#reels'))
+        r = self.wf1('caption_draft', '901', input_hash='h901', text=self.TEXT, model='m')
+        self.ops.submit(owner_cmd('rj', 'reject_proposal', None, proposal_id=r['proposal_id']))
+        self.assertNotEqual(self.item('901')['caption_state'], 'missing')
+
+    def test_repair_never_moves_a_slot_pinned_after_inspection(self):
+        self.make_ready('902', 'Story')
+        with self.ops.store.tx() as c:                               # an off-grid automatic slot (legacy data)
+            c.execute("UPDATE ops_reservations SET slot='2026-10-10T15:07:00Z' WHERE item_id='902'")
+        report = self.ops.inspect()
+        self.assertTrue(any(f['action'] == 'release' for f in report['findings']))
+        at = rules.iso(rules.cairo_local(2026, 10, 11, 22, 0))
+        self.assertEqual(self.ops.submit(owner_cmd('pin', 'request_reschedule', '902', at=at))['state'], 'completed')
+        self.ops.inspect = lambda: report                            # repair acts on the earlier snapshot
+        self.ops.repair()
+        self.assertEqual((self.res('902')['slot'], self.res('902')['owner_pinned']), (at, 1))

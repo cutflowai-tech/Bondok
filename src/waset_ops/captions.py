@@ -59,12 +59,15 @@ class CaptionMixin:
         c.execute("UPDATE ops_caption_drafts SET state='superseded', updated=? WHERE item_id=? AND state='pending_approval'",
                   (now, it['item_id']))
         p = self.create_proposal(c, 'approve_caption', [it['item_id']],
-                                 {'item_id': it['item_id'], 'input_hash': a['input_hash'], 'text': text},
+                                 {'item_id': it['item_id'], 'input_hash': a['input_hash'], 'text': text,
+                                  'base_caption': it['caption'], 'base_state': it['caption_state']},
                                  f"Caption draft for {it['name']} ({it['item_id']}):\n\n{text}", cmd.actor)
         c.execute('INSERT INTO ops_caption_drafts VALUES(?,?,?,?,?,?,?,?,?)',
                   (a['input_hash'], it['item_id'], text, a.get('model'), 'pending_approval', None,
                    p['proposal_id'], now, now))
-        self.update_item(c, it['item_id'], cmd.actor, 'caption draft pending', caption_state='pending_approval')
+        if it['caption_state'] != 'approved':
+            # An approved caption stays approved (and scheduled) while an alternative draft waits (audit S9).
+            self.update_item(c, it['item_id'], cmd.actor, 'caption draft pending', caption_state='pending_approval')
         return {'draft_state': 'pending_approval', **p}
 
     def execute_approve_caption(self, c, payload, cmd, pid):
@@ -72,7 +75,12 @@ class CaptionMixin:
         it = self.item(c, payload['item_id'])
         if not d or d['state'] != 'pending_approval' or d['text'] != payload['text']:
             raise Rejected('Draft was superseded; nothing approved', 'stale')
-        if it['caption_state'] != 'pending_approval' or it['format'] != 'Post':
+        if 'base_caption' in payload:
+            changed = it['caption'] != payload['base_caption'] or \
+                it['caption_state'] not in ('pending_approval', payload.get('base_state'))
+        else:
+            changed = it['caption_state'] != 'pending_approval'
+        if changed or it['format'] != 'Post':
             # The caption or format changed since the draft (board edit, Bondok, format change).
             raise Rejected('The caption or format changed after this draft; nothing approved', 'stale')
         self._guard_mutable(c, it, allow_paused=True)
@@ -89,4 +97,7 @@ class CaptionMixin:
                   (self.now(), payload['input_hash']))
         it = self.item(c, payload['item_id'])
         if it['caption_state'] == 'pending_approval':
-            self.update_item(c, it['item_id'], cmd.actor, 'caption draft rejected', caption_state='missing')
+            # Back to what the item had before the draft: board text stays unapproved text, not "missing".
+            self.update_item(c, it['item_id'], cmd.actor, 'caption draft rejected',
+                             caption_state=payload.get('base_state') if payload.get('base_state') not in
+                             (None, 'pending_approval') else ('legacy_unapproved' if it['caption'] else 'missing'))

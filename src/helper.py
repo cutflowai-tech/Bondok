@@ -182,6 +182,13 @@ def main(argv):
             media.run_job(payload)
             return 0
         out = action(path, read_body(payload))
+        if isinstance(out, dict) and out.get('state') == 'failed' and out.get('code') == 'storage':
+            # A storage failure inside a command (read-only database, locked, disk full) is a failure, not a
+            # result: report it to n8n and to errors.log so the watchdog sees it (audit I3).
+            log_error(path, out.get('reason', 'storage error'), 'storage')
+            print(json.dumps({'ok': False, 'kind': 'storage', 'error': out.get('reason', 'storage error')},
+                             ensure_ascii=False), flush=True)
+            return 0
         print(json.dumps({'ok': True, **out} if isinstance(out, dict) else {'ok': True, 'result': out},
                          ensure_ascii=False), flush=True)
         return 0

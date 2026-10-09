@@ -76,7 +76,7 @@ class MonitorMixin:
     @staticmethod
     def _f(kind, r, action, detail, notify=True):
         return {'fingerprint': f"{kind}:{r['item_id']}:{r['slot']}:{r['content_rev']}", 'item_id': r['item_id'],
-                'kind': kind, 'action': action, 'detail': detail, 'notify': notify}
+                'kind': kind, 'action': action, 'detail': detail, 'notify': notify, 'slot': r['slot']}
 
     def repair(self, run_id=None, fence=None) -> dict:
         report = self.inspect()
@@ -92,7 +92,7 @@ class MonitorMixin:
             if f['action'] in ('release', 'reauthorize'):
                 op = 'repair_release' if f['action'] == 'release' else 'repair_reauthorize'
                 r = self.submit(Command('wf3:' + f['fingerprint'], op, 'service:wf3', 'service:wf3', f['item_id'],
-                                        {'kind': f['kind'], 'detail': f['detail']}))
+                                        {'kind': f['kind'], 'detail': f['detail'], 'slot': f.get('slot')}))
                 if not r.get('duplicate'):
                     applied.append({'item_id': f['item_id'], 'kind': f['kind'], 'state': r['state']})
         with self.store.tx() as c:
@@ -107,6 +107,10 @@ class MonitorMixin:
         res = self.reservation(c, it['item_id'])
         if not res:
             return {'noop': True}
+        if cmd.args.get('slot') and res['slot'] != cmd.args['slot']:
+            return {'noop': True, 'note': 'reservation changed since inspection'}      # audit I6
+        if res['owner_pinned']:
+            raise Rejected('Owner-pinned slots are never moved automatically; reported only', 'owner_pinned')
         if self.active_attempt(c, it['item_id']) or it['publication'] != 'not_started':
             raise Rejected('Protected publication state; repair skipped', 'protected')
         if rules.instant(res['slot']) <= self.now_dt() + rules.NEAR_DUE and \
@@ -114,6 +118,7 @@ class MonitorMixin:
             raise Rejected('Near-due slot is never moved automatically', 'near_due')
         self.release(c, it, 'supervisor: ' + cmd.args.get('kind', ''), keep_request=False)
         out = self.evaluate(c, it['item_id'], cmd.actor)
+        self.project(c, it['item_id'])         # the board must not keep showing the released slot (audit S9)
         return {'released': res['slot'], **out}
 
     def op_repair_reauthorize(self, c, cmd: Command):
