@@ -644,7 +644,15 @@ error:ok?null:JSON.stringify($json.errors||$json.error||'editor task failed').sl
     f.link(e_upd, e_ack_in, 1)
     e_next = f.code('Editor Job Finished', 'return [{json:{done:true}}];')
     f.link(e_ack, e_next)
-    f.link(e_has, e_next, 1)
+    # A queued job without a projects item (queued before the core stopped creating them) is acknowledged,
+    # otherwise it stays in flight and is taken again on every lease expiry.
+    e_nosrc = f.cond('Job Without Source Item?', '!$json.empty&&!!$json.id')
+    e_nosrc_in, e_nosrc_ack = f.helper('Editor Task — Skip', '/v2/outbox/ack', r"""(()=>({id:$json.id,
+worker:$('Configuration').first().json.runId,ok:true,error:null,result:{task_id:null,skipped:'no projects item'}}))()""", fail=False)
+    f.link(e_has, e_nosrc, 1)
+    f.link(e_nosrc, e_nosrc_in, 0)
+    f.link(e_nosrc, e_next, 1)
+    f.link(e_nosrc_ack, e_next)
     f.link(e_next, e_loop)
 
     m_in, m = f.helper('Retain Published Files', '/v2/maintenance', '{}', fail=False)

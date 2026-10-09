@@ -2279,6 +2279,80 @@
    ]
   },
   {
+   "name": "Job Without Source Item?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "aa9aed63-09c7-5421-98f8-b712a7e53845",
+       "leftValue": "={{ !$json.empty&&!!$json.id }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "4a09a7ff-25c1-5239-8962-3fa46d48d7c7",
+   "position": [
+    720,
+    1800
+   ]
+  },
+  {
+   "name": "Editor Task — Skip — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body=(()=>({id:$json.id,\nworker:$('Configuration').first().json.runId,ok:true,error:null,result:{task_id:null,skipped:'no projects item'}}))();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/outbox/ack\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "85ac4363-a37e-52a6-b541-00b86600acfd",
+   "position": [
+    960,
+    1800
+   ]
+  },
+  {
+   "name": "Editor Task — Skip — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "652ad0cd-2d94-5050-91ef-fa9d0af8b84e",
+   "position": [
+    1200,
+    1800
+   ]
+  },
+  {
+   "name": "Editor Task — Skip",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+   },
+   "id": "4f6c79cb-201a-57f7-a36c-66b02fbb409d",
+   "position": [
+    1440,
+    1800
+   ]
+  },
+  {
    "name": "Retain Published Files — Input",
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
@@ -2287,7 +2361,7 @@
    },
    "id": "076ecc64-44f8-52bc-bb75-b57a964361e6",
    "position": [
-    720,
+    1680,
     1800
    ]
   },
@@ -2301,7 +2375,7 @@
    },
    "id": "dbdb2d9e-3d97-5412-bd9f-0d09faf18a05",
    "position": [
-    960,
+    1920,
     1800
    ]
   },
@@ -2314,7 +2388,7 @@
    },
    "id": "53a81c01-3f9c-543d-b583-b934aa78429c",
    "position": [
-    1200,
+    2160,
     1800
    ]
   },
@@ -2327,7 +2401,7 @@
    },
    "id": "4e7c0833-eee8-58cd-8bfd-80390f2e5ef7",
    "position": [
-    1440,
+    2400,
     1800
    ]
   },
@@ -2341,7 +2415,7 @@
    },
    "id": "dc98869f-8f81-5114-9af1-c68e90943820",
    "position": [
-    1680,
+    2640,
     1800
    ]
   },
@@ -2354,8 +2428,8 @@
    },
    "id": "da31e1b4-4654-57cf-8328-dc9acd5a33df",
    "position": [
-    1920,
-    1800
+    0,
+    2000
    ]
   }
  ],
@@ -3769,7 +3843,7 @@
     ],
     [
      {
-      "node": "Editor Job Finished",
+      "node": "Job Without Source Item?",
       "type": "main",
       "index": 0
      }
@@ -3896,6 +3970,57 @@
    ]
   },
   "Editor Task — Ack": {
+   "main": [
+    [
+     {
+      "node": "Editor Job Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Task — Skip — Input": {
+   "main": [
+    [
+     {
+      "node": "Editor Task — Skip — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Task — Skip — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Editor Task — Skip",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Job Without Source Item?": {
+   "main": [
+    [
+     {
+      "node": "Editor Task — Skip — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Editor Job Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Task — Skip": {
    "main": [
     [
      {

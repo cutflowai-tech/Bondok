@@ -449,7 +449,7 @@ class Scenario18OccupiedSlot(OpsCase):
 
 class Scenario20EditorSpam(OpsCase):
     def test_unchanged_blocked_item_creates_one_task(self):
-        self.observe(monday_item('180', fmt='Post'))
+        self.observe(monday_item('180', fmt='Post', extra={'source_item': ('9180', '"9180"')}))
         for _ in range(5):
             self.select('180')
             self.clock.advance(3600)
@@ -559,6 +559,43 @@ class CaptionDraftApproval(OpsCase):
         pid = self.draft('200')['proposal_id']
         self.clock.advance(31 * 60)
         self.assertEqual(self.approve(pid)['code'], 'expired')
+
+
+class PreparationCoverageAndQuietness(OpsCase):
+    """Replay findings: the same 20 items were re-picked every cycle; unchanged problems were re-applied;
+    editor jobs without a projects item could never complete."""
+
+    def test_every_eligible_item_is_reached(self):
+        for i in range(30):
+            self.observe(monday_item(str(300 + i), fmt='Story', code='LIP12', name=f'Item {i} LIP12'))
+        first = [x['item_id'] for x in self.ops.work_queue(limit=20)]
+        for iid in first:
+            self.wf1('prep_source', iid, error='No final video found in the project folder', error_kind='editor')
+        self.clock.advance(7200)                       # every backoff has expired
+        second = [x['item_id'] for x in self.ops.work_queue(limit=20)]
+        never = {str(300 + i) for i in range(30)} - set(first)
+        self.assertEqual(len(never), 10)
+        self.assertTrue(never <= set(second), 'never-checked items must come first')
+
+    def test_same_problem_is_not_reapplied(self):
+        self.observe(monday_item('330', fmt='Story', code='LIP12', extra={'source_item': ('9330', '"9330"')}))
+        self.wf1('prep_source', '330', error='Folder "x" does not match this item', error_kind='config')
+        v = self.item('330')['version']
+        jobs = len(self.outbox())
+        for _ in range(3):
+            self.clock.advance(3700)
+            r = self.wf1('prep_source', '330', error='Folder "x" does not match this item', error_kind='config')
+            self.assertTrue(r.get('unchanged'))
+        self.assertEqual(self.item('330')['version'], v)
+        self.assertEqual(len(self.outbox()), jobs)
+        self.wf1('prep_source', '330', error='Another problem', error_kind='config')   # a new problem still applies
+        self.assertEqual(self.item('330')['block_reason'], 'Another problem')
+
+    def test_no_editor_job_without_projects_item(self):
+        self.observe(monday_item('331', fmt='Story', code='LIP12'))
+        self.wf1('prep_source', '331', error='No final video found in the project folder', error_kind='editor')
+        self.assertEqual(self.outbox('editor'), [])
+        self.assertEqual(self.item('331')['block_reason'], 'No final video found in the project folder')
 
 
 class Scenario23ZeroRow(OpsCase):

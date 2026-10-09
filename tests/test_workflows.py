@@ -266,6 +266,15 @@ class EditorTaskReuse(unittest.TestCase):
         self.assertEqual(told[1][0]['node'], 'Apply Editor Task')
 
 
+class EditorJobWithoutSource(unittest.TestCase):
+    def test_job_without_projects_item_is_acknowledged(self):
+        c = WF['qI1N5VNgpRjnZAKH']['connections']
+        self.assertEqual(c['Editor Job?']['main'][1][0]['node'], 'Job Without Source Item?')
+        self.assertEqual(c['Job Without Source Item?']['main'][0][0]['node'], 'Editor Task — Skip — Input')
+        self.assertEqual(c['Job Without Source Item?']['main'][1][0]['node'], 'Editor Job Finished')
+        self.assertEqual(c['Editor Task — Skip']['main'][0][0]['node'], 'Editor Job Finished')
+
+
 @unittest.skipUnless(NODE, 'node not installed')
 class DropboxErrorText(unittest.TestCase):
     """Found at cutover: string error outputs were replaced by a generic message."""

@@ -685,7 +685,7 @@ class ItemsMixin:
                     rot = rules.rotation_key(it['format'], it['code'], it['name'], it['variety'])
                 except rules.RuleError:
                     rot = 'INVALID'
-                out.append({'item_id': it['item_id'], 'rotation': rot, 'priority': 0 if requested else 1,
+                out.append({'item_id': it['item_id'], 'rotation': rot, 'priority': 0 if requested else 1, '_last': last,
                             'waiting_since': it['waiting_since'] or it['created'], 'format': it['format'],
                             'code': it['code'], 'name': it['name'], 'source_item_id': it['source_item_id'],
                             'folder_url': it['folder_url'], 'file_url': it['source_override_url'] or it['file_url'],
@@ -696,7 +696,14 @@ class ItemsMixin:
         urgent = [x for x in out if x['priority'] == 0]
         rest = [x for x in out if x['priority'] == 1]
         from .rules import fair_order
-        return (fair_order(urgent) + fair_order(rest))[:limit]
+        # Coverage: never-checked items first (rotation-fair), then the least recently checked. Ordering
+        # only by publication rotation re-picked the same items every cycle while others were never checked.
+        fresh = fair_order([x for x in rest if not x['_last']])
+        seen = sorted((x for x in rest if x['_last']), key=lambda x: (x['_last'], str(x['item_id'])))
+        picked = (fair_order(urgent) + fresh + seen)[:limit]
+        for x in picked:
+            x.pop('_last', None)
+        return picked
 
     def _touch_prep(self, c, it, blocked: bool):
         obs = loads(it['observed'], {}) or {}
@@ -719,6 +726,9 @@ class ItemsMixin:
         if err:
             kind = a.get('error_kind', 'infra')
             self._touch_prep(c, it, True)
+            if kind != 'infra' and it['readiness'] == 'blocked' and it['block_key'] == kind + ':' + _h(err) \
+                    and it['block_reason'] == str(err)[:500]:
+                return {'next': 'none', 'blocked': kind, 'unchanged': True}     # same problem as last time
             if kind == 'infra':
                 # Temporary provider/storage problem: keep evidence and reservations.
                 self.update_item(c, it['item_id'], cmd.actor, 'infra issue', infra_issue=str(err)[:300])
@@ -882,6 +892,9 @@ class ItemsMixin:
     def editor_task(self, c, item_id, issue_key, reason):
         """Editor subitem work, deduplicated by durable (item, issue) identity."""
         it = self.item(c, item_id)
+        if not it['source_item_id']:
+            # No projects-board item, so no editor subitem is possible; the board's Action required shows it.
+            return False
         body = (f"Social delivery {it['code']} / {it['format']} — item {item_id}\nIssue: {reason}\n"
                 f"Selected file: {it.get('file_name') or 'none'} ({it.get('asset_key') or 'no version'})\n"
                 'Requirements: Topaz processed, short edge ≥1080 px, file under 300 MB'
