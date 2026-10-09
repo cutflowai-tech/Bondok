@@ -30,8 +30,10 @@ ENV_PATH = Path(os.environ.get('BONDOK_ENV_FILE', '/opt/waset-bondok/.env'))
 # SLACK_BOT_USER_ID / SLACK_APP_ID pin the existing Bondok app identity (kept in the server .env, not in Git).
 REQUIRED = ('SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_CHANNEL_ID', 'SLACK_TEAM_ID', 'SLACK_OWNER_ID',
             'SLACK_BOT_USER_ID', 'SLACK_APP_ID', 'MONDAY_API_TOKEN', 'OPENROUTER_API_KEY', 'PIPELINE_DB')
-APPROVE = re.compile(r'^\s*(?:اعتمد|approve)\s+(B-[0-9A-F]{8})\s*$', re.I)
-REJECT = re.compile(r'^\s*(?:ارفض|reject)\s+(B-[0-9A-F]{8})\s*$', re.I)
+# Copy-paste from Bondok's own reply brings backticks; a trailing period/"!" is common (audit M5: these went
+# to the model).
+APPROVE = re.compile(r'^\s*`?\s*(?:اعتمد|approve)\s+(B-[0-9A-F]{8})\s*`?\s*[.!۔]?\s*$', re.I)
+REJECT = re.compile(r'^\s*`?\s*(?:ارفض|reject)\s+(B-[0-9A-F]{8})\s*`?\s*[.!۔]?\s*$', re.I)
 HEARTBEAT_LIMITS = {'wf2': 300, 'wf1': 1800, 'wf3': 4200}
 FALLBACK_REPEAT_SECONDS = 30 * 60
 PLACEHOLDER_ID = re.compile(r'B-X{4,}', re.I)

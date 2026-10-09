@@ -445,3 +445,52 @@ class TopazFromSlackBinding(BondokCase):
         core = self.core(FakeModel([{'tool': 'confirm_topaz', 'args': {'item': '721'}}, {'say': 'تمام'}]))
         self.msg(core, 'توباز خلص للفيديو 721')
         self.assertEqual(self.item('721')['topaz_asset'], 'id:FILE1@rev1')
+
+
+class SlackAuditMedium(BondokCase):
+    """Audit M2, M3, M5, M6 and LOW items (Bondok)."""
+
+    def test_draft_reply_is_a_proposal_or_not_used(self):                             # M2
+        self.observe(monday_item('730', fmt='Post'))
+        good = 'Golden hour on the water 🌅\n\n' + ' '.join('#tag%d' % i for i in range(13))
+        core = self.core(FakeModel([{'tool': 'draft_caption', 'args': {'item': '730', 'text': good}}, {'say': 'ok'}]))
+        reply = self.msg(core, 'اكتب كابشن ل 730')
+        self.assertIn('Proposal', reply)
+        self.assertNotIn('Done', reply)
+        core = self.core(FakeModel([{'tool': 'draft_caption', 'args': {'item': '730', 'text': 'too short'}}, {'say': 'ok'}]))
+        reply = self.msg(core, 'اكتب كابشن تاني', ts='1700000000.000300')
+        self.assertIn('Not done', reply)
+
+    def test_exact_name_preferred_over_partial(self):                                  # M3
+        from bridge import Bridge
+        self.observe(monday_item('731', fmt='Story', name='Calli 30', code='LIP31'))
+        br = Bridge(self.ops, OWNER)
+        self.assertIn('error', br.resolve('Calli 3'))               # only "Calli 30" exists: no silent partial match
+        self.observe(monday_item('732', fmt='Story', name='Calli 3', code='LIP32'))
+        self.assertEqual(br.resolve('Calli 3'), {'item_id': '732'})
+        self.assertEqual(br.resolve('٧٣٢'), {'item_id': '732'})    # Arabic-Indic digits
+
+    def test_copied_approval_commands_are_deterministic(self):                         # M5
+        from app import APPROVE
+        for t in ('`اعتمد B-1A2B3C4D`', 'اعتمد B-1A2B3C4D.', 'approve B-1A2B3C4D!'):
+            self.assertTrue(APPROVE.match(t), t)
+        self.assertFalse(APPROVE.match('اعتمد B-1A2B3C4D وغيره كمان'))
+
+    def test_approve_all_captions_is_one_proposal(self):                                # M6
+        for i in (740, 741):
+            self.observe(monday_item(str(i), fmt='Post', code='LIP%d' % i,
+                                     caption='Old board text, DM us 🔥\n\n#reels'))
+        core = self.core(FakeModel([{'tool': 'approve_all_existing_captions', 'args': {}},
+                                    {'tool': 'approve_all_existing_captions', 'args': {}}, {'say': 'ok'}]))
+        self.msg(core, 'اعتمد كل الكابشنز القديمة')
+        with self.ops.store.read() as c:
+            n = c.execute("SELECT COUNT(*) FROM ops_proposals WHERE kind='approve_captions'").fetchone()[0]
+        self.assertEqual(n, 1)
+
+    def test_reject_only_in_its_thread(self):
+        self.observe(monday_item('750', fmt='Story'))
+        core = self.core(FakeModel([{'tool': 'skip_item', 'args': {'item': '750'}}, {'say': 'ok'}]))
+        reply = self.msg(core, 'ايه رأيك نوقفه خالص', ts='1700000000.000100')
+        pid = reply.split('Proposal ')[1].split(' ')[0]
+        out = self.msg(core, f'ارفض {pid}', ts='1700000001.000100', thread='1700000099.000100')
+        self.assertIn('not executed', out)

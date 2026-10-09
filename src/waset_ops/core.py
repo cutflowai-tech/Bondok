@@ -702,6 +702,11 @@ class CoreMixin:
                          "AND format='Post' AND publication='not_started' ORDER BY item_id").fetchall()
         if not rows:
             raise Rejected('There are no unapproved legacy captions', 'nothing')
+        open_p = c.execute("SELECT id, summary, expires FROM ops_proposals WHERE kind='approve_captions' AND "
+                           "state='pending' AND expires>? ORDER BY created DESC LIMIT 1", (self.now(),)).fetchone()
+        if open_p:      # one open batch proposal at a time (audit M6: repeated calls created several)
+            return {'proposal_id': open_p['id'], 'summary': open_p['summary'],
+                    'expires_in_minutes': max(1, int((open_p['expires'] - self.now()) // 60)), 'existing': True}
         items = [{'item_id': r['item_id'], 'caption': r['caption']} for r in rows]
         lines = '\n'.join(f"• {r['name']} ({r['item_id']}): {(r['caption'] or '').splitlines()[0][:90]}" for r in rows)
         return self.create_proposal(c, 'approve_captions', [r['item_id'] for r in rows], {'items': items},
@@ -718,6 +723,8 @@ class CoreMixin:
         p = c.execute('SELECT * FROM ops_proposals WHERE id=?', (pid,)).fetchone()
         if not p or p['state'] != 'pending':
             raise Rejected('No pending proposal with that id', 'unknown_proposal')
+        if p['thread'] and cmd.auth.get('thread') and p['thread'] != cmd.auth.get('thread'):
+            raise Rejected('Reject the proposal in the thread where it was made', 'wrong_thread')
         c.execute("UPDATE ops_proposals SET state='rejected', decided_by=?, updated=? WHERE id=?",
                   (cmd.actor, self.now(), pid))
         payload = loads(p['payload'], {})

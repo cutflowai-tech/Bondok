@@ -119,7 +119,8 @@ class Bridge:
         """Item reference -> exactly one registered social-board item, or candidates."""
         ref = str(ref or '').strip()
         with self.ops.store.read() as c:
-            if re.fullmatch(r'\d{1,20}', ref):
+            ref = ref.translate(str.maketrans('٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹', '01234567890123456789'))
+            if re.fullmatch(r'[0-9]{1,20}', ref):
                 r = c.execute('SELECT item_id,name,code,format FROM ops_items WHERE item_id=?', (ref,)).fetchone()
                 if r:
                     return {'item_id': r['item_id']}
@@ -127,7 +128,11 @@ class Bridge:
             norm = re.sub(r'\s+', '', ref).upper()
             rows = c.execute('SELECT item_id,name,code,format,owner_state,publication FROM ops_items').fetchall()
             exact = [r for r in rows if re.sub(r'\s+', '', r['code'] or '').upper() == norm]
-            hits = exact or [r for r in rows if ref and ref.casefold() in (r['name'] or '').casefold()]
+            # An exact name wins over partial matches ("Calli 3" is not "Calli 30"); a partial match is used
+            # only when it is unique AND bounded by word edges (audit M3).
+            named = [r for r in rows if ref and (r['name'] or '').strip().casefold() == ref.casefold()]
+            word = re.compile(r'(?<![\w])' + re.escape(ref.casefold()) + r'(?![\w])') if ref else None
+            hits = exact or named or [r for r in rows if word and word.search((r['name'] or '').casefold())]
             if len(hits) == 1:
                 return {'item_id': hits[0]['item_id']}
             if not hits:
@@ -158,9 +163,9 @@ class Bridge:
             if explicit(op, a, text):
                 return submit(op, a, True)
             with self.ops.store.tx() as c:
-                prior = c.execute('SELECT result FROM ops_commands WHERE id=?', (cid,)).fetchone()
-                if prior:
-                    return {**json.loads(prior['result'] or '{}'), 'duplicate': True}
+                prior = c.execute('SELECT state, result FROM ops_commands WHERE id=?', (cid,)).fetchone()
+                if prior:   # same request again in this turn: same rendering as the first time (audit M6)
+                    return {**json.loads(prior['result'] or '{}'), 'state': prior['state'], 'duplicate': True}
                 p = self.ops.propose_command(c, op, item, a, summary, actor, thread)
                 c.execute("INSERT INTO ops_commands(id,payload_hash,op,item_id,actor,actor_kind,auth_ref,state,result,"
                           "created,updated) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
@@ -229,8 +234,14 @@ class Bridge:
         if tool == 'draft_caption':
             text_ = (args.get('text') or '').strip()
             ih = hashlib.sha256(dumps({'item': item, 'bondok_draft': text_}).encode()).hexdigest()
-            return self.ops.submit(Command(cid, 'caption_draft', 'service:bondok', 'service:bondok', item,
-                                           {'input_hash': ih, 'text': text_, 'model': 'bondok'}))
+            r = self.ops.submit(Command(cid, 'caption_draft', 'service:bondok', 'service:bondok', item,
+                                        {'input_hash': ih, 'text': text_, 'model': 'bondok'}))
+            # A draft is a proposal (or an invalid draft), never "done" (audit M2).
+            if r.get('draft_state') == 'pending_approval':
+                return {**r, 'state': 'awaiting_approval'}
+            if r.get('draft_state') == 'invalid':
+                return {**r, 'state': 'rejected', 'reason': 'Draft not used: ' + (r.get('reason') or 'invalid')}
+            return r
         raise Rejected('Unknown tool', 'unsupported')
 
     def approve(self, pid, actor, thread, event_id, reject=False) -> dict:
