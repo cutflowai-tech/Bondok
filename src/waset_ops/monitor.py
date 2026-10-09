@@ -56,6 +56,12 @@ class MonitorMixin:
                 findings.append({'fingerprint': f"unknown:{a['id']}", 'item_id': a['item_id'], 'kind': 'outcome_unknown',
                                  'action': 'notify', 'notify': False,  # already notified when it became unknown
                                  'detail': f"Publication outcome unknown for item {a['item_id']}."})
+            for r in c.execute("SELECT item_id, name FROM ops_items WHERE publication='outcome_unknown' AND item_id NOT IN "
+                               "(SELECT item_id FROM ops_attempts WHERE stage='outcome_unknown')").fetchall():
+                # Imported while the board showed Publishing: no attempt row, still needs the owner's answer.
+                findings.append({'fingerprint': f"unknown-item:{r['item_id']}", 'item_id': r['item_id'],
+                                 'kind': 'outcome_unknown', 'action': 'notify', 'notify': False,
+                                 'detail': f"Publication outcome unknown for {r['name']} ({r['item_id']})."})
             for o in c.execute("SELECT * FROM ops_outbox WHERE state='escalated'").fetchall():
                 findings.append({'fingerprint': f"outbox:{o['id']}", 'item_id': o['item_id'], 'kind': 'sync_escalated',
                                  'action': 'notify', 'notify': False, 'detail': o['last_error'] or ''})
@@ -152,7 +158,7 @@ class MonitorMixin:
             hb = {r['name']: int(now - r['at']) for r in c.execute('SELECT * FROM ops_heartbeat')}
             q = lambda sql: c.execute(sql).fetchone()[0]
             return {'schema': self.store.schema_version(), 'heartbeat_age_seconds': hb,
-                    'outcome_unknown': q("SELECT COUNT(*) FROM ops_attempts WHERE stage='outcome_unknown'"),
+                    'outcome_unknown': q("SELECT COUNT(*) FROM ops_items WHERE publication='outcome_unknown'"),
                     'outbox_pending': q("SELECT COUNT(*) FROM ops_outbox WHERE state IN ('pending','failed','in_flight')"),
                     'outbox_escalated': q("SELECT COUNT(*) FROM ops_outbox WHERE state='escalated'"),
                     'reservations': q('SELECT COUNT(*) FROM ops_reservations'),

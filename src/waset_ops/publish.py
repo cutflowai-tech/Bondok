@@ -305,22 +305,30 @@ class PublishMixin:
     def op_resolve_outcome(self, c, cmd: Command):
         """Owner's manual verification of an unknown/failed publication."""
         it = self.item(c, cmd.item_id)
-        a = c.execute("SELECT * FROM ops_attempts WHERE item_id=? AND stage IN ('outcome_unknown','failed','committed') "
-                      'ORDER BY updated DESC LIMIT 1', (it['item_id'],)).fetchone()
         outcome = cmd.args.get('outcome')
         if outcome not in ('published', 'not_published'):
             raise Rejected('Outcome must be published or not_published', 'invalid')
-        if not a and not (outcome == 'published' and (loads(it['hold'], {}) or {}).get('kind') == 'external_posted'):
-            if it['publication'] == 'failed' and outcome == 'not_published':
-                self.update_item(c, it['item_id'], cmd.actor, 'retry after failure', publication='not_started')
+        if it['publication'] == 'published':
+            # An old failed attempt must never turn a published item back into schedulable (duplicate post).
+            raise Rejected('This item is already published; nothing to resolve', 'already_published')
+        stages = ('outcome_unknown', 'committed', 'failed') if it['publication'] == 'failed' else \
+            ('outcome_unknown', 'committed')
+        a = c.execute(f"SELECT * FROM ops_attempts WHERE item_id=? AND stage IN ({','.join('?' * len(stages))}) "
+                      'ORDER BY updated DESC LIMIT 1', (it['item_id'], *stages)).fetchone()
+        external = (loads(it['hold'], {}) or {}).get('kind') == 'external_posted'
+        if not a:
+            if outcome == 'not_published' and (external or it['publication'] in ('failed', 'outcome_unknown')):
+                # Failed attempt, board "Posted" mark, or an unknown state imported without an attempt row.
+                self.update_item(c, it['item_id'], cmd.actor, 'resolved not published', publication='not_started',
+                                 hold=None if external else it['hold'])
                 return {'publication': 'not_started', **self.try_schedule(c, it['item_id'], cmd.actor)}
+            if outcome == 'published' and (external or it['publication'] == 'outcome_unknown'):
+                # Owner confirms a manual/external post: protect it without inventing a receipt.
+                self.release(c, it, 'posted externally')
+                self.update_item(c, it['item_id'], cmd.actor, 'external post confirmed', publication='published',
+                                 legacy_posted=1, hold=None)
+                return {'publication': 'published', 'receipt': 'none (owner-confirmed external post)'}
             raise Rejected('No unresolved publication attempt for this item', 'nothing_to_resolve')
-        if a is None:
-            # Owner confirms a manual/external post: protect it without inventing a receipt.
-            self.release(c, it, 'posted externally')
-            self.update_item(c, it['item_id'], cmd.actor, 'external post confirmed', publication='published',
-                             legacy_posted=1, hold=None)
-            return {'publication': 'published', 'receipt': 'none (owner-confirmed external post)'}
         a = dict(a)
         if a['stage'] == 'committed':
             raise Rejected('The publisher is still waiting for the result; try again in a few minutes', 'in_progress')

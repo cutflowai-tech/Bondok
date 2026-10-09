@@ -992,3 +992,67 @@ class StaleBoardSnapshot(OpsCase):
         r = self.observe(board_from_projection(self.ops, '192', fmt='Post', caption=self.OLD))
         self.assertEqual(len(r['edits']), 1, r)
         self.assertEqual(self.item('192')['caption'], self.OLD)
+
+
+class PublishingAuditCritical(OpsCase):
+    """Audit P1/P2/P6: board evidence of a manual post, already-published items, imported unknown outcomes."""
+
+    def publish_once(self, iid, worker, media=None):
+        self.clock.set(rules.instant(self.res(iid)['slot']) + timedelta(seconds=30))
+        cl = self.ops.claim(iid, worker)
+        self.ops.container(cl['attempt_id'], worker, cl['fence'], 'C-' + worker)
+        self.ops.commit(cl['attempt_id'], worker, cl['fence'], container_status='FINISHED')
+        if media:
+            return self.ops.result(cl['attempt_id'], worker, media_id=media)
+        return self.ops.result(cl['attempt_id'], worker, error='{"code":100}', http_status=400, definitive=True)
+
+    def test_board_posted_holds_and_releases_the_slot(self):
+        self.make_ready('400', 'Story')
+        self.drain_monday()
+        b = board_from_projection(self.ops, '400')
+        set_cell(b, 'status', 'Posted')
+        r = self.observe(b)
+        self.assertEqual(r['edits'][0]['state'], 'completed', r)
+        self.assertEqual(json.loads(self.item('400')['hold'])['kind'], 'external_posted')
+        self.assertIsNone(self.res('400'))
+
+    def test_board_post_link_holds(self):
+        self.make_ready('401', 'Story')
+        r = self.ops._apply_edit('401', {'key': 'post_link', 'new': 'https://instagram.com/p/x', 'human': False,
+                                         'snap': {}})
+        self.assertEqual(r['state'], 'completed', r)
+        self.assertIsNone(self.res('401'))
+
+    def test_board_cannot_place_other_holds(self):
+        self.make_ready('402', 'Story')
+        r = self.ops.submit(Command('m-h', 'hold', 'monday', 'monday', '402', {'kind': 'owner_review', 'reason': 'x'}))
+        self.assertEqual(r['state'], 'rejected')
+
+    def test_published_item_cannot_be_reset_by_old_failed_attempt(self):
+        self.make_ready('403', 'Story')
+        self.publish_once('403', 'w1')                                         # definitive failure
+        self.ops.submit(owner_cmd('o1', 'resolve_outcome', '403', explicit=True, outcome='not_published'))
+        self.publish_once('403', 'w2', media='IG-123')
+        self.assertEqual(self.item('403')['publication'], 'published')
+        r = self.ops.submit(owner_cmd('o2', 'resolve_outcome', '403', explicit=True, outcome='not_published'))
+        self.assertEqual((r['state'], r.get('code')), ('rejected', 'already_published'))
+        self.assertEqual(self.item('403')['publication'], 'published')
+        self.assertEqual(self.ops.due('w3')['work'], [])
+
+    def test_imported_unknown_outcome_can_be_resolved_and_is_monitored(self):
+        for iid, outcome, final in (('404', 'not_published', 'not_started'), ('405', 'published', 'published')):
+            self.observe(monday_item(iid, status='Publishing'))
+            self.assertEqual(self.item(iid)['publication'], 'outcome_unknown')
+            self.assertGreaterEqual(self.ops.health()['outcome_unknown'], 1)
+            self.assertIn('outcome_unknown', [f['kind'] for f in self.ops.inspect()['findings']])
+            r = self.ops.submit(owner_cmd('r' + iid, 'resolve_outcome', iid, explicit=True, outcome=outcome))
+            self.assertEqual(r['state'], 'completed', r)
+            self.assertEqual(self.item(iid)['publication'], final)
+
+    def test_external_posted_hold_resolved_not_published_returns_to_scheduling(self):
+        self.make_ready('406', 'Story')
+        self.ops._apply_edit('406', {'key': 'post_link', 'new': 'https://instagram.com/p/x', 'human': False, 'snap': {}})
+        r = self.ops.submit(owner_cmd('r406', 'resolve_outcome', '406', explicit=True, outcome='not_published'))
+        self.assertEqual(r['state'], 'completed', r)
+        self.assertIsNone(self.item('406')['hold'])
+        self.assertIsNotNone(self.res('406'))

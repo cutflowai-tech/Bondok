@@ -558,6 +558,8 @@ class ItemsMixin:
         return {'stored': True, **self.evaluate(c, it['item_id'], cmd.actor)}
 
     def op_hold(self, c, cmd: Command):
+        if cmd.actor_kind == MONDAY and cmd.args.get('kind') != 'external_posted':
+            raise Rejected('Board edits can only hold an item as posted outside the system', 'forbidden')
         it = self.item(c, cmd.item_id)
         if it['publication'] == 'published':
             return {'held': False, 'note': 'already published'}

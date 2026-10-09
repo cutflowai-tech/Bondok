@@ -190,7 +190,7 @@ class CoreMixin:
         'set_collab': {OWNER, MONDAY},
         'set_code': {OWNER, MONDAY},
         'set_folder': {OWNER, MONDAY},
-        'hold': {'service:wf1', 'service:wf2', 'service:wf3', 'service:bondok', OWNER},
+        'hold': {'service:wf1', 'service:wf2', 'service:wf3', 'service:bondok', OWNER, MONDAY},  # monday: external_posted only
         'repair_release': {'service:wf3'},
         'repair_reauthorize': {'service:wf3'},
         'source_canceled': {'service:wf1'},
