@@ -136,7 +136,8 @@ class Scenario29ModelOutage(BondokCase):
         self.make_ready('330', 'Story')
         core = self.core(FakeModel(fail=True))
         reply = self.msg(core, 'وقف 330 وغيّره لبوست')
-        self.assertIn('did not act', reply)
+        self.assertIn('معملتش أي حاجة', reply)
+        self.assertNotIn('B-X', reply)
         it = self.item('330')
         self.assertEqual((it['owner_state'], it['format']), ('active', 'Story'))
         from datetime import timedelta
@@ -175,6 +176,101 @@ class Notifications(BondokCase):
         alerts = core.watchdog()
         self.assertTrue(any('readonly database' in a for a in alerts))
         self.assertEqual(core.watchdog(), [])     # unchanged: quiet
+
+
+class FakeResponse:
+    def __init__(self, status, body):
+        self.status_code, self._body = status, body
+        self.text = json.dumps(body)
+
+    def json(self):
+        return self._body
+
+
+class FakeHttp:
+    """Records request budgets; answers from a list of (status, body)."""
+
+    def __init__(self, answers):
+        self.answers, self.budgets, self.inputs = list(answers), [], []
+
+    def post(self, url, json=None, headers=None):
+        self.budgets.append(json['max_output_tokens'])
+        self.inputs.append(json['input'])
+        return FakeResponse(*self.answers.pop(0))
+
+
+def real_model(answers):
+    """The production Model class with a fake transport (no network, no httpx needed)."""
+    from agent import Model
+    m = Model.__new__(Model)
+    m.key, m.model, m.policy, m.calls, m.last_budget = 'k', 'openai/gpt-6.1-sol', 'policy', 0, None
+    m._httpx = type('X', (), {'HTTPError': OSError})
+    m.http = FakeHttp(answers)
+    return m
+
+
+def say(text):
+    return (200, {'status': 'completed', 'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': text}]}]})
+
+
+REFUSAL = {'error': {'code': 402, 'message': 'This request requires more credits, or fewer max_tokens. You requested '
+                                            'up to 3000 tokens, but can only afford 2614. To increase, visit '
+                                            'https://openrouter.ai/workspaces/default/keys/abc'}}
+BROKE = {'error': {'code': 402, 'message': 'This request requires more credits, or fewer max_tokens. You requested '
+                                          'up to 3000 tokens, but can only afford 120.'}}
+
+
+class ModelCreditsAndConversation(BondokCase):
+    """Production incident 2026-10-09 20:22: OpenRouter 402 (credit) shown as a generic English outage."""
+
+    def test_affordable_budget_is_retried_once_and_answers(self):
+        model = real_model([(402, REFUSAL), say('تمام، البوستين متخطيين عشان اتعمل لهم Skip.')])
+        core = self.core(model)
+        reply = self.msg(core, 'ليه معمولهم تخطي؟')
+        self.assertIn('متخطيين', reply)
+        self.assertEqual(model.http.budgets, [3000, 2514])
+
+    def test_credit_exhausted_is_named_in_egyptian_arabic_once_per_thread(self):
+        model = real_model([(402, BROKE), (402, BROKE), (402, BROKE)])
+        core = self.core(model)
+        first = self.msg(core, 'ليه معمولهم تخطي؟', ts='1700000000.000200', thread='1700000000.000100')
+        self.assertIn('رصيد OpenRouter', first)
+        self.assertIn('معملتش أي حاجة', first)
+        self.assertNotIn('B-X', first)
+        self.assertNotIn('language model', first)
+        self.assertEqual(model.http.budgets, [3000])          # no retry when the affordable budget is too small
+        second = self.msg(core, 'ايه المشكلة؟', ts='1700000000.000300', thread='1700000000.000100')
+        self.assertLess(len(second), len(first))               # not the same full notice again
+        self.assertIn('لسه', second)
+        other = self.msg(core, 'ايه الأخبار؟', ts='1700000000.000400')
+        self.assertIn('محتاجين نشحن', other)                  # a different thread gets the full notice
+
+    def test_other_failures_are_not_reported_as_credit(self):
+        core = self.core(real_model([(500, {'error': {'message': 'upstream'}})]))
+        reply = self.msg(core, 'ايه الأخبار؟')
+        self.assertIn('الموديل مش متاح', reply)
+        self.assertNotIn('رصيد', reply)
+
+    def test_arabic_follow_ups_keep_thread_context(self):
+        model = real_model([say('مفيش حاجة محجوزة الأسبوع الجاي.'), say('البوستين معمول لهم Skip.'),
+                            say('عشان المالك عمل لهم تخطي من البورد.')])
+        core = self.core(model)
+        th = '1700000000.000100'
+        self.msg(core, 'ايه اللي هينزل الفترة الجاية ع البيدج', ts=th)
+        self.msg(core, 'ايه المشكلة عشان يبقى فيه بوستات جاهزة؟', ts='1700000000.000200', thread=th)
+        r = self.msg(core, 'ليه معمولهم تخطي؟', ts='1700000000.000300', thread=th)
+        self.assertIn('تخطي', r)
+        last = model.http.inputs[-1]
+        texts = [m.get('content') for m in last if isinstance(m, dict) and m.get('role')]
+        self.assertEqual([m['role'] for m in last if isinstance(m, dict) and m.get('role')],
+                         ['user', 'assistant', 'user', 'assistant', 'user'])
+        self.assertIn('مفيش حاجة محجوزة الأسبوع الجاي.', texts)
+        self.assertTrue(texts[-1].endswith('ليه معمولهم تخطي؟'))
+
+    def test_placeholder_approval_id_is_never_shown(self):
+        core = self.core(real_model([say('لو موافق اكتب اعتمد B-XXXXXXXX')]))
+        reply = self.msg(core, 'ينفع نغير الميعاد؟')
+        self.assertNotIn('B-XXXXXXXX', reply)
 
 
 if __name__ == '__main__':

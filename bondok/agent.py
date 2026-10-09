@@ -62,7 +62,16 @@ TOOL_NAMES = {t['name'] for t in TOOLS}
 
 
 class ServiceError(Exception):
-    pass
+    """Model unavailable. `code` is the cause (model_credits, model_http_<n>, model_unreachable,
+    model_incomplete); `detail` is the provider's message without links."""
+
+    def __init__(self, code, detail=''):
+        super().__init__(code)
+        self.code, self.detail = code, re.sub(r'https?://\S+', '<link>', str(detail or ''))[:300]
+
+
+MAX_OUTPUT_TOKENS = 3000
+MIN_OUTPUT_TOKENS = 1500          # below this a tool-using answer with reasoning is not reliable
 
 
 class Model:
@@ -74,23 +83,44 @@ class Model:
         self.key, self.model, self.policy = key, model, policy
         self.http = httpx.Client(timeout=150, follow_redirects=False)
         self.calls = 0
+        self.last_budget = None          # reduced output budget used after a credit refusal, for logging
 
     def __call__(self, history, tools):
-        self.calls += 1
-        payload = {'model': self.model, 'input': history, 'store': False, 'reasoning': {'effort': 'medium'},
-                   'instructions': self.policy + '\nCurrent time: ' + datetime.now(rules.TZ).isoformat(),
-                   'tools': tools, 'tool_choice': 'auto', 'max_output_tokens': 3000}
-        try:
-            r = self.http.post('https://openrouter.ai/api/v1/responses', json=payload,
-                               headers={'Authorization': 'Bearer ' + self.key, 'X-Title': 'Waset Bondok'})
-        except self._httpx.HTTPError:
-            raise ServiceError('model_unreachable') from None
-        if r.status_code != 200:
-            raise ServiceError(f'model_http_{r.status_code}')
-        data = r.json()
-        if data.get('error') or data.get('status') not in (None, 'completed') or not data.get('output'):
-            raise ServiceError('model_incomplete')
-        return data
+        budget, self.last_budget = MAX_OUTPUT_TOKENS, None
+        for attempt in range(2):
+            self.calls += 1
+            payload = {'model': self.model, 'input': history, 'store': False, 'reasoning': {'effort': 'medium'},
+                       'instructions': self.policy + '\nCurrent time: ' + datetime.now(rules.TZ).isoformat(),
+                       'tools': tools, 'tool_choice': 'auto', 'max_output_tokens': budget}
+            try:
+                r = self.http.post('https://openrouter.ai/api/v1/responses', json=payload,
+                                   headers={'Authorization': 'Bearer ' + self.key, 'X-Title': 'Waset Bondok'})
+            except self._httpx.HTTPError as e:
+                raise ServiceError('model_unreachable', type(e).__name__) from None
+            if r.status_code == 402:
+                # OpenRouter refuses a request whose maximum cost exceeds the remaining credit and says what it
+                # can afford. Retry once within that budget; otherwise report the credit problem as such.
+                m = re.search(r'can only afford (\d+)', r.text)
+                afford = int(m.group(1)) if m else 0
+                if attempt == 0 and afford - 100 >= MIN_OUTPUT_TOKENS:
+                    budget = self.last_budget = afford - 100
+                    continue
+                raise ServiceError('model_credits', _error_message(r))
+            if r.status_code != 200:
+                raise ServiceError(f'model_http_{r.status_code}', _error_message(r))
+            data = r.json()
+            if data.get('error') or data.get('status') not in (None, 'completed') or not data.get('output'):
+                raise ServiceError('model_incomplete', str(data.get('error') or data.get('incomplete_details') or
+                                                           data.get('status')))
+            return data
+        raise ServiceError('model_credits', 'credit refusal after reduced budget')
+
+
+def _error_message(r) -> str:
+    try:
+        return str((r.json().get('error') or {}).get('message') or '')
+    except ValueError:
+        return r.text[:300]
 
 
 class Agent:

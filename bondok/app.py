@@ -33,6 +33,8 @@ REQUIRED = ('SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_CHANNEL_ID', 'SLACK_TEA
 APPROVE = re.compile(r'^\s*(?:اعتمد|approve)\s+(B-[0-9A-F]{8})\s*$', re.I)
 REJECT = re.compile(r'^\s*(?:ارفض|reject)\s+(B-[0-9A-F]{8})\s*$', re.I)
 HEARTBEAT_LIMITS = {'wf2': 300, 'wf1': 1800, 'wf3': 4200}
+FALLBACK_REPEAT_SECONDS = 30 * 60
+PLACEHOLDER_ID = re.compile(r'B-X{4,}', re.I)
 
 
 def accept_event(body, channel, team, known_thread, bot) -> bool:
@@ -79,15 +81,34 @@ class Core:
         self.store.remember(thread, 'user', f'{actor}: {text}')
         try:
             reply, outcomes = self.agent.answer(text, actor=actor, thread=thread, event_id=event_id, history=history)
-        except ServiceError:
+        except ServiceError as e:
             # Model unavailable: nothing is guessed or executed; automation continues.
-            return ('The language model is unavailable right now, so I did not act on this message. '
-                    'Scheduled publishing and checks continue normally. Approvals (اعتمد B-XXXXXXXX) still work.')
-        reply = (reply or '').strip()
+            LOG.warning('model_error code=%s detail=%s', e.code, e.detail)
+            return self._fallback(thread, e.code)
+        if getattr(self.model, 'last_budget', None):
+            LOG.warning('model_low_credit reduced_output_budget=%s', self.model.last_budget)
+        self.store.kv('fallback:' + thread, {'code': None, 'at': 0})
+        reply = PLACEHOLDER_ID.sub('رقم المقترح', (reply or '').strip())   # never show a made-up approval id
         for o in outcomes:
             reply += '\n\n' + render_outcome(o)
         self.store.remember(thread, 'assistant', reply)
         return reply or 'No reply.'
+
+    def _fallback(self, thread, code) -> str:
+        """Short Egyptian Arabic notice; the same cause in the same thread is not repeated in full."""
+        credits = code == 'model_credits'
+        last = self.store.kv('fallback:' + thread) or {}
+        now = time.time()
+        self.store.kv('fallback:' + thread, {'code': code, 'at': now})
+        if last.get('code') == code and now - last.get('at', 0) < FALLBACK_REPEAT_SECONDS:
+            return ('⚠️ لسه رصيد OpenRouter مخلص، فمعملتش حاجة في الرسالة دي.' if credits else
+                    '⚠️ الموديل لسه مش متاح، فمعملتش حاجة في الرسالة دي.')
+        if credits:
+            return ('⚠️ رصيد OpenRouter بتاع الموديل خلص، فمش هقدر أرد على الكلام دلوقتي ومعملتش أي حاجة في '
+                    'الرسالة دي. النشر المجدول والفحوصات شغالين عادي، والموافقات بكلمة «اعتمد» ورقم المقترح شغالة. '
+                    'محتاجين نشحن رصيد OpenRouter.')
+        return ('⚠️ الموديل مش متاح دلوقتي، فمعملتش أي حاجة في الرسالة دي. النشر المجدول والفحوصات شغالين عادي. '
+                'جرّب تاني بعد شوية.')
 
     @staticmethod
     def _summary(r):
