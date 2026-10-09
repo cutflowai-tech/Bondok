@@ -202,3 +202,26 @@ class CodeNodeBehaviour(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+@unittest.skipUnless(NODE, 'node not installed')
+class EditorTaskReuse(unittest.TestCase):
+    """Cutover safety: v2 must reuse editor subitems created by v1 (same name prefix)."""
+
+    def js(self):
+        return next(n for n in WF['qI1N5VNgpRjnZAKH']['nodes'] if n['name'] == 'Editor Task Mutation')['parameters']['jsCode']
+
+    def test_existing_v1_subitem_is_updated_not_duplicated(self):
+        job = {'payload': {'item_id': '3267478554', 'source_item_id': '99', 'task_id': None,
+                           'task_name': 'Social 3267478554 — تجهيز أو استبدال الفيديو', 'body': 'x'}}
+        lookup = {'data': {'items': [{'id': '99', 'subitems': [{'id': '555', 'name': 'Social 3267478554 — تجهيز أو استبدال الفيديو'},
+                                                                {'id': '556', 'name': 'Social 1 — other'}]}]}}
+        out = run_js(self.js(), lookup, {'Each Editor Job': job})
+        self.assertEqual(out[0]['json']['taskId'], '555')
+        self.assertIn('change_column_value', out[0]['json']['gql']['query'])
+
+    def test_no_existing_subitem_creates_one(self):
+        job = {'payload': {'item_id': '7', 'source_item_id': '99', 'task_id': None, 'task_name': 'Social 7 — t', 'body': 'x'}}
+        out = run_js(self.js(), {'data': {'items': [{'id': '99', 'subitems': []}]}}, {'Each Editor Job': job})
+        self.assertIsNone(out[0]['json']['taskId'])
+        self.assertIn('create_subitem', out[0]['json']['gql']['query'])

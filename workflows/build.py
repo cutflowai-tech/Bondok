@@ -582,14 +582,25 @@ mediaId:$('Preparation Step').item.json.mediaId,url:$json.url}""", on_error='con
     f.chain(e_take, e_items, e_loop)
     e_has = f.cond('Editor Job?', '!$json.empty&&!!$json.payload?.source_item_id')
     f.link(e_loop, e_has, 1)
-    e_mut = f.code('Editor Task Mutation', r"""
+    # Reuse an existing editor subitem (including ones created by v1 with the same
+    # "Social <itemId> — " name) instead of creating a duplicate.
+    e_find_q = f.code('Editor Task Lookup — Query', r"""
 const p=$json.payload;
-if(p.task_id)return [{json:{gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:"status",value:$v){id}}',variables:{b:'5091137380',i:String(p.task_id),v:JSON.stringify({label:'Working on it'})}}}}];
-return [{json:{gql:{query:'mutation($p:ID!,$n:String!,$v:JSON!){create_subitem(parent_item_id:$p,item_name:$n,column_values:$v){id}}',variables:{p:String(p.source_item_id),n:p.task_name,v:JSON.stringify({status:{label:'Working on it'}})}}}}];""")
+return [{json:{queryBody:JSON.stringify({query:'query($id:[ID!]){items(ids:$id){id subitems{id name}}}',variables:{id:[String(p.source_item_id)]}})}}];""")
+    e_find = f.monday('Find Existing Editor Task', '$json.queryBody')
+    e_mut = f.code('Editor Task Mutation', r"""
+if($json.errors)throw new Error(JSON.stringify($json.errors));
+const p=$('Each Editor Job').item.json.payload;
+const subs=$json.data?.items?.[0]?.subitems||[];
+const prefix='Social '+p.item_id+' — ';
+const existing=p.task_id||(subs.find(s=>String(s.name||'').startsWith(prefix))||{}).id||null;
+if(existing)return [{json:{taskId:String(existing),gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:"status",value:$v){id}}',variables:{b:'5091137380',i:String(existing),v:JSON.stringify({label:'Working on it'})}}}}];
+return [{json:{taskId:null,gql:{query:'mutation($p:ID!,$n:String!,$v:JSON!){create_subitem(parent_item_id:$p,item_name:$n,column_values:$v){id}}',variables:{p:String(p.source_item_id),n:p.task_name,v:JSON.stringify({status:{label:'Working on it'}})}}}}];""",
+                   on_error='continueErrorOutput')
     e_apply = f.monday('Apply Editor Task', 'JSON.stringify($json.gql)')
     e_body = f.code('Editor Task Update', r"""
 if($json.errors)throw new Error(JSON.stringify($json.errors));
-const p=$('Each Editor Job').item.json.payload;const id=p.task_id||$json.data?.create_subitem?.id;
+const p=$('Each Editor Job').item.json.payload;const id=$('Editor Task Mutation').item.json.taskId||$json.data?.create_subitem?.id;
 if(!id)throw new Error('Editor task id missing');
 return [{json:{taskId:String(id),gql:{query:'mutation($i:ID!,$b:String!){create_update(item_id:$i,body:$b){id}}',variables:{i:String(id),b:p.body}}}}];""",
                     on_error='continueErrorOutput')
@@ -599,8 +610,10 @@ const ok=!$json.errors&&!$json.error&&!!$json.data;
 let task=null;try{task=$('Editor Task Update').item.json.taskId}catch{}
 return {id:$('Each Editor Job').item.json.id,worker:$('Configuration').first().json.runId,ok,
 error:ok?null:JSON.stringify($json.errors||$json.error||'editor task failed').slice(0,400),result:{task_id:task}};})()""", fail=False)
-    f.link(e_has, e_mut, 0)
-    f.chain(e_mut, e_apply, e_body, e_upd, e_ack_in)
+    f.link(e_has, e_find_q, 0)
+    f.chain(e_find_q, e_find, e_mut, e_apply, e_body, e_upd, e_ack_in)
+    f.link(e_find, e_ack_in, 1)
+    f.link(e_mut, e_ack_in, 1)
     f.link(e_apply, e_ack_in, 1)
     f.link(e_body, e_ack_in, 1)
     f.link(e_upd, e_ack_in, 1)

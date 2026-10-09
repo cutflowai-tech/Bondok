@@ -2043,15 +2043,65 @@
    ]
   },
   {
+   "name": "Editor Task Lookup — Query",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const p=$json.payload;\nreturn [{json:{queryBody:JSON.stringify({query:'query($id:[ID!]){items(ids:$id){id subitems{id name}}}',variables:{id:[String(p.source_item_id)]}})}}];"
+   },
+   "id": "4a92965f-74c8-527b-a74f-f1513a888e7e",
+   "position": [
+    960,
+    1600
+   ]
+  },
+  {
+   "name": "Find Existing Editor Task",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.3,
+   "parameters": {
+    "url": "https://api.monday.com/v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "mondayComApi",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ $json.queryBody }}"
+   },
+   "credentials": {
+    "mondayComApi": {
+     "id": "<REDACTED>",
+     "name": "Monday.com account"
+    }
+   },
+   "onError": "continueErrorOutput",
+   "id": "2f1c95b1-f4c3-5662-b855-be8bed593ad9",
+   "position": [
+    1200,
+    1600
+   ]
+  },
+  {
    "name": "Editor Task Mutation",
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const p=$json.payload;\nif(p.task_id)return [{json:{gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:\"status\",value:$v){id}}',variables:{b:'5091137380',i:String(p.task_id),v:JSON.stringify({label:'Working on it'})}}}}];\nreturn [{json:{gql:{query:'mutation($p:ID!,$n:String!,$v:JSON!){create_subitem(parent_item_id:$p,item_name:$n,column_values:$v){id}}',variables:{p:String(p.source_item_id),n:p.task_name,v:JSON.stringify({status:{label:'Working on it'}})}}}}];"
+    "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));\nconst p=$('Each Editor Job').item.json.payload;\nconst subs=$json.data?.items?.[0]?.subitems||[];\nconst prefix='Social '+p.item_id+' — ';\nconst existing=p.task_id||(subs.find(s=>String(s.name||'').startsWith(prefix))||{}).id||null;\nif(existing)return [{json:{taskId:String(existing),gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:\"status\",value:$v){id}}',variables:{b:'5091137380',i:String(existing),v:JSON.stringify({label:'Working on it'})}}}}];\nreturn [{json:{taskId:null,gql:{query:'mutation($p:ID!,$n:String!,$v:JSON!){create_subitem(parent_item_id:$p,item_name:$n,column_values:$v){id}}',variables:{p:String(p.source_item_id),n:p.task_name,v:JSON.stringify({status:{label:'Working on it'}})}}}}];"
    },
+   "onError": "continueErrorOutput",
    "id": "76446831-61cf-5b81-b7eb-1af8f14bdc1e",
    "position": [
-    960,
+    1440,
     1600
    ]
   },
@@ -2087,7 +2137,7 @@
    "onError": "continueErrorOutput",
    "id": "3ed2ba7c-8bf7-523a-8967-07cb712bfdcc",
    "position": [
-    1200,
+    1680,
     1600
    ]
   },
@@ -2096,12 +2146,12 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));\nconst p=$('Each Editor Job').item.json.payload;const id=p.task_id||$json.data?.create_subitem?.id;\nif(!id)throw new Error('Editor task id missing');\nreturn [{json:{taskId:String(id),gql:{query:'mutation($i:ID!,$b:String!){create_update(item_id:$i,body:$b){id}}',variables:{i:String(id),b:p.body}}}}];"
+    "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));\nconst p=$('Each Editor Job').item.json.payload;const id=$('Editor Task Mutation').item.json.taskId||$json.data?.create_subitem?.id;\nif(!id)throw new Error('Editor task id missing');\nreturn [{json:{taskId:String(id),gql:{query:'mutation($i:ID!,$b:String!){create_update(item_id:$i,body:$b){id}}',variables:{i:String(id),b:p.body}}}}];"
    },
    "onError": "continueErrorOutput",
    "id": "f0df8355-0f3c-57d3-8b4d-51b64d794d31",
    "position": [
-    1440,
+    1920,
     1600
    ]
   },
@@ -2137,7 +2187,7 @@
    "onError": "continueErrorOutput",
    "id": "4b89bdf4-a8cb-5386-8266-253e4c40931a",
    "position": [
-    1680,
+    2160,
     1600
    ]
   },
@@ -2150,7 +2200,7 @@
    },
    "id": "46b77f68-1b06-5c72-9215-9a38e369e88e",
    "position": [
-    1920,
+    2400,
     1600
    ]
   },
@@ -2164,7 +2214,7 @@
    },
    "id": "a317177c-0ac7-575c-bd3b-d22fe34a3d2a",
    "position": [
-    2160,
+    2640,
     1600
    ]
   },
@@ -2177,8 +2227,8 @@
    },
    "id": "569574dd-b8c1-5745-810b-91caf2a29016",
    "position": [
-    2400,
-    1600
+    0,
+    1800
    ]
   },
   {
@@ -2190,8 +2240,8 @@
    },
    "id": "2007fb78-c006-5f4e-acb9-8bd372229618",
    "position": [
-    2640,
-    1600
+    240,
+    1800
    ]
   },
   {
@@ -2203,7 +2253,7 @@
    },
    "id": "076ecc64-44f8-52bc-bb75-b57a964361e6",
    "position": [
-    0,
+    480,
     1800
    ]
   },
@@ -2217,7 +2267,7 @@
    },
    "id": "dbdb2d9e-3d97-5412-bd9f-0d09faf18a05",
    "position": [
-    240,
+    720,
     1800
    ]
   },
@@ -2230,7 +2280,7 @@
    },
    "id": "53a81c01-3f9c-543d-b583-b934aa78429c",
    "position": [
-    480,
+    960,
     1800
    ]
   },
@@ -2243,7 +2293,7 @@
    },
    "id": "4e7c0833-eee8-58cd-8bfd-80390f2e5ef7",
    "position": [
-    720,
+    1200,
     1800
    ]
   },
@@ -2257,7 +2307,7 @@
    },
    "id": "dc98869f-8f81-5114-9af1-c68e90943820",
    "position": [
-    960,
+    1440,
     1800
    ]
   },
@@ -2270,7 +2320,7 @@
    },
    "id": "da31e1b4-4654-57cf-8328-dc9acd5a33df",
    "position": [
-    1200,
+    1680,
     1800
    ]
   }
@@ -3678,7 +3728,7 @@
    "main": [
     [
      {
-      "node": "Editor Task Mutation",
+      "node": "Editor Task Lookup — Query",
       "type": "main",
       "index": 0
      }
@@ -3692,11 +3742,47 @@
     ]
    ]
   },
+  "Editor Task Lookup — Query": {
+   "main": [
+    [
+     {
+      "node": "Find Existing Editor Task",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Existing Editor Task": {
+   "main": [
+    [
+     {
+      "node": "Editor Task Mutation",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Editor Task — Ack — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
   "Editor Task Mutation": {
    "main": [
     [
      {
       "node": "Apply Editor Task",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Editor Task — Ack — Input",
       "type": "main",
       "index": 0
      }
