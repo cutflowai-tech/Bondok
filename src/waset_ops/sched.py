@@ -168,27 +168,31 @@ class SchedMixin:
         except (rules.RuleError, ValueError) as e:
             alts = rules.alternatives(self.now_dt(), it['format'], self.taken(c, it['format'], it['item_id']))
             msg = f"{e}. Valid free alternatives: " + ', '.join(rules.display(a) for a in alts)
-            if cmd.actor_kind == MONDAY:
-                self.set_notice(c, it['item_id'], 'Requested time rejected: ' + msg)
-                self.project(c, it['item_id'], force_keys=('publish_at', 'post_date', 'post_time', 'action'))
-            raise Rejected(msg, 'invalid_slot', alternatives=[rules.iso(a) for a in alts])
+            raise Rejected('Requested time rejected: ' + msg, 'invalid_slot', alternatives=[rules.iso(a) for a in alts])
         slot = rules.iso(at)
         if res and res['slot'] == slot:
             return {'scheduled': slot, 'unchanged': True}
+        if (loads(it['hold'], {}) or {}).get('kind') == 'unscheduled':
+            # A new time answers "tell Bondok when to schedule it" (audit S1/S4).
+            it = self.update_item(c, it['item_id'], cmd.actor, 'unscheduled hold cleared', hold=None)
         other = c.execute('SELECT * FROM ops_reservations WHERE account=? AND format=? AND slot=?',
                           (rules.ACCOUNT, it['format'], slot)).fetchone()
+        why = self.eligible(c, it)
         if other and other['item_id'] != it['item_id']:
+            if why is not None:
+                # Moving a scheduled item for one that cannot publish would give its slot away (audit S6).
+                alts = rules.alternatives(self.now_dt(), it['format'], self.taken(c, it['format'], it['item_id']))
+                raise Rejected(f'That time is reserved by another item and this item is not ready ({why}). Free '
+                               'alternatives: ' + ', '.join(rules.display(a) for a in alts), 'slot_taken',
+                               alternatives=[rules.iso(a) for a in alts])
             return self._propose_swap(c, cmd, it, dict(other), at)
-        if self.eligible(c, it) is not None and not res:
+        if why is not None and not res:
             self.update_item(c, it['item_id'], cmd.actor, 'requested time', requested_at=slot,
-                             requested_by='owner' if cmd.actor_kind == OWNER else 'board',
-                             hold=None if (loads(it['hold'], {}) or {}).get('kind') == 'unscheduled' else it['hold'])
+                             requested_by='owner' if cmd.actor_kind == OWNER else 'board')
             return {'_state': 'accepted', 'requested': slot,
-                    'message': 'Time recorded as requested (not yet reserved): ' + self.eligible(c, self.item(c, it['item_id']))}
+                    'message': 'Time recorded as requested (not yet reserved): ' + why}
         if res:
             c.execute('DELETE FROM ops_reservations WHERE item_id=?', (it['item_id'],))
-        if (loads(it['hold'], {}) or {}).get('kind') == 'unscheduled':
-            self.update_item(c, it['item_id'], cmd.actor, 'unscheduled hold cleared', hold=None)
         self._reserve(c, self.item(c, it['item_id']), at, 'owner', True, cmd.actor)
         return {'scheduled': slot, 'display': rules.display(at)}
 
@@ -225,21 +229,23 @@ class SchedMixin:
         it, o = self.item(c, payload['item_id']), self.item(c, payload['other_id'])
         for x in (it, o):
             why = self.eligible(c, x)
-            if why and not (x is it and why == 'media is not verified yet'):
+            if why:
                 raise Rejected(f"{x['name']} is no longer eligible ({why}); proposal not executed", 'stale')
         for slot in (payload['slot'], payload['other_slot']):
-            rules.validate_requested_slot(now, it['format'], slot)
+            try:
+                rules.validate_requested_slot(now, it['format'], slot)
+            except rules.RuleError as e:
+                raise Rejected(f'A proposed time is no longer valid ({e}); proposal not executed', 'stale')
+        for r in (self.reservation(c, it['item_id']), self.reservation(c, o['item_id'])):
+            if r and rules.instant(r['slot']) <= now + rules.NEAR_DUE:
+                raise Rejected('A current slot is within 10 minutes of publication; proposal not executed', 'near_due')
         taken = self.taken(c, it['format'], None) - {r['slot'] for r in (self.reservation(c, it['item_id']),
                                                                        self.reservation(c, o['item_id'])) if r}
         if payload['other_slot'] in taken or payload['slot'] in taken:
             raise Rejected('A proposed slot was taken in the meantime; proposal not executed', 'stale')
         c.execute('DELETE FROM ops_reservations WHERE item_id IN (?,?)', (it['item_id'], o['item_id']))
         self._reserve(c, self.item(c, o['item_id']), rules.instant(payload['other_slot']), 'owner', True, cmd.actor)
-        if self.eligible(c, it) is None:
-            self._reserve(c, self.item(c, it['item_id']), rules.instant(payload['slot']), 'owner', True, cmd.actor)
-        else:
-            self.update_item(c, it['item_id'], cmd.actor, 'requested via swap', requested_at=payload['slot'],
-                             requested_by='owner')
+        self._reserve(c, self.item(c, it['item_id']), rules.instant(payload['slot']), 'owner', True, cmd.actor)
         return {'moved': [{'item_id': it['item_id'], 'slot': payload['slot']},
                           {'item_id': o['item_id'], 'slot': payload['other_slot']}]}
 

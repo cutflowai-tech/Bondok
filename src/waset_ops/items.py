@@ -13,6 +13,7 @@ from .db import audit, dumps, loads
 
 PROTECTED_PUBLICATION = ('published', 'outcome_unknown', 'in_progress')
 RELIST_READY_SECONDS = 30 * 60          # metadata-only revision check for ready items
+TIME_KEYS = ('publish_at', 'post_date', 'post_time')
 RESUMABLE_HOLDS = ('resume', 'rejected_edit', 'publish_retry_limit')
 BACKOFF_STEPS = (600, 1200, 2400, 3600) # waiting/blocked items: fair, bounded backoff
 
@@ -218,6 +219,8 @@ class ItemsMixin:
                 continue
             if k in recent and new == recent[k]:
                 continue                       # snapshot read before our write landed
+            if k == 'publish_at' and it.get('requested_at') and new == board.compare_value('publish_at', it['requested_at']):
+                continue                       # already recorded as the requested time (not yet reservable)
             edits.append({'key': k, 'old': pending.get(k, confirmed.get(k)), 'new': new, 'human': False,
                           'snap': {x: snap.get(x) for x in ('publish_at', 'post_date', 'post_time')}})
         c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(observed), it['item_id']))
@@ -236,6 +239,9 @@ class ItemsMixin:
         if e['human']:
             if k == 'format':
                 r = run('propose', {'kind': 'change_format', 'format': new})
+                if r.get('state') == 'rejected':
+                    with self.store.tx() as c:            # write-back survives the rejection (audit MS8)
+                        self.write_human(c, self.item(c, iid), {'format': self.item(c, iid)['format']})
             elif k == 'caption':
                 r = run('update_caption', {'text': new or ''})
             elif k == 'topaz':
@@ -253,6 +259,16 @@ class ItemsMixin:
                 r = {'state': 'completed', 'note': 'no operational effect'}
             self._mark_observed(iid, k, new, r)
             return r
+        r = self._system_edit(iid, e, run)
+        if r.get('state') == 'rejected' and not r.get('reverted'):
+            # The command's own revert/notice were rolled back with it: restore the board here (audit S7).
+            keys = TIME_KEYS if k in TIME_KEYS else (k,)
+            self._revert(iid, keys, r.get('reason') or 'Change not accepted')
+            r = {**r, 'reverted': k}
+        return r
+
+    def _system_edit(self, iid, e, run) -> dict:
+        k, new = e['key'], e['new']
         if k == 'status':
             if new == 'Paused':
                 return run('pause', {'reason': 'Paused on the board'})
@@ -266,6 +282,9 @@ class ItemsMixin:
                 return run('hold', {'kind': 'external_posted', 'reason': 'Marked Posted on the board without a publication '
                                     'receipt. Publication is held; confirm in Slack whether it was posted manually.'})
             return self._revert(iid, k, 'Status is derived by the system; use Pause/Skip or ask Bondok')
+        if k == 'publish_at' and not new:
+            # Clearing Publish at unschedules; legacy Post Date/Time never stand in for it (contract, audit S2).
+            return run('request_reschedule', {'at': None})
         if k in ('publish_at', 'post_date', 'post_time'):
             at = board.requested_instant(e['snap'])
             if k != 'publish_at' and e['snap'].get('publish_at'):
@@ -297,9 +316,11 @@ class ItemsMixin:
                                              + result.get('reason', '')}))
 
     def _revert(self, iid, key, why):
+        keys = tuple(key) if isinstance(key, (tuple, list)) else (key,)
         with self.store.tx() as c:
-            self.project(c, iid, force_keys=(key,))
-            audit(c, iid, 'revert_system_column', 'monday', {'key': key, 'why': why})
+            self.set_notice(c, iid, 'Board change not applied: ' + str(why)[:300])
+            self.project(c, iid, force_keys=keys + ('action',))
+            audit(c, iid, 'revert_system_column', 'monday', {'key': keys, 'why': why})
         return {'state': 'rejected', 'reason': why, 'reverted': key}
 
     def write_human(self, c, it, values: dict):
@@ -360,9 +381,11 @@ class ItemsMixin:
             raise Rejected('Already published; nothing to pause', 'published')
         att = self.active_attempt(c, it['item_id'])
         res = self.release(c, it, 'paused')
+        # An owner-chosen slot stays the owner's request; an automatic one is only a preference (audit S3).
+        keep = dict(requested_at=res['slot'], requested_by=None if res['owner_pinned'] else 'legacy-board') if res \
+            else dict(requested_at=it.get('requested_at'), requested_by=it.get('requested_by'))
         self.update_item(c, it['item_id'], cmd.actor, 'pause', owner_state='paused',
-                         owner_state_reason=cmd.args.get('reason') or 'Paused by owner',
-                         requested_at=res['slot'] if res else it.get('requested_at'))
+                         owner_state_reason=cmd.args.get('reason') or 'Paused by owner', **keep)
         if att and att['stage'] in ('committed', 'outcome_unknown'):
             return {'paused': True, 'publication': 'may_already_be_in_progress',
                     'message': 'Paused for the future, but publication may already be in progress; '

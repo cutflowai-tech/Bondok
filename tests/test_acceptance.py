@@ -1136,3 +1136,97 @@ class PublishingAuditHigh(OpsCase):
         self.assertTrue(r['resumed'], r)
         self.assertIsNone(self.item('413')['hold'])
         self.assertIsNotNone(self.res('413'))
+
+
+class SchedulingAudit(OpsCase):
+    """Audit S1-S8 (scheduling, reservations, approvals)."""
+
+    CAP = 'Sunlight sets the pace, DM us for edits. 🔥\n\n#reels'
+
+    def board(self, iid, fmt='Post'):
+        return board_from_projection(self.ops, iid, fmt=fmt, caption=self.CAP if fmt == 'Post' else '')
+
+    def test_new_time_after_unschedule_reserves(self):                         # S1 (TypeError before)
+        self.make_ready('500', 'Post')
+        self.ops.submit(owner_cmd('u', 'request_reschedule', '500', at=None))
+        at = rules.iso(rules.cairo_local(2026, 10, 15, 21, 0))
+        r = self.ops.submit(owner_cmd('q', 'request_reschedule', '500', at=at))
+        self.assertEqual((r['state'], r.get('scheduled')), ('completed', at), r)
+        self.assertIsNone(self.item('500')['hold'])
+
+    def test_clearing_publish_at_on_board_unschedules(self):                  # S2
+        self.make_ready('501', 'Post')
+        self.drain_monday()
+        self.clock.advance(25 * 60)                       # outside the stale-snapshot window of the last write
+        b = self.board('501')
+        b['column_values'] = [x for x in b['column_values'] if x['id'] != board.COL['publish_at']]
+        self.observe(b)
+        self.assertIsNone(self.res('501'))
+        self.assertEqual(json.loads(self.item('501')['hold'])['kind'], 'unscheduled')
+
+    def test_pause_resume_auto_slot_is_only_a_preference(self):              # S3
+        self.make_ready('502', 'Post', code='LIP1')
+        self.ops.submit(owner_cmd('p', 'pause', '502'))
+        self.make_ready('503', 'Post', code='KE2')        # takes 502's old slot
+        r = self.ops.submit(owner_cmd('r', 'resume', '502', explicit=True))
+        self.assertIsNotNone(r.get('scheduled'), r)
+        self.assertEqual(self.res('502')['origin'], 'auto')
+        self.assertFalse(any('Tell Bondok which time' in o['payload'] for o in self.outbox('slack')))
+
+    def test_owner_pinned_slot_survives_pause_resume(self):
+        self.make_ready('504', 'Post')
+        at = rules.iso(rules.cairo_local(2026, 10, 15, 21, 0))
+        self.ops.submit(owner_cmd('q', 'request_reschedule', '504', at=at))
+        self.ops.submit(owner_cmd('p', 'pause', '504'))
+        self.ops.submit(owner_cmd('r', 'resume', '504', explicit=True))
+        self.assertEqual((self.res('504')['slot'], self.res('504')['owner_pinned']), (at, 1))
+
+    def test_swap_from_unscheduled_item_can_be_approved(self):              # S4
+        self.make_ready('505', 'Post', code='LIP1')
+        self.make_ready('506', 'Post', code='KE2')
+        other = self.res('506')['slot']
+        self.ops.submit(owner_cmd('u', 'request_reschedule', '505', at=None))
+        p = self.ops.submit(owner_cmd('s', 'request_reschedule', '505', at=other))
+        self.assertEqual(p['state'], 'awaiting_approval', p)
+        a = self.ops.submit(owner_cmd('a', 'approve_proposal', None, proposal_id=p['proposal_id']))
+        self.assertEqual(a['state'], 'completed', a)
+        self.assertEqual(self.res('505')['slot'], other)
+
+    def test_requested_time_for_not_ready_item_is_not_resubmitted(self):    # S5
+        self.observe(monday_item('507', fmt='Post', code='LIP1'))
+        self.drain_monday()
+        b = self.board('507')
+        set_cell(b, 'publish_at', 'x', rules.monday_publish_at_value(rules.cairo_local(2026, 10, 12, 21, 0)))
+        self.observe(b)
+        v = self.item('507')['version']
+        for _ in range(3):
+            self.assertEqual(self.observe(b)['edits'], [])
+        self.assertEqual(self.item('507')['version'], v)
+
+    def test_not_ready_item_cannot_take_a_reserved_slot(self):              # S6
+        self.make_ready('508', 'Post', code='KE2')
+        other = self.res('508')['slot']
+        self.observe(monday_item('509', fmt='Post', code='LIP1'))       # not ready
+        r = self.ops.submit(owner_cmd('s', 'request_reschedule', '509', at=other))
+        self.assertEqual((r['state'], r['code']), ('rejected', 'slot_taken'), r)
+        self.assertEqual(self.res('508')['slot'], other)
+
+    def test_rejected_board_time_is_reverted_with_notice(self):             # S7
+        self.make_ready('510', 'Post')
+        self.drain_monday()
+        self.clock.advance(25 * 60)
+        b = self.board('510')
+        set_cell(b, 'publish_at', 'x', rules.monday_publish_at_value(rules.cairo_local(2026, 10, 13, 20, 0)))
+        r = self.observe(b)
+        self.assertEqual(r['edits'][0]['state'], 'rejected')
+        jobs = [json.loads(o['payload']) for o in self.outbox('monday') if o['state'] == 'pending']
+        self.assertTrue(any(board.COL['publish_at'] in j['columns'] for j in jobs), jobs)
+        self.assertIn('Board change not applied', json.loads(self.item('510')['observed'])['_notice']['text'])
+
+    def test_swap_approval_respects_near_due(self):                         # S8
+        self.make_ready('511', 'Post', code='LIP1')
+        self.make_ready('512', 'Post', code='KE2')
+        p = self.ops.submit(owner_cmd('s', 'request_reschedule', '511', at=self.res('512')['slot']))
+        self.clock.set(rules.instant(min(self.res('511')['slot'], self.res('512')['slot'])) - timedelta(minutes=5))
+        a = self.ops.submit(owner_cmd('a', 'approve_proposal', None, proposal_id=p['proposal_id']))
+        self.assertEqual(a['state'], 'rejected', a)
