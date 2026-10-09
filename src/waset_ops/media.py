@@ -169,10 +169,11 @@ def _launch(kind, job_id, body, attempt):
 
 
 def _reuse(prior, recheck):
-    """Immutable evidence may be reused; explicit rechecks never reuse it."""
+    """Immutable evidence may be reused; explicit rechecks never reuse it. A temporary failure is retried
+    whenever its backoff (capped at one hour) has passed, however many attempts failed (audit MP2)."""
     if not prior or recheck:
         return None
-    if prior.get('retryable') and prior.get('attempts', 0) < 3 and time.time() >= prior.get('retryAt', 0):
+    if prior.get('retryable') and time.time() >= prior.get('retryAt', 0):
         return None
     return prior
 
@@ -196,14 +197,24 @@ def prepare(b):
     with store().read() as c:
         cached = c.execute('SELECT * FROM media WHERE id=?', (mid,)).fetchone()
     prior = _job_result(mid)
-    if cached and Path(cached['path']).exists():
+    if cached and not Path(cached['path']).exists():
+        # The prepared file is gone (disk cleanup, restore): its old "ready" job result must not be reused
+        # (audit MP3). Prepare it again from the source.
+        with store().tx() as c:
+            c.execute('DELETE FROM media WHERE id=?', (mid,))
+        return _launch('prepare', mid, b, 1)
+    if cached:
         info = loads(cached['metadata'], {})
         if b.get('recheck') and info.get('checkedAt', 0) < b.get('recheckRequestedAt', 0):
+            if prior and prior.get('reverify') and prior.get('checkedAt', 0) >= b.get('recheckRequestedAt', 0):
+                return prior                   # the recheck's verdict (audit MP1)
             return _launch('reverify', mid, b, 1)
         bad = rules.media_failure(info, b['format'])
         if bad:
             return {'ready': False, 'reason': bad, 'assetKey': b['assetKey'], 'format': b['format']}
         return {'ready': True, 'mediaId': mid, 'filePath': cached['path'], **info}
+    if prior and prior.get('ready'):
+        prior = None        # a success whose media row/file is gone is not evidence any more (audit MP3)
     reuse = _reuse(prior, b.get('recheck'))
     if reuse:
         return reuse
@@ -231,6 +242,7 @@ def job_prepare(b):
     folder.mkdir(parents=True, exist_ok=True)
     original, output = folder / (mid + '.input'), folder / (mid + '.mp4')
     base = {'assetKey': b['assetKey'], 'format': b['format']}
+    ok = False
     try:
         _download(raw_url(b['sourceUrl']), original, b['contentHash'])
         info = probe(original)
@@ -272,9 +284,12 @@ def job_prepare(b):
         with store().tx() as c:
             c.execute('INSERT OR REPLACE INTO media VALUES(?,?,?,?,?)',
                       (mid, str(b['itemId']), str(output), raw_url(b['sourceUrl']), dumps(result)))
+        ok = True
         return {'ready': True, 'mediaId': mid, 'filePath': str(output), **result}
     finally:
         original.unlink(missing_ok=True)
+        if not ok:
+            output.unlink(missing_ok=True)     # no partial output left behind (audit MP6)
         for f in folder.glob(mid + '-*'):
             f.unlink(missing_ok=True)
 
@@ -287,18 +302,24 @@ def job_reverify(b):
     if not row or not Path(row['path']).exists():
         return {'ready': False, 'retryable': True, 'reason': 'Prepared file missing; it will be prepared again'}
     info = loads(row['metadata'], {})
-    fresh = probe(row['path'])
     digest = sha256_file(row['path'])
     if digest != info.get('sha256'):
-        return {'ready': False, 'reason': 'Prepared file content changed on disk; it must be prepared again',
+        # Our own copy is damaged: discard it and prepare again from the source; never an editor issue.
+        with store().tx() as c:
+            c.execute('DELETE FROM media WHERE id=?', (mid,))
+        Path(row['path']).unlink(missing_ok=True)
+        return {'ready': False, 'retryable': True, 'attempts': 0, 'retryAt': 0, 'reverify': True,
+                'checkedAt': time.time(), 'reason': 'Prepared file changed on disk; preparing it again',
                 'assetKey': b['assetKey'], 'format': b['format']}
+    fresh = probe(row['path'])
     info.update(width=fresh['width'], height=fresh['height'], bytes=fresh['bytes'], duration=fresh['duration'],
                 checkedAt=time.time())
     with store().tx() as c:
         c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), mid))
     bad = rules.media_failure(info, b['format'])
     if bad:
-        return {'ready': False, 'reason': bad, 'assetKey': b['assetKey'], 'format': b['format']}
+        return {'ready': False, 'reason': bad, 'assetKey': b['assetKey'], 'format': b['format'], 'reverify': True,
+                'checkedAt': time.time()}
     return {'ready': True, 'mediaId': mid, 'filePath': row['path'], **info}
 
 

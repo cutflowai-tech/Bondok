@@ -1303,3 +1303,53 @@ class OutboxRecovery(OpsCase):
         self.assertEqual(self.res('604')['slot'], slot)
         proj = json.loads(self.item('604')['projected'])
         self.assertEqual((proj['status'], proj['publish_at']), (board.LABELS['scheduled'], slot))
+
+
+class MediaAudit(OpsCase):
+    """Audit MP1-MP3 and queue starvation."""
+
+    def test_temporary_failures_keep_retrying_after_backoff(self):            # MP2
+        from waset_ops import media
+        prior = {'retryable': True, 'attempts': 7, 'retryAt': 0}
+        self.assertIsNone(media._reuse(prior, False))
+        self.assertIs(media._reuse({**prior, 'retryAt': 9e12}, False)['retryable'], True)
+
+    def test_missing_prepared_file_is_prepared_again(self):                   # MP3
+        from waset_ops import media
+        saved = media.ROOT, media._launch
+        media.ROOT = self.dir
+        launched = []
+        media._launch = lambda kind, job_id, b, attempt: launched.append(kind) or {'ready': False, 'pending': True}
+        try:
+            b = {'itemId': '800', 'fileId': 'id:F', 'revision': 'r', 'contentHash': 'h', 'format': 'Story', 'assetKey': 'id:F@r'}
+            mid = media.media_key(b)
+            with self.ops.store.tx() as c:
+                c.execute('INSERT INTO media VALUES(?,?,?,?,?)', (mid, '800', str(self.dir / 'gone.mp4'), 'src', '{}'))
+                c.execute('INSERT INTO jobs VALUES(?,?)', (mid, json.dumps({'ready': True, 'filePath': 'gone.mp4'})))
+            self.assertFalse(media.prepare(b)['ready'])
+            self.assertEqual(launched, ['prepare'])
+            self.assertFalse(media.prepare(b)['ready'])           # old success never reused once the file is gone
+        finally:
+            media.ROOT, media._launch = saved
+
+    def test_recheck_of_ready_item_stays_in_progress_until_verdict(self):     # MP1
+        self.make_ready('801', 'Story')
+        self.ops.submit(owner_cmd('rc', 'request_recheck', '801'))
+        r1 = self.select('801')
+        self.assertTrue(r1['media']['recheck'], r1)
+        r2 = self.select('801')                               # verdict not consumed yet: still a recheck
+        self.assertEqual(r2.get('next'), 'prepare', r2)
+        self.assertTrue(r2['media']['recheck'])
+
+    def test_waiting_items_do_not_starve_new_items(self):
+        for i in range(1, 25):
+            iid = str(820 + i)
+            self.observe(monday_item(iid, fmt='Post', name=f'Item{i} LIP{i}', code=f'LIP{i}'))
+            self.select(iid)
+            self.topaz(iid)
+            self.select(iid)
+            self.wf1('prep_media', iid, result={'ready': False, 'retryable': True, 'attempts': 3, 'reason': 'x',
+                                                'assetKey': 'id:FILE1@rev1', 'format': 'Post'})
+        self.observe(monday_item('899', fmt='Post', name='Fresh LIP99', code='LIP99'))
+        self.clock.advance(60)
+        self.assertIn('899', [w['item_id'] for w in self.ops.work_queue(limit=20)])

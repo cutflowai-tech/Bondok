@@ -13,6 +13,7 @@ from .db import audit, dumps, loads
 
 PROTECTED_PUBLICATION = ('published', 'outcome_unknown', 'in_progress')
 RELIST_READY_SECONDS = 30 * 60          # metadata-only revision check for ready items
+INFRA_RECHECK_SECONDS = 20 * 60
 TIME_KEYS = ('publish_at', 'post_date', 'post_time')
 RESUMABLE_HOLDS = ('resume', 'rejected_edit', 'publish_retry_limit')
 BACKOFF_STEPS = (600, 1200, 2400, 3600) # waiting/blocked items: fair, bounded backoff
@@ -713,6 +714,8 @@ class ItemsMixin:
                     due = 0
                 elif it['readiness'] == 'ready':
                     due = last + RELIST_READY_SECONDS
+                elif it['infra_issue']:
+                    due = last + INFRA_RECHECK_SECONDS     # temporary problem: retry, but don't crowd the queue
                 elif it['readiness'] == 'blocked':
                     n = (loads(it['observed'], {}) or {}).get('_blocked_cycles', 0)
                     due = last + BACKOFF_STEPS[min(n, len(BACKOFF_STEPS) - 1)]
@@ -742,7 +745,10 @@ class ItemsMixin:
         pending = sorted((x for x in rest if x['_last'] and x['_pending']), key=lambda x: (x['_last'], str(x['item_id'])))
         fresh = fair_order([x for x in rest if not x['_last']])
         seen = sorted((x for x in rest if x['_last'] and not x['_pending']), key=lambda x: (x['_last'], str(x['item_id'])))
-        picked = (fair_order(urgent) + pending + fresh + seen)[:limit]
+        # At most half the run goes to items still waiting for a result, so new items always progress
+        # (audit MP2: 20 waiting items starved every never-checked item).
+        half = max(1, limit // 2)
+        picked = (fair_order(urgent) + pending[:half] + fresh + seen + pending[half:])[:limit]
         for x in picked:
             x.pop('_last', None)
             x.pop('_pending', None)
@@ -797,7 +803,10 @@ class ItemsMixin:
             if att and att['stage'] == 'committed':
                 raise Rejected('Source changed while a publication may be in progress', 'in_progress')
             self.release(c, it, 'source file changed', keep_request=True)
-            c.execute('UPDATE ops_items SET content_rev=content_rev+1 WHERE item_id=?', (it['item_id'],))
+            obs = loads(self.item(c, it['item_id'])['observed'], {}) or {}
+            obs['_file_changed_at'] = self.now()       # Slack Topaz confirmations near a change need approval
+            c.execute('UPDATE ops_items SET content_rev=content_rev+1, observed=? WHERE item_id=?',
+                      (dumps(obs), it['item_id']))
             it = self.update_item(c, it['item_id'], cmd.actor, 'source file changed', asset_key=asset, file_id=f['id'],
                                   file_rev=f['rev'], content_hash=f['content_hash'], file_name=f.get('name'),
                                   file_url=a.get('url'), verification_id=None, readiness='checking',
@@ -807,8 +816,10 @@ class ItemsMixin:
         elif it['infra_issue']:
             it = self.update_item(c, it['item_id'], cmd.actor, 'infra recovered', infra_issue=None)
         chk = c.execute("SELECT * FROM ops_checks WHERE item_id=? AND kind='media'", (it['item_id'],)).fetchone()
-        recheck = bool(chk and chk['state'] == 'requested')
-        if recheck:
+        # A recheck stays in progress until its verdict is consumed: the detached job reports on a later
+        # cycle, and a ready item must not return 'unchanged' meanwhile (audit MP1).
+        recheck = bool(chk and chk['state'] in ('requested', 'running'))
+        if chk and chk['state'] == 'requested':
             c.execute("UPDATE ops_checks SET state='running', updated=? WHERE item_id=? AND kind='media'",
                       (self.now(), it['item_id']))
         if it['readiness'] == 'blocked' and (it['block_key'] or '').startswith(('config:', 'editor:')):

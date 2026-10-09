@@ -16,6 +16,7 @@ import re
 from waset_ops import Command, Ops, Rejected, rules
 from waset_ops.db import dumps
 
+RECENT_FILE_CHANGE = 6 * 3600
 MUTATING = {'pause_item', 'resume_item', 'skip_item', 'request_recheck', 'request_reschedule', 'request_publish',
             'change_format', 'replace_source', 'update_caption', 'approve_existing_caption', 'confirm_topaz',
             'resolve_publication', 'draft_caption', 'approve_all_existing_captions'}
@@ -207,8 +208,20 @@ class Bridge:
             with self.ops.store.tx() as c:
                 return {'state': 'awaiting_approval', **self.ops.propose_legacy_captions(c, actor, thread)}
         if tool == 'confirm_topaz':
-            return approval_or_run('confirm_topaz', {'confirmed': True, 'asset_key': None},
-                                   f'Confirm Topaz processing for the currently selected file of item {item}.')
+            # Bound to the exact file version selected now; if the selection changed recently the owner may
+            # mean the previous file, so it becomes an approval naming the file (audit MP5).
+            with self.ops.store.read() as c:
+                it = self.ops.item(c, item)
+            changed = (json.loads(it['observed'] or '{}') or {}).get('_file_changed_at')
+            a = {'confirmed': True, 'asset_key': it['asset_key']}
+            summary = (f"Confirm Topaz for item {item}: file {it.get('file_name') or '?'} "
+                       f"(version {it['asset_key'] or 'none selected'}).")
+            if changed and self.ops.now() - changed < RECENT_FILE_CHANGE:
+                with self.ops.store.tx() as c:
+                    p = self.ops.propose_command(c, 'confirm_topaz', item, a, summary + ' The selected file changed '
+                                                 'recently; approve only if this exact version was Topazed.', actor, thread)
+                return {'state': 'awaiting_approval', **p}
+            return approval_or_run('confirm_topaz', a, summary)
         if tool == 'resolve_publication':
             outcome = 'published' if args.get('published') is True else 'not_published'
             return approval_or_run('resolve_outcome', {'outcome': outcome, 'media_id': args.get('media_id')},

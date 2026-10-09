@@ -420,3 +420,28 @@ class SlackAuditHigh(BondokCase):
         core.post = lambda t, th=None: posted.append(t)
         core.run_watchdog()
         self.assertTrue(any('not readable' in p for p in posted))
+
+
+class TopazFromSlackBinding(BondokCase):
+    """Audit MP5: an owner's "Topaz done" must not attach to a file version selected moments ago."""
+
+    def test_recent_file_change_needs_approval_naming_the_file(self):
+        self.observe(monday_item('720', fmt='Story'))
+        self.select('720', 1)
+        self.duration('720', 30.0, 1)
+        self.select('720', 2)                                  # editor uploaded v2, WF1 selected it
+        self.duration('720', 30.0, 2)
+        core = self.core(FakeModel([{'tool': 'confirm_topaz', 'args': {'item': '720'}}, {'say': 'تمام'}]))
+        reply = self.msg(core, 'توباز خلص للفيديو 720')
+        self.assertIn('Proposal', reply)
+        self.assertIn('video_v2.mp4', reply)
+        self.assertIsNone(self.item('720')['topaz_asset'])
+
+    def test_stable_selection_executes_bound_to_that_version(self):
+        self.observe(monday_item('721', fmt='Story'))
+        self.select('721', 1)
+        self.duration('721', 30.0, 1)
+        self.clock.advance(7 * 3600)
+        core = self.core(FakeModel([{'tool': 'confirm_topaz', 'args': {'item': '721'}}, {'say': 'تمام'}]))
+        self.msg(core, 'توباز خلص للفيديو 721')
+        self.assertEqual(self.item('721')['topaz_asset'], 'id:FILE1@rev1')
