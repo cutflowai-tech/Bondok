@@ -1,0 +1,3843 @@
+{
+ "id": "qI1N5VNgpRjnZAKH",
+ "name": "Waset Social V2 — 1 Prepare & Schedule",
+ "settings": {
+  "executionOrder": "v1",
+  "timezone": "Africa/Cairo",
+  "executionTimeout": 1800,
+  "saveDataErrorExecution": "all",
+  "saveDataSuccessExecution": "all",
+  "saveManualExecutions": true,
+  "availableInMCP": true,
+  "binaryMode": "separate",
+  "timeSavedMode": "fixed",
+  "callerPolicy": "workflowsFromSameOwner"
+ },
+ "nodes": [
+  {
+   "name": "Time Trigger",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.4,
+   "position": [
+    0,
+    0
+   ],
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "minutes",
+       "minutesInterval": 10
+      }
+     ]
+    },
+    "misfirePolicy": "skip"
+   },
+   "id": "f75a17b7-ec6e-50df-82fe-0a81681e1eef"
+  },
+  {
+   "name": "Configuration",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const config={armed:true,runId:'wf1-'+$execution.id,folderRoot:'/Social Media/Production',limit:20};\nif(!config.armed)return [];\nreturn [{json:config}];"
+   },
+   "id": "826f12b9-2089-5a45-bff5-053c8c5b0e3d",
+   "position": [
+    240,
+    0
+   ]
+  },
+  {
+   "name": "Run Start — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={kind:'wf1',runId:$('Configuration').first().json.runId};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/run/start\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "6cb06cf4-b3b3-59df-afa8-a44e260e7760",
+   "position": [
+    480,
+    0
+   ]
+  },
+  {
+   "name": "Run Start — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "d56076ef-dd25-5697-92bd-16284a73c432",
+   "position": [
+    720,
+    0
+   ]
+  },
+  {
+   "name": "Run Start",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "id": "32f77243-6025-5e68-a147-90a6016a0601",
+   "position": [
+    960,
+    0
+   ]
+  },
+  {
+   "name": "Run Acquired?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "98091ce7-b5db-5730-8f27-83c6499eae5c",
+       "leftValue": "={{ $json.acquired===true }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "644043ea-982e-5f8a-9ca4-6eb420b796fc",
+   "position": [
+    1200,
+    0
+   ]
+  },
+  {
+   "name": "Source Start",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1040,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return [{json:{accum:[],gql:{\"query\": \"query($b:[ID!]!){boards(ids:$b){items_page(limit:500){cursor items{id name column_values(ids:[\\\"text_mm066x8y\\\",\\\"link_mm06bswn\\\",\\\"color_mm1ryfcb\\\",\\\"project_owner\\\"]){id text value}}}}}\", \"variables\": {\"b\": [\"5091110326\"]}}}}];"
+   },
+   "id": "365fdcda-d741-558e-9797-468c5beb0fdc"
+  },
+  {
+   "name": "Source Page Request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1300,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return $input.all();"
+   },
+   "id": "0737b966-2e3b-5657-b5d5-1e07ed6dff62"
+  },
+  {
+   "name": "Source Read Page",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1560,
+    0
+   ],
+   "parameters": {
+    "url": "https://api.monday.com/v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "mondayComApi",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.gql) }}"
+   },
+   "credentials": {
+    "mondayComApi": {
+     "id": "<REDACTED>",
+     "name": "Monday.com account"
+    }
+   },
+   "id": "4025fb56-884c-5a8e-af0d-b0b49809ed28"
+  },
+  {
+   "name": "Source Collect",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1820,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));\nconst s=$('Source Page Request').item.json;\nconst p=$json.data?.boards?.[0]?.items_page||$json.data?.next_items_page;\nif(!p)throw new Error('Missing board page; refusing a partial snapshot');\nreturn [{json:{accum:[...s.accum,...p.items],more:!!p.cursor,gql:{query:'query($c:String!){next_items_page(cursor:$c,limit:500){cursor items{id name column_values(ids:[\"text_mm066x8y\",\"link_mm06bswn\",\"color_mm1ryfcb\",\"project_owner\"]){id text value}}}}',variables:{c:p.cursor}}}}];"
+   },
+   "id": "b1bdca78-802a-527b-8578-2607d1796941"
+  },
+  {
+   "name": "Source More Pages?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    2080,
+    0
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "74ccbc86-24e9-4d5c-8d6f-0d8e833ec5bc",
+       "leftValue": "={{ $json.more===true }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "2e9b36de-d4b5-52a0-8b7c-7237af81b67f"
+  },
+  {
+   "name": "Source Snapshot",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2340,
+    0
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return [{json:{items:$json.accum}}];"
+   },
+   "id": "350ca0e2-93d7-5ec7-811c-e8574a4d1319"
+  },
+  {
+   "name": "Social Start",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "return [{json:{accum:[],gql:{query:\"query($b:[ID!]!){boards(ids:$b){items_page(limit:500){cursor items{id name group{id} column_values(ids:[\\\"color_mm7xe2j2\\\", \\\"color_mm7xm9b6\\\", \\\"date4\\\", \\\"date_mm7y8s9t\\\", \\\"date_mm7yr4h3\\\", \\\"date_mm7zd2b9\\\", \\\"hour_mm7xy9cf\\\", \\\"link_mm7x8dy7\\\", \\\"link_mm7xaep2\\\", \\\"link_mm7xb56a\\\", \\\"link_mm7ywc0w\\\", \\\"long_text_mm7x2ay1\\\", \\\"long_text_mm7ysrbz\\\", \\\"long_text_mm7zbtbn\\\", \\\"multiple_person_mm7yy4tk\\\", \\\"status\\\", \\\"text_mm7xaf3t\\\", \\\"text_mm7xemtq\\\", \\\"text_mm7xqn4e\\\", \\\"text_mm7y4h4a\\\", \\\"text_mm7y5kd1\\\", \\\"text_mm7yfqhb\\\", \\\"text_mm7yhjf1\\\", \\\"text_mm7yjmqd\\\", \\\"text_mm7yp8h\\\", \\\"text_mm7yy451\\\", \\\"text_mm7z139h\\\", \\\"text_mm7zjt4m\\\"]){id text value}}}}}\",variables:{b:[\"5105608159\"]}}}}];"
+   },
+   "id": "b43f0081-8da3-5d25-aeb0-00f3656675bb",
+   "position": [
+    0,
+    200
+   ]
+  },
+  {
+   "name": "Social Page Request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "return $input.all();"
+   },
+   "id": "01c7ece5-91fb-51b1-b991-152d5900eae0",
+   "position": [
+    240,
+    200
+   ]
+  },
+  {
+   "name": "Social Read Page",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.3,
+   "parameters": {
+    "url": "https://api.monday.com/v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "mondayComApi",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.gql) }}"
+   },
+   "credentials": {
+    "mondayComApi": {
+     "id": "<REDACTED>",
+     "name": "Monday.com account"
+    }
+   },
+   "id": "63f61aea-01eb-555c-9200-77a9611ea8ef",
+   "position": [
+    480,
+    200
+   ]
+  },
+  {
+   "name": "Social Collect",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));\nconst s=$('Social Page Request').item.json;\nconst p=$json.data?.boards?.[0]?.items_page||$json.data?.next_items_page;\nif(!p)throw new Error('Missing board page; refusing a partial snapshot');\nreturn [{json:{accum:[...s.accum,...p.items],more:!!p.cursor,gql:{query:\"query($c:String!){next_items_page(cursor:$c,limit:500){cursor items{id name group{id} column_values(ids:[\\\"color_mm7xe2j2\\\", \\\"color_mm7xm9b6\\\", \\\"date4\\\", \\\"date_mm7y8s9t\\\", \\\"date_mm7yr4h3\\\", \\\"date_mm7zd2b9\\\", \\\"hour_mm7xy9cf\\\", \\\"link_mm7x8dy7\\\", \\\"link_mm7xaep2\\\", \\\"link_mm7xb56a\\\", \\\"link_mm7ywc0w\\\", \\\"long_text_mm7x2ay1\\\", \\\"long_text_mm7ysrbz\\\", \\\"long_text_mm7zbtbn\\\", \\\"multiple_person_mm7yy4tk\\\", \\\"status\\\", \\\"text_mm7xaf3t\\\", \\\"text_mm7xemtq\\\", \\\"text_mm7xqn4e\\\", \\\"text_mm7y4h4a\\\", \\\"text_mm7y5kd1\\\", \\\"text_mm7yfqhb\\\", \\\"text_mm7yhjf1\\\", \\\"text_mm7yjmqd\\\", \\\"text_mm7yp8h\\\", \\\"text_mm7yy451\\\", \\\"text_mm7z139h\\\", \\\"text_mm7zjt4m\\\"]){id text value}}}}\",variables:{c:p.cursor}}}}];"
+   },
+   "id": "1e42780a-251c-5bd3-a960-72cbe2416c50",
+   "position": [
+    720,
+    200
+   ]
+  },
+  {
+   "name": "Social More Pages?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "082e47aa-4c37-59ee-8294-d0644e09b644",
+       "leftValue": "={{ $json.more===true }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "a6265740-8111-5d96-b99d-a8c56b65f6f9",
+   "position": [
+    960,
+    200
+   ]
+  },
+  {
+   "name": "Social Snapshot",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "return [{json:{items:$json.accum}}];"
+   },
+   "id": "80b69d1a-2f93-5230-8e01-e8a6ed257d8f",
+   "position": [
+    1200,
+    200
+   ]
+  },
+  {
+   "name": "Import Plan — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body=(()=>{\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst all=$('Source Snapshot').first().json.items,counts={};\nfor(const s of all){const c=norm(txt(s,'text_mm066x8y'));if(c)counts[c]=(counts[c]||0)+1}\nconst sources=all.filter(s=>['Post','Story'].includes(txt(s,'color_mm1ryfcb'))).map(s=>({id:s.id,name:s.name,\n code:norm(txt(s,'text_mm066x8y')),format:txt(s,'color_mm1ryfcb'),duplicate:counts[norm(txt(s,'text_mm066x8y'))]>1,\n link:val(s,'link_mm06bswn')?.url||null,owner_ids:(val(s,'project_owner')?.personsAndTeams||[]).map(p=>p.id)}));\nconst social=$json.items.map(i=>({id:i.id,source_item:txt(i,'text_mm7y4h4a'),code:txt(i,'text_mm7xqn4e'),format:txt(i,'color_mm7xm9b6')}));\nreturn {sources,social};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/import/plan\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "079c970f-7261-53c5-8875-77cc89635801",
+   "position": [
+    1440,
+    200
+   ]
+  },
+  {
+   "name": "Import Plan — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "d23069d3-5cdf-51b0-ab08-17282e7deee8",
+   "position": [
+    1680,
+    200
+   ]
+  },
+  {
+   "name": "Import Plan",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "id": "2069f637-8157-53af-beac-250223bcaf9a",
+   "position": [
+    1920,
+    200
+   ]
+  },
+  {
+   "name": "Items To Create?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "70f8ea61-a63b-5310-8aa2-8b42abcd22f9",
+       "leftValue": "={{ ($json.creates||[]).length>0 }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "074e40ea-1bdd-5b0c-a8be-181a17d63228",
+   "position": [
+    2160,
+    200
+   ]
+  },
+  {
+   "name": "Build Create Mutations",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const cs=$json.creates,out=[];\nfor(let x=0;x<cs.length;x+=20){const b=cs.slice(x,x+20),vars={b:'5105608159'},defs=['$b:ID!'],parts=[];\n b.forEach((a,j)=>{vars['v'+j]=JSON.stringify(a.columns);vars['n'+j]=a.name;vars['g'+j]=a.group;defs.push('$v'+j+':JSON!','$n'+j+':String!','$g'+j+':String!');\n parts.push('s'+a.key+':create_item(board_id:$b,group_id:$g'+j+',item_name:$n'+j+',column_values:$v'+j+'){id}')});\n out.push({json:{gql:{query:'mutation('+defs.join(',')+'){'+parts.join(' ')+'}',variables:vars}}})}\nreturn out;"
+   },
+   "id": "620ff48b-90d8-5bec-9575-4c0ffdf8dc9f",
+   "position": [
+    2400,
+    200
+   ]
+  },
+  {
+   "name": "Create Social Items",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1300,
+    260
+   ],
+   "parameters": {
+    "url": "https://api.monday.com/v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "mondayComApi",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.gql) }}"
+   },
+   "credentials": {
+    "mondayComApi": {
+     "id": "<REDACTED>",
+     "name": "Monday.com account"
+    }
+   },
+   "onError": "continueRegularOutput",
+   "id": "72eccc1b-ee19-5293-8ffc-c2e38911890a"
+  },
+  {
+   "name": "Record Created Items — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body=(()=>{\nif($json.errors||$json.error)throw new Error('Item creation failed: '+JSON.stringify($json.errors||$json.error).slice(0,400));\nreturn {pairs:Object.entries($json.data||{}).filter(([k,v])=>v&&v.id).map(([k,v])=>({source:k.slice(1),social:v.id}))};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/import/record\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn {json:{command}};",
+    "mode": "runOnceForEachItem"
+   },
+   "id": "43651847-66c6-5ac9-9045-8b9927e4d9cb",
+   "position": [
+    0,
+    400
+   ]
+  },
+  {
+   "name": "Record Created Items — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "5db218dd-7c55-5098-b3a4-fb1a5366de94",
+   "position": [
+    240,
+    400
+   ]
+  },
+  {
+   "name": "Record Created Items",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn {json:r};",
+    "mode": "runOnceForEachItem"
+   },
+   "id": "c5677053-1a5a-539d-9c08-d563a39a73ed",
+   "position": [
+    480,
+    400
+   ]
+  },
+  {
+   "name": "Board Chunks",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const compact=i=>({id:i.id,name:i.name,group:i.group||null,column_values:(i.column_values||[]).filter(c=>c.text||c.value).map(c=>({id:c.id,text:c.text,value:c.value}))});\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst items=$('Social Snapshot').first().json.items.map(compact);\nconst canceled=$('Source Snapshot').first().json.items.filter(s=>txt(s,'color_mm1ryfcb')==='Canceled').map(s=>({id:s.id,format:'Canceled'}));\nconst out=[];let cur=[],size=0;\nfor(const i of items){const n=JSON.stringify(i).length;if(cur.length&&size+n>60000){out.push(cur);cur=[];size=0}cur.push(i);size+=n}\nif(cur.length)out.push(cur);\nreturn out.map((c,k)=>({json:{items:c,sources:k===0?canceled:[]}}));"
+   },
+   "id": "24121bd8-0fa3-58a1-88da-1d9b73f549fe",
+   "position": [
+    720,
+    400
+   ]
+  },
+  {
+   "name": "Observe Board — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={items:$json.items,sources:$json.sources,caller:'wf1'};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/board/observe\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn {json:{command}};",
+    "mode": "runOnceForEachItem"
+   },
+   "id": "a43bd42f-12e3-5bdb-9ab6-abd0703d8e58",
+   "position": [
+    960,
+    400
+   ]
+  },
+  {
+   "name": "Observe Board — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "6de9920b-ddad-5c73-85c1-c99376172020",
+   "position": [
+    1200,
+    400
+   ]
+  },
+  {
+   "name": "Observe Board",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn {json:r};",
+    "mode": "runOnceForEachItem"
+   },
+   "id": "a839624b-6032-5ba4-922c-ab1d9ff6d23b",
+   "position": [
+    1440,
+    400
+   ]
+  },
+  {
+   "name": "Observation Done",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "return [{json:{edits:$input.all().reduce((n,x)=>n+(x.json.edits||[]).length,0)}}];"
+   },
+   "id": "b2d875c7-f0e6-5ccc-bd2c-6d554a45d491",
+   "position": [
+    1680,
+    400
+   ]
+  },
+  {
+   "name": "Board Missing Check — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={ids:$('Social Snapshot').first().json.items.map(i=>i.id)};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/board/missing\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "98feefe3-9f33-5b30-a6af-5daf4e65d9e7",
+   "position": [
+    1920,
+    400
+   ]
+  },
+  {
+   "name": "Board Missing Check — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "d1e254da-422f-50e1-bd7a-c78507c3b26f",
+   "position": [
+    2160,
+    400
+   ]
+  },
+  {
+   "name": "Board Missing Check",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "id": "d0d94980-ffc2-56e3-8ab5-434ae65dbb5e",
+   "position": [
+    2400,
+    400
+   ]
+  },
+  {
+   "name": "Preparation Queue — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={limit:$('Configuration').first().json.limit};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/prep/queue\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "91934c63-7389-5035-b450-fb9752ea1e67",
+   "position": [
+    2640,
+    400
+   ]
+  },
+  {
+   "name": "Preparation Queue — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "34b81f74-e8cc-5cb9-8887-72110349e033",
+   "position": [
+    0,
+    600
+   ]
+  },
+  {
+   "name": "Preparation Queue",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "id": "3aee0d45-72e1-5696-8d1f-125bbd2c42af",
+   "position": [
+    240,
+    600
+   ]
+  },
+  {
+   "name": "Queue Items",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const w=$json.work||[];return w.length?w.map(x=>({json:x})):[{json:{empty:true}}];"
+   },
+   "id": "2ea46577-53d5-51ad-a24e-cc3a8ce398a4",
+   "position": [
+    480,
+    600
+   ]
+  },
+  {
+   "name": "Each Content Item",
+   "type": "n8n-nodes-base.splitInBatches",
+   "typeVersion": 3,
+   "position": [
+    1040,
+    520
+   ],
+   "parameters": {
+    "batchSize": 1,
+    "options": {}
+   },
+   "id": "238da21e-1837-599f-86f3-9a5ed498ad8b"
+  },
+  {
+   "name": "Item Context",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const x=$json;if(x.empty)return [{json:{...x,valid:false}}];\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst source=$('Source Snapshot').first().json.items.find(s=>String(s.id)===String(x.source_item_id))||null;\nconst srcLink=source?val(source,'link_mm06bswn')?.url:null;\nconst folder=x.folder_url||[x.file_url,srcLink].find(u=>u&&u.includes('/scl/fo/'))||'';\nreturn [{json:{...x,itemId:x.item_id,source,folderUrl:folder||[x.file_url,srcLink].find(u=>u&&/dropbox/.test(u))||'',valid:true}}];"
+   },
+   "id": "8cb36e1a-2cd7-58b6-a30d-f17c4fe56b0a",
+   "position": [
+    960,
+    600
+   ]
+  },
+  {
+   "name": "Item Finished",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "return [{json:{done:true}}];"
+   },
+   "id": "d83ce6de-19dd-5fef-9bde-bc1f1a1a83b6",
+   "position": [
+    1200,
+    600
+   ]
+  },
+  {
+   "name": "Has Work?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "68fc1937-c8ab-5e83-9b06-c8b598c06254",
+       "leftValue": "={{ $json.valid===true }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "34ee354c-56ed-5624-8379-6650c02c65c3",
+   "position": [
+    1440,
+    600
+   ]
+  },
+  {
+   "name": "Needs Caption?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "0a0659e7-a02a-5521-815b-c019ea550e5c",
+       "leftValue": "={{ $json.needs_caption===true&&!!$json.source }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "bd41bd9d-d289-54a9-9d12-3325b6361ee5",
+   "position": [
+    1680,
+    600
+   ]
+  },
+  {
+   "name": "Read Client Brief — Query",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "return [{json:{queryBody:JSON.stringify({query:'query($ids:[ID!]){items(ids:$ids){id name updates(limit:100){text_body created_at}}}',variables:{ids:[$('Item Context').item.json.source.id]}})}}];"
+   },
+   "id": "a58a3e58-807b-5967-a443-b81131133848",
+   "position": [
+    1920,
+    600
+   ]
+  },
+  {
+   "name": "Read Client Brief",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    2080,
+    520
+   ],
+   "parameters": {
+    "url": "https://api.monday.com/v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "mondayComApi",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ $json.queryBody }}"
+   },
+   "onError": "continueErrorOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "mondayComApi": {
+     "id": "<REDACTED>",
+     "name": "Monday.com account"
+    }
+   },
+   "id": "b05555d8-4b63-5b02-a289-7a7af32bd4fe"
+  },
+  {
+   "name": "Pick Client Brief",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));\nconst ctx=$('Item Context').item.json,project=$json.data?.items?.[0];\nconst strip=t=>t.replace(/https?:\\/\\/\\S+/g,'').trim();\nconst ups=(project?.updates||[]).map(u=>({text:(u.text_body||'').trim(),at:u.created_at})).filter(u=>strip(u.text).length>=60).sort((a,b)=>a.at.localeCompare(b.at));\nconst b=ups[0];return [{json:{title:project?.name||ctx.name,brief:b?strip(b.text).replace(/[{}]/g,m=>m==='{'?'(':')').slice(0,6000):''}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "c45aa03a-96c3-5084-bacd-9ddac993246a",
+   "position": [
+    2400,
+    600
+   ]
+  },
+  {
+   "name": "Caption Needed — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={itemId:$('Item Context').item.json.itemId,title:$json.title,brief:$json.brief};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/caption/needed\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "368279d5-f6a8-5ca7-a56a-c14319475e09",
+   "position": [
+    2640,
+    600
+   ]
+  },
+  {
+   "name": "Caption Needed — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "fa1f756a-fed1-509f-ab39-bef4e9eeb0a8",
+   "position": [
+    0,
+    800
+   ]
+  },
+  {
+   "name": "Caption Needed",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "58919565-b113-55d2-a1d6-29b35ffcdabe",
+   "position": [
+    240,
+    800
+   ]
+  },
+  {
+   "name": "Generate Draft?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "c224d08e-af5a-5e9d-a40d-2edebcb8bd77",
+       "leftValue": "={{ $json.needed===true }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "0bb0e368-a6fa-5fa9-9863-e1fe14b17dc8",
+   "position": [
+    480,
+    800
+   ]
+  },
+  {
+   "parameters": {
+    "promptType": "define",
+    "text": "=Video title: {{ $('Pick Client Brief').item.json.title }}\n\nClient brief (script, notes and style):\n{{ $('Pick Client Brief').item.json.brief }}",
+    "messages": {
+     "messageValues": [
+      {
+       "message": "You write Instagram captions for a premium video editing studio that edits real estate and branding videos for its clients. The studio posts the finished edits on its OWN page as portfolio work.\n\nWrite in English, in the studio's voice. Tone: hype, confident, punchy. Never corporate, never like a property listing.\n\nHard rules:\n- NEVER mention the client, agent, agency, brokerage, company, team members, people's names, street addresses, cities or neighborhoods. Do not use any of those names as hashtags either.\n- Do not invent facts. Only use the story, theme and style that appear in the brief.\n- Do not quote the script word for word.\n- No links, no @mentions.\n\nFormat (follow exactly):\nLine 1: ONE single line made of a short hook drawn from the video's own story, vibe or style (3 to 6 words), then a comma, then a short call to action inviting people to DM us for their edits (4 to 7 words), then exactly ONE energetic emoji at the end. No other sentences.\nExample of the shape: Sunlight sets the pace, DM us for edits that hit. 🔥\nVary the hook, the CTA wording and the emoji from video to video (for example 🔥⚡️🎬🚀💥✨).\nLine 2: empty.\nLine 3: 12 to 15 hashtags on one line: mix broad real estate video tags, video editing tags, reels/social tags and a few niche tags that fit this specific video's style or technique. No duplicates, no near-duplicates that only differ by case.\n\nOutput ONLY the caption, nothing else."
+      }
+     ]
+    },
+    "batching": {}
+   },
+   "name": "Write Caption",
+   "type": "@n8n/n8n-nodes-langchain.chainLlm",
+   "typeVersion": 1.9,
+   "position": [
+    2860,
+    520
+   ],
+   "onError": "continueRegularOutput",
+   "id": "95457247-9381-5f39-827b-9beaf34e0550"
+  },
+  {
+   "parameters": {
+    "model": "openai/gpt-5.6-sol",
+    "options": {
+     "maxTokens": 600,
+     "temperature": 0.8
+    }
+   },
+   "name": "OpenRouter Model",
+   "type": "@n8n/n8n-nodes-langchain.lmChatOpenRouter",
+   "typeVersion": 1,
+   "position": [
+    0,
+    780
+   ],
+   "credentials": {
+    "openRouterApi": {
+     "id": "<REDACTED>",
+     "name": "OpenRouter account"
+    }
+   },
+   "id": "ed512f08-2b12-5495-b79b-91f13399d1af"
+  },
+  {
+   "name": "Save Caption Draft — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body=(()=>{\nlet t=String($json.text||'').replace(/^```[a-z]*\\s*/i,'').replace(/```\\s*$/,'').replace(/^caption:\\s*/i,'').trim();\nreturn {requestId:'draft:'+$('Caption Needed').item.json.input_hash,itemId:$('Item Context').item.json.itemId,\ninputHash:$('Caption Needed').item.json.input_hash,text:t||null,model:'openai/gpt-5.6-sol',\nerror:$json.error?String($json.error.message||$json.error).slice(0,300):(t?null:'empty model output')};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/caption/draft\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "7ba013a4-efd9-5ece-ac03-f0b51988f54f",
+   "position": [
+    1200,
+    800
+   ]
+  },
+  {
+   "name": "Save Caption Draft — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "e8f3ef0e-5ce5-5c7e-bff0-b8f65a2ab937",
+   "position": [
+    1440,
+    800
+   ]
+  },
+  {
+   "name": "Save Caption Draft",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "1ee90ff3-52f0-571c-bf57-891384e83077",
+   "position": [
+    1680,
+    800
+   ]
+  },
+  {
+   "name": "Continue Preparation",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "return [{json:$('Item Context').item.json}];"
+   },
+   "id": "caf86591-da3b-527f-b5d9-f6da0b91ec25",
+   "position": [
+    1920,
+    800
+   ]
+  },
+  {
+   "name": "Has Folder?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    1300,
+    780
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "c3da1b6a-1905-419f-8d38-5a3f54c81047",
+       "leftValue": "={{ !!$json.folderUrl }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "87c4ca6b-8734-5540-ba84-845cb8c2ff62"
+  },
+  {
+   "name": "New Folder Context",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1560,
+    780
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const x=$('Item Context').item.json;return [{json:{...x,folderCreated:true,folderPath:$('Configuration').first().json.folderRoot+'/'+String(x.code).replace(/[^A-Za-z0-9#_-]/g,'_')+'/'+x.format}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "61649c64-6e1c-5d4a-b680-9995127d869e"
+  },
+  {
+   "name": "Create Project Folder",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1820,
+    780
+   ],
+   "parameters": {
+    "url": "https://api.dropboxapi.com/2/files/create_folder_v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": true
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "dropboxOAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({path:$json.folderPath,autorename:false}) }}"
+   },
+   "onError": "continueErrorOutput",
+   "credentials": {
+    "dropboxOAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Dropbox account"
+    }
+   },
+   "id": "0e64670b-3f09-5809-a37b-cafd0cc800a2"
+  },
+  {
+   "name": "Check Folder Creation",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2080,
+    780
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "if($json.error_summary&&!$json.error_summary.startsWith('path/conflict/folder'))throw new Error($json.error_summary);return [{json:$('New Folder Context').item.json}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "4144187c-05c3-538d-b587-c2d034993e89"
+  },
+  {
+   "name": "Share New Folder",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    2340,
+    780
+   ],
+   "parameters": {
+    "url": "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": true
+      }
+     }
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({path:$json.folderPath,settings:{requested_visibility:'public'}}) }}"
+   },
+   "onError": "continueErrorOutput",
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "1076c2ed-8d49-51ac-a4b7-7e8279341792"
+  },
+  {
+   "name": "Find Folder Link",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    2600,
+    780
+   ],
+   "parameters": {
+    "url": "https://api.dropboxapi.com/2/sharing/list_shared_links",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({path:$('New Folder Context').item.json.folderPath,direct_only:true}) }}"
+   },
+   "onError": "continueErrorOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "3c93b943-9026-58e4-b00f-ade468205a98"
+  },
+  {
+   "name": "New Folder Ready",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2860,
+    780
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const c=$('New Folder Context').item.json,s=$('Share New Folder').item.json;const url=s.url||s.error?.shared_link_already_exists?.metadata?.url||$json.links?.[0]?.url;if(!url)throw new Error('Could not get folder share link');return [{json:{...c,folderUrl:url}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "e323fb60-dc82-5e1d-8130-31e01853bd2b"
+  },
+  {
+   "name": "Folder Context",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    0,
+    1040
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return [{json:$json}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "91bda15f-85eb-5684-b980-8756ac128038"
+  },
+  {
+   "name": "Folder Metadata",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    260,
+    1040
+   ],
+   "parameters": {
+    "url": "https://api.dropboxapi.com/2/sharing/get_shared_link_metadata",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({url:$json.folderUrl}) }}"
+   },
+   "onError": "continueErrorOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "2895ec3d-9cde-5a63-a85d-bbf1f597caa2"
+  },
+  {
+   "name": "Plan Listing",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    520,
+    1040
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const p=$('Folder Context').item.json;if(!$json.path_lower)throw new Error('Dropbox link is unavailable');const direct=$json['.tag']==='file'||/\\.(mp4|mov|m4v)$/i.test($json.name||'');const directPath=direct?$json.path_lower:null;const path=direct?$json.path_lower.slice(0,$json.path_lower.lastIndexOf('/')):$json.path_lower;const parts=path.split('/');parts.pop();const parent=parts.join('/'),useParent=!direct&&/#\\d+/.test(parts.at(-1)||'');return [{json:{...p,directPath,folderPath:path,parent,useParent,listBody:{path:useParent?parent:path,recursive:!direct,limit:2000},entries:[]}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "7fb5e368-336b-5782-b48d-becdfc813a6e"
+  },
+  {
+   "name": "Files Page Request",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    780,
+    1040
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return $input.all();"
+   },
+   "onError": "continueErrorOutput",
+   "id": "c8b8b8f5-50a1-51d6-a679-8bcde291b1b4"
+  },
+  {
+   "name": "List Files",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    1040,
+    1040
+   ],
+   "parameters": {
+    "url": "={{ $json.cursor ? 'https://api.dropboxapi.com/2/files/list_folder/continue' : 'https://api.dropboxapi.com/2/files/list_folder' }}",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.cursor?{cursor:$json.cursor}:$json.listBody) }}"
+   },
+   "onError": "continueErrorOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "2b2cb32f-5ecc-5f0c-9589-223b5b015e6c"
+  },
+  {
+   "name": "Collect Files",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1300,
+    1040
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const p=$('Files Page Request').item.json;if($json.error_summary)throw new Error($json.error_summary);return [{json:{...p,entries:[...p.entries,...($json.entries||[])],cursor:$json.has_more?$json.cursor:null,more:$json.has_more===true}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "5ed2effd-f08d-54a6-9259-9502bd7a607d"
+  },
+  {
+   "name": "More Dropbox Files?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    1560,
+    1040
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "446ae61e-2c8b-467a-96db-8bb1659ac4ec",
+       "leftValue": "={{ $json.more===true }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "bbdcde3e-0b18-52cd-bd2b-1664bb1a3635"
+  },
+  {
+   "name": "Candidates",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    1820,
+    1040
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const p = $('Plan Listing').item.json;\nconst r = $json;\nif (r.error_summary) throw new Error('list_folder failed for \"' + p.name + '\": ' + r.error_summary);\n\nconst VID = /\\.(mp4|mov|m4v)$/i;\nconst NOCAP = /(before|without|no|w\\/o|pre)[\\s_.-]*cap/i;\nconst CAPNAME = /(^|[^a-z])(cap|caps|captions?|captioned|subs|subtitled)([^a-z]|$)/i;\nconst JUNK = /(^|[^a-z])(test|testing|tmp|temp|proxy|preview|sample|draft|copy|old|backup|bkp|scratch|untitled)([^a-z]|$)/i;\nconst TOPAZ = /(?:^|[^a-z])topaz(?:[^a-z]|$)/i;\nconst MIN_SIZE = 10 * 1048576;\n\nconst fp = p.folderPath;\nconst root = p.useParent ? p.parent : fp;\nconst ver = n => {\n  const m = n.match(/(?:^|[^a-z])v\\s?(\\d+)(?:[._-](\\d+))?/i) || n.match(/V(\\d+)(?:[._-](\\d+))?/);\n  return m ? [parseInt(m[1], 10), parseInt(m[2] || '0', 10)] : null;\n};\nconst key = s => { const m = (s || '').toLowerCase().match(/^\\s*([a-z]+)\\s*(\\d+)/); return m ? m[1] + ' ' + m[2] : null; };\nconst base = { itemId: p.itemId, name: p.name, folderUrl: p.folderUrl, folderSaved: p.folderSaved, skipJev: true, confidence: 1 };\n\n// 1) Folder sanity check: \"Calli 3\" item must not point at a \"Calli 2\" folder\nconst folderName = fp.split('/').pop();\nconst ki = key(p.name), kf = key(folderName);\nif (ki && kf && ki !== kf) {\n  return [{ json: { ...base, files: [], pick: null, note: 'Folder \"' + folderName + '\" does not match this item', errorKind: 'config' } }];\n}\n\n// 2) Collect video files: project folder itself + any Captions folder (archive ignored)\nconst all = [];\nfor (const e of (r.entries || [])) {\n  if (e['.tag'] !== 'file' || !VID.test(e.name)) continue;\n  const pl = e.path_lower; if(p.directPath&&pl!==p.directPath)continue;\n  if (/\\.fcp\\w*bundle\\//.test(pl)) continue;\n  const dir = pl.substring(0, pl.lastIndexOf('/'));\n  if (dir !== root && !dir.startsWith(root + '/')) continue;\n  const segs = dir === root ? [] : dir.slice(root.length + 1).split('/');\n  const archived = segs.some(s => s === 'archive' || s === 'old');\n  const inCaptions = !archived && segs.some(s => /caption/.test(s));\n  const inProject = dir === fp;\n  const inProjectArchive = archived && dir.startsWith(fp + '/');\n  if (!inProject && !inCaptions && !inProjectArchive) continue;\n  const stem = e.name.replace(/\\.[^.]+$/, '');\n  const nocap = NOCAP.test(stem);\n  all.push({\n    name: e.name, path: pl, size: e.size, id:e.id, rev:e.rev, content_hash:e.content_hash,\n    modified: e.client_modified || e.server_modified,\n    archived, inCaptions,\n    cap: (inCaptions || CAPNAME.test(stem)) && !nocap,\n    nocap,\n    junk: JUNK.test(stem),\n    topaz: TOPAZ.test(stem),\n    v: ver(stem)\n  });\n}\n\n// 3) Ordering: higher version > topaz of same version > higher sub-version > newer\nconst cmp = (a, b) => {\n  const bothV = a.v && b.v;\n  if (bothV && a.v[0] !== b.v[0]) return b.v[0] - a.v[0];\n  if (bothV && a.v[1] !== b.v[1]) return b.v[1] - a.v[1];\n  if (!!a.v !== !!b.v) return a.v ? -1 : 1;\n  if (a.topaz !== b.topaz) return a.topaz ? -1 : 1;\n  return b.modified.localeCompare(a.modified);\n};\n\nconst live = all.filter(f => !f.archived);\nlet pool = live.filter(f => !f.junk && !f.nocap);\nif (!pool.length) pool = live.filter(f => !f.junk);\n// Drafts, previews and junk must never be selected as final media.\nif (!pool.length) return [{ json: { ...base, files: [], pick: null, note: 'No final video found in the project folder', errorKind: 'editor' } }];\n\nconst mains = pool.filter(f => !f.cap).sort(cmp);\nconst caps = pool.filter(f => f.cap).sort(cmp);\nconst bestMain = mains[0], bestCap = caps[0];\n\n// Captions are burned into later versions, so the latest main version is the final.\n// A captions-folder file is used only when the project folder has no video at all.\nconst chosen = bestMain || bestCap;\nconst flag = '';\n\nconst files = [chosen, ...pool.filter(f => f !== chosen)].map(f => ({ ...f, inCaptions: f.cap }));\nreturn [{ json: { ...base, files, pick: 0, flag } }];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "611a140e-38ac-5639-8a0a-04f8e62f427c"
+  },
+  {
+   "name": "Existing File Link",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    2600,
+    1040
+   ],
+   "parameters": {
+    "url": "https://api.dropboxapi.com/2/sharing/list_shared_links",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({path:$json.file.path,direct_only:true}) }}"
+   },
+   "onError": "continueErrorOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "de54d730-c662-5cc6-a1c1-33d43383b940"
+  },
+  {
+   "name": "File Share Context",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    2860,
+    1040
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "return [{json:{...$('Selected File').item.json,url:$json.links?.[0]?.url||''}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "a999dd60-7867-53c3-bdae-4465abaee18c"
+  },
+  {
+   "name": "File Link Exists?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    0,
+    1300
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "1a9861b9-d4be-4fd9-8719-8e33bc42339a",
+       "leftValue": "={{ !!$json.url }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "aef5185e-1859-5978-bba2-9989eb17a5a5"
+  },
+  {
+   "name": "Share Final File",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    260,
+    1300
+   ],
+   "parameters": {
+    "url": "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": true
+      }
+     }
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({path:$json.file.path,settings:{requested_visibility:'public'}}) }}"
+   },
+   "onError": "continueErrorOutput",
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "85f297f5-06b3-53a5-bae4-9b27f516222c"
+  },
+  {
+   "name": "New File Link",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "position": [
+    520,
+    1300
+   ],
+   "parameters": {
+    "mode": "runOnceForAllItems",
+    "jsCode": "const x=$('File Share Context').item.json;const url=$json.url||$json.error?.shared_link_already_exists?.metadata?.url;if(!url)throw new Error('Could not create final video link');return [{json:{...x,url}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "eb49ce20-62dc-59dc-85fa-db8d2a1c7871"
+  },
+  {
+   "name": "Selected File",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const c=$json;const file=c.pick==null?null:c.files[c.pick];return [{json:{...$('Folder Context').item.json,file,ok:!!file,note:c.note||'No final video found in the project folder',errorKind:c.errorKind||'editor'}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "5394b670-4f15-554a-b07e-3d4305109b1d",
+   "position": [
+    1200,
+    1200
+   ]
+  },
+  {
+   "name": "Final File Found?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "position": [
+    2340,
+    1040
+   ],
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "43b92f6e-5699-4432-9015-2da2877abed1",
+       "leftValue": "={{ $json.ok===true }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "cba57ff8-33bb-5e7d-8bf8-76d67703e491"
+  },
+  {
+   "name": "Dropbox Problem",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error||{};const msg=String(e.message||e.description||$json.error_summary||'Dropbox request failed');\nconst code=String(e.httpCode||e.status||'');\nconst infra=/^5|^429/.test(code)||/ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|timeout|socket hang up/i.test(msg);\nreturn [{json:{error:msg.slice(0,400),errorKind:infra?'infra':'config'}}];"
+   },
+   "id": "dc798626-db84-58c5-8afa-d91119d55ec9",
+   "position": [
+    1680,
+    1200
+   ]
+  },
+  {
+   "name": "Preparation Step — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body=(()=>{\nconst ctx=$('Item Context').item.json,cfg=$('Configuration').first().json,run=$('Run Start').first().json;\nlet fc={};try{fc=$('Folder Context').item.json}catch{}\nconst base={requestId:cfg.runId+':'+ctx.itemId,itemId:ctx.itemId,runId:cfg.runId,fence:run.fence,expectedFormat:ctx.format,\nfolderUrl:fc.folderCreated?fc.folderUrl:null};\nif($json.file&&$json.ok!==false&&$json.url)return {...base,file:{id:$json.file.id,rev:$json.file.rev,content_hash:$json.file.content_hash,name:$json.file.name},url:$json.url};\nif($json.ok===false)return {...base,error:$json.note,errorKind:$json.errorKind||'editor'};\nreturn {...base,error:$json.error||'Dropbox selection failed',errorKind:$json.errorKind||'infra'};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/prep/step\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "5e3e12f5-01f1-5738-bced-ca1bc4344336",
+   "position": [
+    1920,
+    1200
+   ]
+  },
+  {
+   "name": "Preparation Step — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "81481872-46c7-55bc-a230-5ae3aad11664",
+   "position": [
+    2160,
+    1200
+   ]
+  },
+  {
+   "name": "Preparation Step",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "d03fe81a-f1d2-5ea6-af67-ad6325d55e9c",
+   "position": [
+    2400,
+    1200
+   ]
+  },
+  {
+   "name": "Upload Needed?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "8fb04ddb-cacd-5a31-8d78-726714d50ea8",
+       "leftValue": "={{ $json.state==='completed'&&$json.next==='upload' }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "86ea67d1-69f9-5d90-bc34-737bd7112d7b",
+   "position": [
+    2640,
+    1200
+   ]
+  },
+  {
+   "name": "Ensure Prepared Dropbox Folder",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "parameters": {
+    "method": "POST",
+    "url": "https://api.dropboxapi.com/2/files/create_folder_v2",
+    "authentication": "predefinedCredentialType",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": true
+      }
+     }
+    },
+    "nodeCredentialType": "dropboxOAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({path:'/Social Media/Prepared',autorename:false}) }}"
+   },
+   "position": [
+    1040,
+    2080
+   ],
+   "onError": "continueErrorOutput",
+   "credentials": {
+    "dropboxOAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Dropbox account"
+    }
+   },
+   "id": "b773807d-a64a-5c94-9473-bdd38d6ae988"
+  },
+  {
+   "name": "Prepared Folder Checked",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.error_summary&&!$json.error_summary.startsWith('path/conflict/folder'))throw new Error($json.error_summary);return [{json:$('Preparation Step').item.json}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "56c920fd-ea3d-5372-b6db-a51c1f2224d1",
+   "position": [
+    240,
+    1400
+   ]
+  },
+  {
+   "name": "Read Verified Video from n8n Disk",
+   "type": "n8n-nodes-base.readWriteFile",
+   "typeVersion": 1.1,
+   "parameters": {
+    "operation": "read",
+    "fileSelector": "={{ $json.filePath }}",
+    "options": {
+     "dataPropertyName": "data"
+    }
+   },
+   "position": [
+    1560,
+    2080
+   ],
+   "onError": "continueErrorOutput",
+   "id": "80a8f6a7-b5fb-52ce-a7a4-3bcf93b8c072"
+  },
+  {
+   "name": "Upload Verified 1080 Video",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "parameters": {
+    "method": "POST",
+    "url": "https://content.dropboxapi.com/2/files/upload",
+    "authentication": "predefinedCredentialType",
+    "options": {
+     "timeout": 300000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "nodeCredentialType": "dropboxOAuth2Api",
+    "sendHeaders": true,
+    "headerParameters": {
+     "parameters": [
+      {
+       "name": "Dropbox-API-Arg",
+       "value": "={{ JSON.stringify({path:'/Social Media/Prepared/'+$('Item Context').item.json.itemId+'-'+$('Preparation Step').item.json.mediaId+'.mp4',mode:'overwrite',autorename:false,mute:true}) }}"
+      },
+      {
+       "name": "Content-Type",
+       "value": "application/octet-stream"
+      }
+     ]
+    },
+    "sendBody": true,
+    "contentType": "binaryData",
+    "inputDataFieldName": "data"
+   },
+   "position": [
+    1820,
+    2080
+   ],
+   "onError": "continueErrorOutput",
+   "credentials": {
+    "dropboxOAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Dropbox account"
+    }
+   },
+   "id": "199a0fd4-aabc-5027-9a2a-117fb7da24bd"
+  },
+  {
+   "name": "Share Verified Video",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "parameters": {
+    "method": "POST",
+    "url": "https://api.dropboxapi.com/2/sharing/create_shared_link_with_settings",
+    "authentication": "genericCredentialType",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": true
+      }
+     }
+    },
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({path:$json.path_lower,settings:{requested_visibility:'public'}}) }}"
+   },
+   "position": [
+    2080,
+    2080
+   ],
+   "onError": "continueErrorOutput",
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "49653e10-bf17-5423-8606-6618d45c1a66"
+  },
+  {
+   "name": "Find Verified Share",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "parameters": {
+    "method": "POST",
+    "url": "https://api.dropboxapi.com/2/sharing/list_shared_links",
+    "authentication": "genericCredentialType",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({path:$('Upload Verified 1080 Video').item.json.path_lower,direct_only:true}) }}"
+   },
+   "position": [
+    2340,
+    2080
+   ],
+   "onError": "continueErrorOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "d47320c9-4434-569c-8ada-eaa95a929290"
+  },
+  {
+   "name": "Verified Delivery Link",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const s=$('Share Verified Video').item.json;let link=s.url||s.error?.shared_link_already_exists?.metadata?.url||$json.links?.[0]?.url;\nif(!link)throw new Error('Verified video delivery link missing');\nlink=link.replace(/[?&](dl|raw)=\\d+/g,'').replace(/\\?&/,'?');link+=(link.includes('?')?'&':'?')+'raw=1';\nreturn [{json:{url:link}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "afbadbf4-d5c8-537c-9110-e5d0c3c24795",
+   "position": [
+    1440,
+    1400
+   ]
+  },
+  {
+   "name": "Register Verified Delivery — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={requestId:$('Configuration').first().json.runId+':'+$('Item Context').item.json.itemId+':delivered',\nitemId:$('Item Context').item.json.itemId,runId:$('Configuration').first().json.runId,fence:$('Run Start').first().json.fence,\nmediaId:$('Preparation Step').item.json.mediaId,url:$json.url};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/prep/delivered\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "a5405379-bf04-592e-a4c1-1f70c1cbc811",
+   "position": [
+    1680,
+    1400
+   ]
+  },
+  {
+   "name": "Register Verified Delivery — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "6a6ee34a-f24e-59f6-9f34-338007d9d104",
+   "position": [
+    1920,
+    1400
+   ]
+  },
+  {
+   "name": "Register Verified Delivery",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "7409dc35-22b4-5b61-9f51-ac55e3ea3097",
+   "position": [
+    2160,
+    1400
+   ]
+  },
+  {
+   "name": "Editor Tasks — Take — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={kinds:['editor'],worker:$('Configuration').first().json.runId,limit:10};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/outbox/take\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "e604e5fe-11de-5a17-9b45-75099f37cf35",
+   "position": [
+    2400,
+    1400
+   ]
+  },
+  {
+   "name": "Editor Tasks — Take — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "36a5a596-3e2f-55fa-a3fd-010389f23b27",
+   "position": [
+    2640,
+    1400
+   ]
+  },
+  {
+   "name": "Editor Tasks — Take",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "id": "f0f39f8f-2f61-5d61-b6ec-25fa48ddf135",
+   "position": [
+    0,
+    1600
+   ]
+  },
+  {
+   "name": "Editor Jobs",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const j=$json.jobs||[];return j.length?j.map(x=>({json:x})):[{json:{empty:true}}];"
+   },
+   "id": "8e166ff4-967a-54f3-a91e-ce1610fa6aa7",
+   "position": [
+    240,
+    1600
+   ]
+  },
+  {
+   "name": "Each Editor Job",
+   "type": "n8n-nodes-base.splitInBatches",
+   "typeVersion": 3,
+   "parameters": {
+    "batchSize": 1,
+    "options": {}
+   },
+   "id": "bf460928-1af4-5890-893b-9548b4996451",
+   "position": [
+    480,
+    1600
+   ]
+  },
+  {
+   "name": "Editor Job?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "2c6ca1e0-f490-55ff-b590-5b36bc6c2f6a",
+       "leftValue": "={{ !$json.empty&&!!$json.payload?.source_item_id }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "e5e5588f-497c-5853-b547-90060f318e25",
+   "position": [
+    720,
+    1600
+   ]
+  },
+  {
+   "name": "Editor Task Mutation",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const p=$json.payload;\nif(p.task_id)return [{json:{gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:\"status\",value:$v){id}}',variables:{b:'5091137380',i:String(p.task_id),v:JSON.stringify({label:'Working on it'})}}}}];\nreturn [{json:{gql:{query:'mutation($p:ID!,$n:String!,$v:JSON!){create_subitem(parent_item_id:$p,item_name:$n,column_values:$v){id}}',variables:{p:String(p.source_item_id),n:p.task_name,v:JSON.stringify({status:{label:'Working on it'}})}}}}];"
+   },
+   "id": "76446831-61cf-5b81-b7eb-1af8f14bdc1e",
+   "position": [
+    960,
+    1600
+   ]
+  },
+  {
+   "name": "Apply Editor Task",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.3,
+   "parameters": {
+    "url": "https://api.monday.com/v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "mondayComApi",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.gql) }}"
+   },
+   "credentials": {
+    "mondayComApi": {
+     "id": "<REDACTED>",
+     "name": "Monday.com account"
+    }
+   },
+   "onError": "continueErrorOutput",
+   "id": "3ed2ba7c-8bf7-523a-8967-07cb712bfdcc",
+   "position": [
+    1200,
+    1600
+   ]
+  },
+  {
+   "name": "Editor Task Update",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));\nconst p=$('Each Editor Job').item.json.payload;const id=p.task_id||$json.data?.create_subitem?.id;\nif(!id)throw new Error('Editor task id missing');\nreturn [{json:{taskId:String(id),gql:{query:'mutation($i:ID!,$b:String!){create_update(item_id:$i,body:$b){id}}',variables:{i:String(id),b:p.body}}}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "f0df8355-0f3c-57d3-8b4d-51b64d794d31",
+   "position": [
+    1440,
+    1600
+   ]
+  },
+  {
+   "name": "Post Editor Instructions",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.3,
+   "parameters": {
+    "url": "https://api.monday.com/v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "mondayComApi",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($json.gql) }}"
+   },
+   "credentials": {
+    "mondayComApi": {
+     "id": "<REDACTED>",
+     "name": "Monday.com account"
+    }
+   },
+   "onError": "continueErrorOutput",
+   "id": "4b89bdf4-a8cb-5386-8266-253e4c40931a",
+   "position": [
+    1680,
+    1600
+   ]
+  },
+  {
+   "name": "Editor Task — Ack — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body=(()=>{\nconst ok=!$json.errors&&!$json.error&&!!$json.data;\nlet task=null;try{task=$('Editor Task Update').item.json.taskId}catch{}\nreturn {id:$('Each Editor Job').item.json.id,worker:$('Configuration').first().json.runId,ok,\nerror:ok?null:JSON.stringify($json.errors||$json.error||'editor task failed').slice(0,400),result:{task_id:task}};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/outbox/ack\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "46b77f68-1b06-5c72-9215-9a38e369e88e",
+   "position": [
+    1920,
+    1600
+   ]
+  },
+  {
+   "name": "Editor Task — Ack — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "a317177c-0ac7-575c-bd3b-d22fe34a3d2a",
+   "position": [
+    2160,
+    1600
+   ]
+  },
+  {
+   "name": "Editor Task — Ack",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+   },
+   "id": "569574dd-b8c1-5745-810b-91caf2a29016",
+   "position": [
+    2400,
+    1600
+   ]
+  },
+  {
+   "name": "Editor Job Finished",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "return [{json:{done:true}}];"
+   },
+   "id": "2007fb78-c006-5f4e-acb9-8bd372229618",
+   "position": [
+    2640,
+    1600
+   ]
+  },
+  {
+   "name": "Retain Published Files — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/maintenance\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "076ecc64-44f8-52bc-bb75-b57a964361e6",
+   "position": [
+    0,
+    1800
+   ]
+  },
+  {
+   "name": "Retain Published Files — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "dbdb2d9e-3d97-5412-bd9f-0d09faf18a05",
+   "position": [
+    240,
+    1800
+   ]
+  },
+  {
+   "name": "Retain Published Files",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+   },
+   "id": "53a81c01-3f9c-543d-b583-b934aa78429c",
+   "position": [
+    480,
+    1800
+   ]
+  },
+  {
+   "name": "Run Finish — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={kind:'wf1',runId:$('Configuration').first().json.runId};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/run/finish\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "4e7c0833-eee8-58cd-8bfd-80390f2e5ef7",
+   "position": [
+    720,
+    1800
+   ]
+  },
+  {
+   "name": "Run Finish — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "dc98869f-8f81-5114-9af1-c68e90943820",
+   "position": [
+    960,
+    1800
+   ]
+  },
+  {
+   "name": "Run Finish",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "id": "da31e1b4-4654-57cf-8328-dc9acd5a33df",
+   "position": [
+    1200,
+    1800
+   ]
+  }
+ ],
+ "connections": {
+  "Run Start — Input": {
+   "main": [
+    [
+     {
+      "node": "Run Start — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Run Start — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Run Start",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Time Trigger": {
+   "main": [
+    [
+     {
+      "node": "Configuration",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Configuration": {
+   "main": [
+    [
+     {
+      "node": "Run Start — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Run Start": {
+   "main": [
+    [
+     {
+      "node": "Run Acquired?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Source Start": {
+   "main": [
+    [
+     {
+      "node": "Source Page Request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Source Page Request": {
+   "main": [
+    [
+     {
+      "node": "Source Read Page",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Source Read Page": {
+   "main": [
+    [
+     {
+      "node": "Source Collect",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Source Collect": {
+   "main": [
+    [
+     {
+      "node": "Source More Pages?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Source More Pages?": {
+   "main": [
+    [
+     {
+      "node": "Source Page Request",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Source Snapshot",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Run Acquired?": {
+   "main": [
+    [
+     {
+      "node": "Source Start",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Social Start": {
+   "main": [
+    [
+     {
+      "node": "Social Page Request",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Social Page Request": {
+   "main": [
+    [
+     {
+      "node": "Social Read Page",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Social Read Page": {
+   "main": [
+    [
+     {
+      "node": "Social Collect",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Social Collect": {
+   "main": [
+    [
+     {
+      "node": "Social More Pages?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Social More Pages?": {
+   "main": [
+    [
+     {
+      "node": "Social Page Request",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Social Snapshot",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Source Snapshot": {
+   "main": [
+    [
+     {
+      "node": "Social Start",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Import Plan — Input": {
+   "main": [
+    [
+     {
+      "node": "Import Plan — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Import Plan — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Import Plan",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Social Snapshot": {
+   "main": [
+    [
+     {
+      "node": "Import Plan — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Created Items — Input": {
+   "main": [
+    [
+     {
+      "node": "Record Created Items — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Created Items — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Record Created Items",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Import Plan": {
+   "main": [
+    [
+     {
+      "node": "Items To Create?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Items To Create?": {
+   "main": [
+    [
+     {
+      "node": "Build Create Mutations",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Board Chunks",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Create Mutations": {
+   "main": [
+    [
+     {
+      "node": "Create Social Items",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Create Social Items": {
+   "main": [
+    [
+     {
+      "node": "Record Created Items — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Observe Board — Input": {
+   "main": [
+    [
+     {
+      "node": "Observe Board — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Observe Board — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Observe Board",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Created Items": {
+   "main": [
+    [
+     {
+      "node": "Board Chunks",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Board Chunks": {
+   "main": [
+    [
+     {
+      "node": "Observe Board — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Observe Board": {
+   "main": [
+    [
+     {
+      "node": "Observation Done",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Board Missing Check — Input": {
+   "main": [
+    [
+     {
+      "node": "Board Missing Check — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Board Missing Check — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Board Missing Check",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Preparation Queue — Input": {
+   "main": [
+    [
+     {
+      "node": "Preparation Queue — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Preparation Queue — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Preparation Queue",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Observation Done": {
+   "main": [
+    [
+     {
+      "node": "Board Missing Check — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Board Missing Check": {
+   "main": [
+    [
+     {
+      "node": "Preparation Queue — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Preparation Queue": {
+   "main": [
+    [
+     {
+      "node": "Queue Items",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Queue Items": {
+   "main": [
+    [
+     {
+      "node": "Each Content Item",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Each Content Item": {
+   "main": [
+    [
+     {
+      "node": "Editor Tasks — Take — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Context",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Item Finished": {
+   "main": [
+    [
+     {
+      "node": "Each Content Item",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Item Context": {
+   "main": [
+    [
+     {
+      "node": "Has Work?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Has Work?": {
+   "main": [
+    [
+     {
+      "node": "Needs Caption?",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Caption Needed — Input": {
+   "main": [
+    [
+     {
+      "node": "Caption Needed — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Caption Needed — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Caption Needed",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "OpenRouter Model": {
+   "ai_languageModel": [
+    [
+     {
+      "node": "Write Caption",
+      "type": "ai_languageModel",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Save Caption Draft — Input": {
+   "main": [
+    [
+     {
+      "node": "Save Caption Draft — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Save Caption Draft — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Save Caption Draft",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Needs Caption?": {
+   "main": [
+    [
+     {
+      "node": "Read Client Brief — Query",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Continue Preparation",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Client Brief — Query": {
+   "main": [
+    [
+     {
+      "node": "Read Client Brief",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Client Brief": {
+   "main": [
+    [
+     {
+      "node": "Pick Client Brief",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Continue Preparation",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Pick Client Brief": {
+   "main": [
+    [
+     {
+      "node": "Caption Needed — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Continue Preparation",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Caption Needed": {
+   "main": [
+    [
+     {
+      "node": "Generate Draft?",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Continue Preparation",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Generate Draft?": {
+   "main": [
+    [
+     {
+      "node": "Write Caption",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Continue Preparation",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Write Caption": {
+   "main": [
+    [
+     {
+      "node": "Save Caption Draft — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Save Caption Draft": {
+   "main": [
+    [
+     {
+      "node": "Continue Preparation",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Continue Preparation",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Continue Preparation": {
+   "main": [
+    [
+     {
+      "node": "Has Folder?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Has Folder?": {
+   "main": [
+    [
+     {
+      "node": "Folder Context",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "New Folder Context",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "New Folder Context": {
+   "main": [
+    [
+     {
+      "node": "Create Project Folder",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Create Project Folder": {
+   "main": [
+    [
+     {
+      "node": "Check Folder Creation",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Folder Creation": {
+   "main": [
+    [
+     {
+      "node": "Share New Folder",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Share New Folder": {
+   "main": [
+    [
+     {
+      "node": "Find Folder Link",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Folder Link": {
+   "main": [
+    [
+     {
+      "node": "New Folder Ready",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "New Folder Ready": {
+   "main": [
+    [
+     {
+      "node": "Folder Context",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Folder Context": {
+   "main": [
+    [
+     {
+      "node": "Folder Metadata",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Folder Metadata": {
+   "main": [
+    [
+     {
+      "node": "Plan Listing",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Plan Listing": {
+   "main": [
+    [
+     {
+      "node": "Files Page Request",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Files Page Request": {
+   "main": [
+    [
+     {
+      "node": "List Files",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "List Files": {
+   "main": [
+    [
+     {
+      "node": "Collect Files",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Collect Files": {
+   "main": [
+    [
+     {
+      "node": "More Dropbox Files?",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "More Dropbox Files?": {
+   "main": [
+    [
+     {
+      "node": "Files Page Request",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Candidates",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Candidates": {
+   "main": [
+    [
+     {
+      "node": "Selected File",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Selected File": {
+   "main": [
+    [
+     {
+      "node": "Final File Found?",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Final File Found?": {
+   "main": [
+    [
+     {
+      "node": "Existing File Link",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Preparation Step — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Existing File Link": {
+   "main": [
+    [
+     {
+      "node": "File Share Context",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "File Share Context": {
+   "main": [
+    [
+     {
+      "node": "File Link Exists?",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "File Link Exists?": {
+   "main": [
+    [
+     {
+      "node": "Preparation Step — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Share Final File",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Share Final File": {
+   "main": [
+    [
+     {
+      "node": "New File Link",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "New File Link": {
+   "main": [
+    [
+     {
+      "node": "Preparation Step — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Preparation Step — Input": {
+   "main": [
+    [
+     {
+      "node": "Preparation Step — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Preparation Step — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Preparation Step",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Dropbox Problem": {
+   "main": [
+    [
+     {
+      "node": "Preparation Step — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Preparation Step": {
+   "main": [
+    [
+     {
+      "node": "Upload Needed?",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Upload Needed?": {
+   "main": [
+    [
+     {
+      "node": "Ensure Prepared Dropbox Folder",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Register Verified Delivery — Input": {
+   "main": [
+    [
+     {
+      "node": "Register Verified Delivery — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Register Verified Delivery — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Register Verified Delivery",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Ensure Prepared Dropbox Folder": {
+   "main": [
+    [
+     {
+      "node": "Prepared Folder Checked",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Prepared Folder Checked": {
+   "main": [
+    [
+     {
+      "node": "Read Verified Video from n8n Disk",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Verified Video from n8n Disk": {
+   "main": [
+    [
+     {
+      "node": "Upload Verified 1080 Video",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Upload Verified 1080 Video": {
+   "main": [
+    [
+     {
+      "node": "Share Verified Video",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Share Verified Video": {
+   "main": [
+    [
+     {
+      "node": "Find Verified Share",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Find Verified Share": {
+   "main": [
+    [
+     {
+      "node": "Verified Delivery Link",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Verified Delivery Link": {
+   "main": [
+    [
+     {
+      "node": "Register Verified Delivery — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Register Verified Delivery": {
+   "main": [
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Tasks — Take — Input": {
+   "main": [
+    [
+     {
+      "node": "Editor Tasks — Take — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Tasks — Take — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Editor Tasks — Take",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Tasks — Take": {
+   "main": [
+    [
+     {
+      "node": "Editor Jobs",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Jobs": {
+   "main": [
+    [
+     {
+      "node": "Each Editor Job",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Each Editor Job": {
+   "main": [
+    [
+     {
+      "node": "Retain Published Files — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Editor Job?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Task — Ack — Input": {
+   "main": [
+    [
+     {
+      "node": "Editor Task — Ack — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Task — Ack — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Editor Task — Ack",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Job?": {
+   "main": [
+    [
+     {
+      "node": "Editor Task Mutation",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Editor Job Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Task Mutation": {
+   "main": [
+    [
+     {
+      "node": "Apply Editor Task",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Apply Editor Task": {
+   "main": [
+    [
+     {
+      "node": "Editor Task Update",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Editor Task — Ack — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Task Update": {
+   "main": [
+    [
+     {
+      "node": "Post Editor Instructions",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Editor Task — Ack — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Post Editor Instructions": {
+   "main": [
+    [
+     {
+      "node": "Editor Task — Ack — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Editor Task — Ack — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Task — Ack": {
+   "main": [
+    [
+     {
+      "node": "Editor Job Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Editor Job Finished": {
+   "main": [
+    [
+     {
+      "node": "Each Editor Job",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Retain Published Files — Input": {
+   "main": [
+    [
+     {
+      "node": "Retain Published Files — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Retain Published Files — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Retain Published Files",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Run Finish — Input": {
+   "main": [
+    [
+     {
+      "node": "Run Finish — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Run Finish — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Run Finish",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Retain Published Files": {
+   "main": [
+    [
+     {
+      "node": "Run Finish — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "meta": {
+  "waset": "v2",
+  "built_from": "e520d122-3a12-462a-94f6-cfb894657b83"
+ }
+}

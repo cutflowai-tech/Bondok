@@ -1,0 +1,2894 @@
+{
+  "id": "pUIshuf16zIYoYRz",
+  "name": "Waset Social V2 — 2 Publish When Due",
+  "active": true,
+  "isArchived": false,
+  "versionId": "9351a690-bdcf-4de1-b811-44ef58b582a3",
+  "activeVersionId": "9351a690-bdcf-4de1-b811-44ef58b582a3",
+  "triggerCount": 1,
+  "nodeCount": 78,
+  "createdAt": "2026-10-08T13:50:04.556Z",
+  "updatedAt": "2026-10-09T15:35:22.474Z",
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Cairo",
+    "executionTimeout": 1800,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all",
+    "saveManualExecutions": true,
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [],
+  "parentFolderId": null,
+  "connections": {
+    "Time Trigger": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration": {
+      "main": [
+        [
+          {
+            "node": "Social Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social Start": {
+      "main": [
+        [
+          {
+            "node": "Social Page Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social Page Request": {
+      "main": [
+        [
+          {
+            "node": "Social Read Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social Read Page": {
+      "main": [
+        [
+          {
+            "node": "Social Collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social Collect": {
+      "main": [
+        [
+          {
+            "node": "Social More Pages?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social More Pages?": {
+      "main": [
+        [
+          {
+            "node": "Social Page Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Social Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Publication Receipts — Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publication Receipts": {
+      "main": [
+        [
+          {
+            "node": "Due Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Due Queue": {
+      "main": [
+        [
+          {
+            "node": "Each Due Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Each Due Item": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Publication Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publication Context": {
+      "main": [
+        [
+          {
+            "node": "Valid Due Content?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Due Content?": {
+      "main": [
+        [
+          {
+            "node": "Recover Published Receipt?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recover Published Receipt?": {
+      "main": [
+        [
+          {
+            "node": "Published Receipt Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Find Source Project — Query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Source Project": {
+      "main": [
+        [
+          {
+            "node": "Unique Source Project",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Unique Source Project": {
+      "main": [
+        [
+          {
+            "node": "Source Eligible?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Source Eligible?": {
+      "main": [
+        [
+          {
+            "node": "Claim Publication — Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Publication": {
+      "main": [
+        [
+          {
+            "node": "Publication Claimed?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publication Claimed?": {
+      "main": [
+        [
+          {
+            "node": "Resume Existing Container?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Media Body": {
+      "main": [
+        [
+          {
+            "node": "Create Container",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Container": {
+      "main": [
+        [
+          {
+            "node": "Container Created",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Container Created": {
+      "main": [
+        [
+          {
+            "node": "Save Container Receipt — Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Container Receipt": {
+      "main": [
+        [
+          {
+            "node": "Active Container",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Context": {
+      "main": [
+        [
+          {
+            "node": "Wait For Processing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait For Processing": {
+      "main": [
+        [
+          {
+            "node": "Renew Publication Lease — Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Container": {
+      "main": [
+        [
+          {
+            "node": "Container Status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Container Status": {
+      "main": [
+        [
+          {
+            "node": "Container Finished?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Container Finished?": {
+      "main": [
+        [
+          {
+            "node": "Verify Source Revision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Keep Polling?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Keep Polling?": {
+      "main": [
+        [
+          {
+            "node": "Poll Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recheck Immediately Before Publishing": {
+      "main": [
+        [
+          {
+            "node": "Still Scheduled & Due",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still Scheduled & Due": {
+      "main": [
+        [
+          {
+            "node": "Final Publish Gate?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Final Publish Gate?": {
+      "main": [
+        [
+          {
+            "node": "Record Publish Intent — Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Publish Intent": {
+      "main": [
+        [
+          {
+            "node": "Publish To Instagram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publish To Instagram": {
+      "main": [
+        [
+          {
+            "node": "Published Media ID",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Published Media ID": {
+      "main": [
+        [
+          {
+            "node": "Persist Published Receipt — Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Published Receipt": {
+      "main": [
+        [
+          {
+            "node": "Get Permalink",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Permalink": {
+      "main": [
+        [
+          {
+            "node": "Persist Permalink — Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Permalink": {
+      "main": [
+        [
+          {
+            "node": "Published Receipt Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Published Receipt Context": {
+      "main": [
+        [
+          {
+            "node": "Build Posted Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Posted Update": {
+      "main": [
+        [
+          {
+            "node": "Mark Posted in Monday",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Posted in Monday": {
+      "main": [
+        [
+          {
+            "node": "Build Source Posted Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Source Posted Update": {
+      "main": [
+        [
+          {
+            "node": "Sync Posted to Customer Projects",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Posted to Customer Projects": {
+      "main": [
+        [
+          {
+            "node": "Source Sync Acknowledged",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Source Sync Acknowledged": {
+      "main": [
+        [
+          {
+            "node": "Complete Publication Receipt — Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publication Needs Review": {
+      "main": [
+        [
+          {
+            "node": "Publication Review Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Publication Note?": {
+      "main": [
+        [
+          {
+            "node": "Save Publication Note",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Item Finished",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Publication Note": {
+      "main": [
+        [
+          {
+            "node": "Publication Item Finished",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Item Finished",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publication Item Finished": {
+      "main": [
+        [
+          {
+            "node": "Each Due Item",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Publication Receipt": {
+      "main": [
+        [
+          {
+            "node": "Publication Item Finished",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publication Receipts — Input": {
+      "main": [
+        [
+          {
+            "node": "Publication Receipts — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publication Receipts — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Publication Receipts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Publication — Input": {
+      "main": [
+        [
+          {
+            "node": "Claim Publication — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claim Publication — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Claim Publication",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Container Receipt — Input": {
+      "main": [
+        [
+          {
+            "node": "Save Container Receipt — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Container Receipt — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Save Container Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Publish Intent — Input": {
+      "main": [
+        [
+          {
+            "node": "Record Publish Intent — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Publish Intent — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Record Publish Intent",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Published Receipt — Input": {
+      "main": [
+        [
+          {
+            "node": "Persist Published Receipt — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Published Receipt — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Persist Published Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Permalink — Input": {
+      "main": [
+        [
+          {
+            "node": "Persist Permalink — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Persist Permalink — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Persist Permalink",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Publication Receipt — Input": {
+      "main": [
+        [
+          {
+            "node": "Complete Publication Receipt — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Publication Receipt — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Complete Publication Receipt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resume Existing Container?": {
+      "main": [
+        [
+          {
+            "node": "Active Container",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Create Media Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Active Container": {
+      "main": [
+        [
+          {
+            "node": "Poll Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renew Publication Lease — Input": {
+      "main": [
+        [
+          {
+            "node": "Renew Publication Lease — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renew Publication Lease — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Renew Publication Lease",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Renew Publication Lease": {
+      "main": [
+        [
+          {
+            "node": "Check Container",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Source Revision": {
+      "main": [
+        [
+          {
+            "node": "Source Revision Matches",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Source Revision Matches": {
+      "main": [
+        [
+          {
+            "node": "Source Revision Still Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Source Revision Still Valid?": {
+      "main": [
+        [
+          {
+            "node": "Recheck Immediately Before Publishing — Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publication Review Payload": {
+      "main": [
+        [
+          {
+            "node": "Read Status Before Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Item Finished",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Status Before Review": {
+      "main": [
+        [
+          {
+            "node": "Guard Publication Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Item Finished",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guard Publication Review": {
+      "main": [
+        [
+          {
+            "node": "Has Publication Note?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Item Finished",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Source Project — Query": {
+      "main": [
+        [
+          {
+            "node": "Find Source Project",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recheck Immediately Before Publishing — Query": {
+      "main": [
+        [
+          {
+            "node": "Recheck Immediately Before Publishing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Publication Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "id": "e0a841b9-51ae-4056-be20-493086129cb3",
+      "name": "Time Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 1
+            }
+          ]
+        },
+        "misfirePolicy": "skip"
+      }
+    },
+    {
+      "id": "38ba0ee4-9a8c-4c11-8f57-ad61de8be312",
+      "name": "Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Cutover authorized 2026-10-08. Old publisher and waiting executions stopped.\nconst config={armed:true,styleWeekdays:{},folderRoot:'/Social Media/Production',owner:String($execution.id)};\nif(!config.armed)return [];\nreturn [{json:config}];"
+      }
+    },
+    {
+      "id": "9478e2ea-253c-4726-9808-b94f84132da9",
+      "name": "Social Start",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{json:{accum:[],gql:{\"query\": \"query($b:[ID!]!){boards(ids:$b){items_page(limit:500){cursor items{id name column_values(ids:[\\\"status\\\",\\\"date4\\\",\\\"hour_mm7xy9cf\\\",\\\"color_mm7xm9b6\\\",\\\"long_text_mm7x2ay1\\\",\\\"color_mm7xe2j2\\\",\\\"link_mm7x8dy7\\\",\\\"link_mm7xb56a\\\",\\\"text_mm7xqn4e\\\",\\\"long_text_mm7ysrbz\\\",\\\"link_mm7xaep2\\\",\\\"text_mm7xemtq\\\",\\\"link_mm7ywc0w\\\",\\\"text_mm7y5kd1\\\",\\\"text_mm7yjmqd\\\",\\\"multiple_person_mm7yy4tk\\\",\\\"date_mm7y8s9t\\\",\\\"text_mm7y4h4a\\\",\\\"text_mm7yy451\\\",\\\"text_mm7yp8h\\\",\\\"date_mm7yr4h3\\\",\\\"text_mm7yfqhb\\\",\\\"text_mm7yhjf1\\\",\\\"long_text_mm7zbtbn\\\",\\\"text_mm7zjt4m\\\",\\\"text_mm7z139h\\\",\\\"date_mm7zd2b9\\\"]){id text value}}}}}\", \"variables\": {\"b\": [\"5105608159\"]}}}}];"
+      }
+    },
+    {
+      "id": "9f3932d3-48cd-45e3-bab8-72ab009cf963",
+      "name": "Social Page Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all();"
+      }
+    },
+    {
+      "id": "9b6b615f-4a22-4e0f-8f6d-b4f97e821990",
+      "name": "Social Read Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1040,
+        0
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gql) }}"
+      },
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    },
+    {
+      "id": "8e003cee-9380-4a71-8ea0-84f1b085984d",
+      "name": "Social Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));\nconst s=$('Social Page Request').item.json;\nconst p=$json.data?.boards?.[0]?.items_page||$json.data?.next_items_page;\nif(!p)throw new Error('Missing board page; refusing a partial snapshot');\nreturn [{json:{accum:[...s.accum,...p.items],more:!!p.cursor,gql:{query:'query($c:String!){next_items_page(cursor:$c,limit:500){cursor items{id name column_values(ids:[\"status\",\"date4\",\"hour_mm7xy9cf\",\"color_mm7xm9b6\",\"long_text_mm7x2ay1\",\"color_mm7xe2j2\",\"link_mm7x8dy7\",\"link_mm7xb56a\",\"text_mm7xqn4e\",\"long_text_mm7ysrbz\",\"link_mm7xaep2\",\"text_mm7xemtq\",\"link_mm7ywc0w\",\"text_mm7y5kd1\",\"text_mm7yjmqd\",\"multiple_person_mm7yy4tk\",\"date_mm7y8s9t\",\"text_mm7y4h4a\",\"text_mm7yy451\",\"text_mm7yp8h\",\"date_mm7yr4h3\",\"text_mm7yfqhb\",\"text_mm7yhjf1\",\"long_text_mm7zbtbn\",\"text_mm7zjt4m\",\"text_mm7z139h\",\"date_mm7zd2b9\"]){id text value}}}}',variables:{c:p.cursor}}}}];"
+      }
+    },
+    {
+      "id": "540a2be4-8f25-4d2a-b154-bd036b441218",
+      "name": "Social More Pages?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1560,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "954164dd-ae8c-4405-8172-3a6a8daae0bb",
+              "leftValue": "={{ $json.more===true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "afe12901-3c85-49bb-a118-5867d65a8730",
+      "name": "Social Snapshot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{json:{items:$json.accum}}];"
+      }
+    },
+    {
+      "id": "1a560206-30d4-4739-a5ad-2017b40eb772",
+      "name": "Publication Receipts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local n8n helper failed');const result=JSON.parse($json.stdout||'{}');if(result.error)throw new Error(result.error);return [{json:result}];"
+      },
+      "position": [
+        2080,
+        0
+      ]
+    },
+    {
+      "id": "ae29e7e4-cddf-47c9-9264-c191ec055f2c",
+      "name": "Due Queue",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\n\nconst receipts=$json.receipts||[],items=$('Social Snapshot').first().json.items,output=[];\nfor(const item of items){const r=receipts.find(r=>r.item===item.id),stamp=at(item);if(r?.stage==='published'&&!r.data.sourceSynced){output.push({json:{item,receipt:r}});continue}\n if(txt(item,'status')==='Scheduled'&&stamp&&DateTime.fromISO(stamp).toMillis()<=DateTime.utc().toMillis())output.push({json:{item,receipt:r||null}});\n}\nreturn output.length?output:[{json:{empty:true}}];\n"
+      }
+    },
+    {
+      "id": "9de13962-bdb1-4bb3-b4e2-a5dbe19b649a",
+      "name": "Each Due Item",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2600,
+        0
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "9cc43ed2-a675-4728-8da0-360859cf62b1",
+      "name": "Publication Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\n\nif($json.empty)return [{json:{empty:true,valid:false}}];const item=$json.item,format=txt(item,'color_mm7xm9b6'),code=txt(item,'text_mm7xqn4e'),link=val(item,'link_mm7ywc0w')?.url||'',caption=txt(item,'long_text_mm7x2ay1');\nconst mediaId=txt(item,'text_mm7yp8h');\nreturn [{json:{item,itemId:item.id,format,code,caption,mediaId,at:at(item),receipt:$json.receipt,owner:$json.receipt?.stage==='published'?$json.receipt.owner:$('Configuration').first().json.owner,reconcile:$json.receipt?.stage==='published',valid:txt(item,'text_mm7z139h')===format&&!txt(item,'text_mm7yhjf1')&&!!txt(item,'text_mm7y4h4a')&&!!style(code)&&['Post','Story'].includes(format)&&!!mediaId&&!!val(item,'date_mm7y8s9t')?.time&&(format!=='Post'||!!caption),note:txt(item,'text_mm7yhjf1')?'Collaboration requested: requires manual review before publishing':'Missing verified media, source identity, caption, or valid Code'}}];\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "4e747803-422b-4bc9-9e0b-75428da8af43",
+      "name": "Valid Due Content?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        0,
+        260
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e531a509-d5fc-432a-b778-7f0bc6eaa079",
+              "leftValue": "={{ $json.valid===true||$json.reconcile===true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "865254e8-8d0d-48cb-938a-c63ab5094b45",
+      "name": "Recover Published Receipt?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        260,
+        260
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "dbd87560-382d-451d-b222-7f3aeeafb7f6",
+              "leftValue": "={{ $json.reconcile===true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "094f5306-950e-45a8-b67c-a5b13a2bef19",
+      "name": "Find Source Project",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        520,
+        260
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.queryBody }}"
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    },
+    {
+      "id": "baa17bc4-1d27-431e-8e2a-7c3fed4e69f2",
+      "name": "Unique Source Project",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        260
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\n\nif($json.errors)throw new Error(JSON.stringify($json.errors));const c=$('Publication Context').item.json;const a=($json.data?.items||[]).filter(i=>norm(txt(i,'text_mm066x8y'))===norm(c.code));return [{json:{...c,sourceProjectId:a.length===1?a[0].id:null,ok:a.length===1&&txt(a[0],'color_mm1ryfcb')!=='Canceled',note:'Source is canceled, missing, or has an ambiguous Code'}}];\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "6361e17c-2529-450f-9231-2179bebce7c8",
+      "name": "Source Eligible?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1040,
+        260
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "f7a32662-3671-469f-8821-240d6cc1b854",
+              "leftValue": "={{ $json.ok===true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "5f1c2d01-add5-43cd-bed8-0238b1e0e979",
+      "name": "Claim Publication",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local n8n helper failed');const result=JSON.parse($json.stdout||'{}');if(result.error)throw new Error(result.error);return [{json:result}];"
+      },
+      "position": [
+        1300,
+        260
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "720f49d5-c7fc-41a4-b8ee-6bb7bbe8044a",
+      "name": "Publication Claimed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1560,
+        260
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "120da12d-905b-4631-8917-56452dba63d5",
+              "leftValue": "={{ $json.claimed===true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "4504fed4-885e-42e7-9674-1e2a90571674",
+      "name": "Create Media Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        260
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c=$('Publication Context').item.json;const body={media_type:c.format==='Post'?'REELS':'STORIES',video_url:$json.url};if(c.format==='Post')Object.assign(body,{caption:c.caption,share_to_feed:true});return [{json:{createBody:body}}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v26.0/17841479950766455/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.createBody) }}",
+        "options": {}
+      },
+      "id": "8f632edb-5a53-4ae0-8e65-f30814dd7d41",
+      "name": "Create Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2080,
+        260
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": false,
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "<REDACTED>",
+          "name": "Simplified Custom Auth account"
+        }
+      }
+    },
+    {
+      "id": "a24313c6-ca75-4e3f-8626-e1a2069d10f1",
+      "name": "Container Created",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        260
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if(!$json.id)throw new Error('No Instagram container ID; do not retry blindly');return [{json:{containerId:$json.id}}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "10418e92-424e-45b7-9752-7c8b70a52f48",
+      "name": "Save Container Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local n8n helper failed');const result=JSON.parse($json.stdout||'{}');if(result.error)throw new Error(result.error);return [{json:result}];"
+      },
+      "position": [
+        2600,
+        260
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "5f318aa1-2ac2-4d46-8050-ed0f0d906371",
+      "name": "Poll Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        260
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{json:{attempt:($json.attempt||0)+1}}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "id": "8c546ea9-dfab-44fb-8108-5ae9244a139c",
+      "name": "Wait For Processing",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v26.0/{{ $('Active Container').item.json.containerId }}?fields=status_code,status",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "options": {}
+      },
+      "id": "5d0570bd-7051-4e52-841b-8d8000a33b82",
+      "name": "Check Container",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        260,
+        520
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "<REDACTED>",
+          "name": "Simplified Custom Auth account"
+        }
+      }
+    },
+    {
+      "id": "9696fc03-ea0c-48b5-8b95-f35947f9cdc7",
+      "name": "Container Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{json:{...$json,attempt:$('Poll Context').item.json.attempt}}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "5c7480dc-1aad-4a6d-92cd-19c29e2480de",
+      "name": "Container Finished?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        780,
+        520
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "78d4b72d-74cc-435e-8a21-3e1f79497c8d",
+              "leftValue": "={{ $json.status_code==='FINISHED' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0a0e7a8f-1d01-427c-9c60-ec038a735a10",
+      "name": "Keep Polling?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1040,
+        520
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "8cd1b70b-1104-464b-99b8-243f23c51f38",
+              "leftValue": "={{ $json.status_code==='IN_PROGRESS'&&$json.attempt<20 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "9b3914fa-5b53-451f-9a6a-b674bfec10ba",
+      "name": "Recheck Immediately Before Publishing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1300,
+        520
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.queryBody }}"
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    },
+    {
+      "id": "09565ffe-bec0-48a9-bbd4-1e85f4135d0d",
+      "name": "Still Scheduled & Due",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\n\nif($json.errors)throw new Error(JSON.stringify($json.errors));const c=$('Publication Context').item.json,i=$json.data?.social?.[0],source=$json.data?.source?.[0],stamp=i?at(i):null;\nconst original=val(c.item,'link_mm7ywc0w')?.url;const now=DateTime.utc().toMillis();\nreturn [{json:{ok:!!i&&!!source&&txt(source,'color_mm1ryfcb')!=='Canceled'&&txt(i,'status')==='Scheduled'&&txt(i,'color_mm7xe2j2')==='Topazed'&&txt(i,'text_mm7yp8h')===c.mediaId&&txt(i,'text_mm7yy451')===txt(c.item,'text_mm7yy451')&&!txt(i,'text_mm7yhjf1')&&!val(i,'link_mm7xb56a')?.url&&stamp===c.at&&DateTime.fromISO(stamp).toMillis()<=now&&now-DateTime.fromISO(stamp).toMillis()<=7200000&&val(i,'link_mm7ywc0w')?.url===original&&txt(i,'text_mm7xqn4e')===c.code&&txt(i,'color_mm7xm9b6')===c.format&&txt(i,'long_text_mm7x2ay1')===c.caption,note:'Item was canceled, rescheduled, already posted, or its content changed'}}];\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "03179ad5-340b-4d8d-9638-215629bffe84",
+      "name": "Final Publish Gate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1820,
+        520
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "42ac5e05-6465-4842-8c11-89190f0ae234",
+              "leftValue": "={{ $json.ok===true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "2030eeec-ac9f-42df-a636-5f6cb1adb4dc",
+      "name": "Record Publish Intent",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local n8n helper failed');const result=JSON.parse($json.stdout||'{}');if(result.error)throw new Error(result.error);return [{json:result}];"
+      },
+      "position": [
+        2080,
+        520
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v26.0/17841479950766455/media_publish",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({creation_id:$('Active Container').item.json.containerId}) }}",
+        "options": {}
+      },
+      "id": "a22cc315-dafe-493c-8515-13395b104f45",
+      "name": "Publish To Instagram",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        2340,
+        520
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": false,
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "<REDACTED>",
+          "name": "Simplified Custom Auth account"
+        }
+      }
+    },
+    {
+      "id": "ab46eb01-5146-4d09-8419-5ac735cbd7cc",
+      "name": "Published Media ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if(!$json.id)throw new Error('Publish outcome unknown — reconcile Instagram before retrying');return [{json:{mediaId:$json.id}}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "1fdd4775-d10f-4df9-81a7-f12b08cc319c",
+      "name": "Persist Published Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local n8n helper failed');const result=JSON.parse($json.stdout||'{}');if(result.error)throw new Error(result.error);return [{json:result}];"
+      },
+      "position": [
+        2860,
+        520
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/v26.0/{{ $('Published Media ID').item.json.mediaId }}?fields=permalink",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpTemplatedCustomAuth",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true
+            }
+          }
+        }
+      },
+      "id": "a881f98b-2a07-4e4b-8be9-55315fe1f7d9",
+      "name": "Get Permalink",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        0,
+        780
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpTemplatedCustomAuth": {
+          "id": "<REDACTED>",
+          "name": "Simplified Custom Auth account"
+        }
+      }
+    },
+    {
+      "id": "b5ef8b41-7b66-47d0-9339-98cf61cf6859",
+      "name": "Persist Permalink",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local n8n helper failed');const result=JSON.parse($json.stdout||'{}');if(result.error)throw new Error(result.error);return [{json:result}];"
+      },
+      "position": [
+        260,
+        780
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "378f1df4-3e48-46e5-b8d7-cc1e6ca882cc",
+      "name": "Published Receipt Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        780
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c=$('Publication Context').item.json;return [{json:{...c,published:$json.receipt||c.receipt?.data}}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "9c49ab13-1df2-4130-979f-f5bc168ba8c8",
+      "name": "Build Posted Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        780,
+        780
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\n\nconst p=$json.published;if(!p?.publishedMediaId)throw new Error('No durable publication receipt');\nconst publishedAt=p.publishedAt?DateTime.fromISO(p.publishedAt).toUTC():DateTime.utc();const cv={text_mm7yfqhb:String(p.publishedMediaId),date_mm7yr4h3:{date:publishedAt.toISODate(),time:publishedAt.toFormat('HH:mm:ss')},status:{label:'Posted'},long_text_mm7ysrbz:'Published on Instagram: '+p.publishedMediaId+(p.permalink?'':' | no permalink returned (Story may expire)')};if(p.permalink)cv.link_mm7xb56a={url:p.permalink,text:$json.format==='Post'?'Instagram Reel':'Instagram Story'};\nconst gql=gqlUpdate($json.itemId,cv);gql.query=gql.query.replace(/}$/, ' move_item_to_group(item_id:$i,group_id:\"group_title\"){id}}');return [{json:{...$json,gql}}];\n"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "371d7eb4-73b7-4b5c-9d17-829901878c4c",
+      "name": "Mark Posted in Monday",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1040,
+        780
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gql) }}"
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    },
+    {
+      "id": "fd32f778-6f6a-4ed1-a179-04c986fda199",
+      "name": "Build Source Posted Update",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        780
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));const c=$('Published Receipt Context').item.json;return [{json:{gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:\"color_mm1ryfcb\",value:$v){id}}',variables:{b:'5091110326',i:c.published.sourceProjectId,v:JSON.stringify({label:'Posted'})}}}}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "c925693a-e49c-40b9-884b-1e602b53ac37",
+      "name": "Sync Posted to Customer Projects",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1560,
+        780
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gql) }}"
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    },
+    {
+      "id": "90cbb470-6ab3-40a3-abea-1e8cf8622279",
+      "name": "Source Sync Acknowledged",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1820,
+        780
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));return [{json:{ok:true}}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "55a85e3f-d0c1-40e8-9e18-126de22b30e8",
+      "name": "Complete Publication Receipt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local n8n helper failed');const result=JSON.parse($json.stdout||'{}');if(result.error)throw new Error(result.error);return [{json:result}];"
+      },
+      "position": [
+        2080,
+        780
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "a40cc47b-410c-4f7e-900b-bb980a8653e5",
+      "name": "Publication Needs Review",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        780
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nconst c=$('Publication Context').item.json;if(c.empty||$json.quiet)return [{json:{empty:true}}];const reason=String($json.note||$json.error?.message||$json.error||($json.stage==='publish_requested'?'نتيجة النشر غير مؤكدة؛ يلزم التحقق قبل المحاولة مجددًا':$json.stage==='outside_due_window'?'فات موعد النشر؛ اختر موعدًا جديدًا':'النشر يحتاج مراجعة')).slice(0,600);const prior=txt(c.item,'long_text_mm7zbtbn');return [{json:{gql:gqlUpdate(c.itemId,{status:{label:'Needs Review'},'long_text_mm7zbtbn':prior||reason,long_text_mm7ysrbz:'فحص النشر: '+reason})}}];"
+      }
+    },
+    {
+      "id": "bceef343-665d-4091-bdc4-1f9b0773dc06",
+      "name": "Has Publication Note?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2600,
+        780
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "948c08b9-4222-4977-a4b6-a8959e206149",
+              "leftValue": "={{ !!$json.gql }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "0053c903-4e88-4974-b892-d9546d0f7a9b",
+      "name": "Save Publication Note",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2860,
+        780
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gql) }}"
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    },
+    {
+      "id": "05b748af-0ccb-4051-a7cb-eca1c34a7d12",
+      "name": "Publication Item Finished",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        1040
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{json:{done:true}}];"
+      }
+    },
+    {
+      "id": "c0c22a1c-376f-493e-b719-b938f6252665",
+      "name": "Draft — DO NOT RUN",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        0,
+        -300
+      ],
+      "parameters": {
+        "content": "## Waset Social\nSocial board owns Format after import.\nDuration → preparation → verified reservation → time-triggered publishing.\nPaused / Skipped / Posted are protected.",
+        "width": 760,
+        "height": 220,
+        "color": 3
+      }
+    },
+    {
+      "id": "da84a75a-7c17-403f-8bd4-8b6e7d7c2bba",
+      "name": "Publication Receipts — Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=JSON.parse(JSON.stringify({}));const payload=Buffer.from(JSON.stringify({path:\"/v1/publish/snapshot\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        520,
+        1040
+      ]
+    },
+    {
+      "id": "3305a848-10b4-4845-93fd-f49e64a026f7",
+      "name": "Publication Receipts — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        780,
+        1040
+      ]
+    },
+    {
+      "id": "505bdcf3-2ba5-42f4-811d-1f71834b4318",
+      "name": "Claim Publication — Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=JSON.parse(JSON.stringify({account:'17841479950766455',assetKey:($json.item.column_values||[]).find(x=>x.id==='text_mm7yy451')?.text,itemId:$json.itemId,format:$json.format,at:$json.at,mediaId:$json.mediaId,topazed:($json.item.column_values||[]).find(c=>c.id==='color_mm7xe2j2')?.text==='Topazed',expectedUrl:JSON.parse(($json.item.column_values||[]).find(c=>c.id==='link_mm7ywc0w')?.value||'null')?.url,sourceProjectId:$json.sourceProjectId,owner:$json.owner}));const payload=Buffer.from(JSON.stringify({path:\"/v1/publish/claim\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        1040,
+        1040
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "addf7855-e102-4f0c-b94b-0e2cb8e68a97",
+      "name": "Claim Publication — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        1300,
+        1040
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "e6ffc8e0-72af-4b19-991e-2c54514af201",
+      "name": "Save Container Receipt — Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=JSON.parse(JSON.stringify({itemId:$('Publication Context').item.json.itemId,owner:$('Publication Context').item.json.owner,stage:'container_created',data:{containerId:$json.containerId}}));const payload=Buffer.from(JSON.stringify({path:\"/v1/publish/checkpoint\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        1560,
+        1040
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "ff4092f9-a07a-4951-9755-305721798efa",
+      "name": "Save Container Receipt — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        1820,
+        1040
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "7faf5f74-6e2c-48f1-bb5d-bbee41b764d3",
+      "name": "Record Publish Intent — Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=JSON.parse(JSON.stringify({itemId:$('Publication Context').item.json.itemId,owner:$('Publication Context').item.json.owner,stage:'publish_requested',data:{}}));const payload=Buffer.from(JSON.stringify({path:\"/v1/publish/checkpoint\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        2080,
+        1040
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "74716e27-9b25-4c03-abf3-ad54d09c0aa5",
+      "name": "Record Publish Intent — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        2340,
+        1040
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "3f92d71a-3327-4fc7-aebe-dcaa25f0f16d",
+      "name": "Persist Published Receipt — Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=JSON.parse(JSON.stringify({itemId:$('Publication Context').item.json.itemId,owner:$('Publication Context').item.json.owner,stage:'published',data:{publishedMediaId:$json.mediaId}}));const payload=Buffer.from(JSON.stringify({path:\"/v1/publish/checkpoint\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        2600,
+        1040
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "deadfc43-6378-4fd8-addc-907d50989957",
+      "name": "Persist Published Receipt — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        2860,
+        1040
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "f62bffff-d2da-42aa-9550-ef4b4d7d79cc",
+      "name": "Persist Permalink — Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=JSON.parse(JSON.stringify({itemId:$('Publication Context').item.json.itemId,owner:$('Publication Context').item.json.owner,stage:'published',data:{permalink:$json.permalink||null}}));const payload=Buffer.from(JSON.stringify({path:\"/v1/publish/checkpoint\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        0,
+        1300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "0b0c9f39-7ea7-498b-b6b1-2067fdad2ece",
+      "name": "Persist Permalink — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        260,
+        1300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "5ff5f91e-95fc-4b6a-8785-2a9eecd09d66",
+      "name": "Complete Publication Receipt — Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=JSON.parse(JSON.stringify({itemId:$('Publication Context').item.json.itemId,owner:$('Publication Context').item.json.owner,stage:'source_synced',data:{sourceSynced:true}}));const payload=Buffer.from(JSON.stringify({path:\"/v1/publish/checkpoint\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        520,
+        1300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "6c2796cc-7037-4de5-940b-30ba4ef29ce0",
+      "name": "Complete Publication Receipt — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        780,
+        1300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "1038d19d-c946-45c0-be6c-c433ac1f3da0",
+      "name": "Quality Rules — Stories strictly under 60s",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        800,
+        -300
+      ],
+      "parameters": {
+        "content": "## Waset Social\nSocial board owns Format after import.\nDuration → preparation → verified reservation → time-triggered publishing.\nPaused / Skipped / Posted are protected.",
+        "width": 900,
+        "height": 260,
+        "color": 4
+      }
+    },
+    {
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        1300
+      ],
+      "id": "dd95523f-6f8b-4b40-8677-e41b2fa276db",
+      "name": "Resume Existing Container?",
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "954164dd-ae8c-4405-8172-3a6a8daae0bb",
+              "leftValue": "={{ !!$json.receipt?.containerId }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        1300
+      ],
+      "id": "4b4b923a-c5a1-49ca-bdab-85a2f45e115c",
+      "name": "Active Container",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const receipt=$json.receipt;if(!receipt?.containerId)throw new Error('Missing durable container');return [{json:{containerId:receipt.containerId,attempt:0}}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "78439d75-f96f-4132-9f83-60e4f9395473",
+      "name": "Renew Publication Lease — Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=JSON.parse(JSON.stringify({itemId:$('Publication Context').item.json.itemId,owner:$('Publication Context').item.json.owner}));const payload=Buffer.from(JSON.stringify({path:\"/v1/publish/heartbeat\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        1820,
+        1300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "dfa4c87f-1623-4018-8cb8-2d03328a9184",
+      "name": "Renew Publication Lease — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        2080,
+        1300
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        1300
+      ],
+      "id": "9abb30f5-d1d6-4f39-a94e-081189f47396",
+      "name": "Renew Publication Lease",
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local helper failed');const result=JSON.parse($json.stdout||'{}');if(result.error)throw new Error(result.error);return [{json:result}];"
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "8894c80f-17cf-427d-8c79-0b39e4844c47",
+      "name": "Verify Source Revision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2600,
+        1300
+      ],
+      "parameters": {
+        "url": "https://api.dropboxapi.com/2/files/get_metadata",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "genericCredentialType",
+        "genericAuthType": "oAuth2Api",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({path:$('Publication Context').item.json.item.column_values.find(c=>c.id==='text_mm7yy451').text.split('@')[0]}) }}"
+      },
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "oAuth2Api": {
+          "id": "<REDACTED>",
+          "name": "Unnamed credential 2"
+        }
+      }
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nconst c=$('Publication Context').item.json;return [{json:{ok:($json.id+'@'+$json.rev)===txt(c.item,'text_mm7yy451'),note:'نسخة الفيديو تغيرت بعد الجدولة؛ أعد الفحص قبل النشر'}}];"
+      },
+      "position": [
+        2860,
+        1300
+      ],
+      "id": "0579a3dd-fb9d-42e7-b414-cd50ef8cd932",
+      "name": "Source Revision Matches"
+    },
+    {
+      "id": "b7855e2c-0292-40c8-8e82-06d42177ab7c",
+      "name": "Source Revision Still Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        0,
+        1560
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e6df8a35-c46c-4638-88eb-1e1bddfda7c6",
+              "leftValue": "={{ $json.ok===true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nreturn [{json:{...$json,gqlRead:{query:'query($ids:[ID!]!){items(ids:$ids){id column_values {id text value}}}',variables:{ids:[$('Publication Context').item.json.itemId]}}}}];"
+      },
+      "position": [
+        260,
+        1560
+      ],
+      "id": "06f6d94b-d98c-448d-8044-213a452f7e96",
+      "name": "Publication Review Payload",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "612f44de-a3c2-440e-bab2-d1b96444f49f",
+      "name": "Read Status Before Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        520,
+        1560
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gqlRead) }}"
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nif($json.errors)throw new Error(JSON.stringify($json.errors));const i=$json.data?.items?.[0],c=$('Publication Context').item.json;if(!i||['Posted','Paused','Skipped'].includes(txt(i,'status'))||val(i,'link_mm7xb56a')?.url||txt(i,'color_mm7xm9b6')!==c.format)return [{json:{empty:true}}];return [{json:$('Publication Review Payload').item.json}];"
+      },
+      "position": [
+        780,
+        1560
+      ],
+      "id": "cbd8a119-6b55-4dc8-b38a-c0ffbefb3174",
+      "name": "Guard Publication Review",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nreturn [{json:{...$json,queryBody:JSON.stringify({query:\"query($ids:[ID!]){items(ids:$ids){id column_values(ids:[\\\"text_mm066x8y\\\",\\\"color_mm1ryfcb\\\"]){id text value}}}\",variables:{ids:[$('Publication Context').item.json.item.column_values.find(x=>x.id==='text_mm7y4h4a')?.text]}})}}];"
+      },
+      "position": [
+        1040,
+        1560
+      ],
+      "id": "7673196b-4c44-47b8-a098-72aa1f0d2325",
+      "name": "Find Source Project — Query",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nreturn [{json:{...$json,queryBody:JSON.stringify({query:'query($ids:[ID!],$source:[ID!]){social:items(ids:$ids){id column_values(ids:[\"status\",\"date4\",\"hour_mm7xy9cf\",\"link_mm7xb56a\",\"link_mm7ywc0w\",\"text_mm7xqn4e\",\"color_mm7xm9b6\",\"long_text_mm7x2ay1\",\"color_mm7xe2j2\",\"text_mm7xemtq\",\"text_mm7y5kd1\",\"text_mm7yjmqd\",\"multiple_person_mm7yy4tk\",\"date_mm7y8s9t\",\"long_text_mm7ysrbz\",\"text_mm7y4h4a\",\"text_mm7yy451\",\"text_mm7yp8h\",\"date_mm7yr4h3\",\"text_mm7yfqhb\",\"text_mm7yhjf1\",\"long_text_mm7zbtbn\",\"text_mm7zjt4m\",\"text_mm7z139h\",\"date_mm7zd2b9\"]){id text value}} source:items(ids:$source){id column_values(ids:[\"color_mm1ryfcb\"]){id text value}}}',variables:{ids:[$('Publication Context').item.json.itemId],source:[$('Unique Source Project').item.json.sourceProjectId]}})}}];"
+      },
+      "position": [
+        1300,
+        1560
+      ],
+      "id": "757e2085-5c0f-46c1-828e-c726d5f682dd",
+      "name": "Recheck Immediately Before Publishing — Query",
+      "onError": "continueErrorOutput"
+    }
+  ],
+  "nodeGroups": [],
+  "activeVersion": {
+    "sameAsDraft": true
+  },
+  "meta": null
+}

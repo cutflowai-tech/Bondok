@@ -1,0 +1,226 @@
+{
+ "id": "WasetSocialScheduleGuard",
+ "name": "Waset Social V2 — 3 Schedule Supervisor",
+ "settings": {
+  "executionOrder": "v1",
+  "timezone": "Africa/Cairo",
+  "executionTimeout": 600,
+  "saveDataSuccessExecution": "all",
+  "saveDataErrorExecution": "all",
+  "saveManualExecutions": true,
+  "availableInMCP": true,
+  "binaryMode": "separate",
+  "timeSavedMode": "fixed",
+  "callerPolicy": "workflowsFromSameOwner"
+ },
+ "nodes": [
+  {
+   "name": "Every 30 Minutes",
+   "type": "n8n-nodes-base.scheduleTrigger",
+   "typeVersion": 1.4,
+   "position": [
+    1820,
+    0
+   ],
+   "parameters": {
+    "rule": {
+     "interval": [
+      {
+       "field": "cronExpression",
+       "expression": "0 5,35 * * * *"
+      }
+     ]
+    }
+   },
+   "id": "5b8c3c23-8135-5c5a-9ab4-ec3f67f5112f"
+  },
+  {
+   "name": "Configuration",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const config={armed:true,runId:'wf3-'+$execution.id};\nif(!config.armed)return [];\nreturn [{json:config}];"
+   },
+   "id": "826f12b9-2089-5a45-bff5-053c8c5b0e3d",
+   "position": [
+    240,
+    0
+   ]
+  },
+  {
+   "name": "Supervise Schedule — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={runId:$('Configuration').first().json.runId};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/monitor/run\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "c4b1ce3f-eb39-52c2-a598-9e0fee6ee6c0",
+   "position": [
+    480,
+    0
+   ]
+  },
+  {
+   "name": "Supervise Schedule — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "a967502b-9fe2-5e23-9263-40edb63baa80",
+   "position": [
+    720,
+    0
+   ]
+  },
+  {
+   "name": "Supervise Schedule",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "id": "4e6e8417-c0c6-5eae-b603-e5ef4facc4cd",
+   "position": [
+    960,
+    0
+   ]
+  },
+  {
+   "name": "Manual Read-only Inspection",
+   "type": "n8n-nodes-base.manualTrigger",
+   "typeVersion": 1,
+   "position": [
+    2080,
+    0
+   ],
+   "parameters": {},
+   "id": "fa6315ae-38e8-56b8-868b-1a991e689b49"
+  },
+  {
+   "name": "Inspect Schedule (read-only) — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/monitor/inspect\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "02d96e39-4da1-511e-8f98-67041ca2397c",
+   "position": [
+    1440,
+    0
+   ]
+  },
+  {
+   "name": "Inspect Schedule (read-only) — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "87df3071-3125-523b-b1bb-d03fc6900f91",
+   "position": [
+    1680,
+    0
+   ]
+  },
+  {
+   "name": "Inspect Schedule (read-only)",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "id": "a945036f-58e1-5fcc-92d5-1b6b1bf15197",
+   "position": [
+    1920,
+    0
+   ]
+  }
+ ],
+ "connections": {
+  "Supervise Schedule — Input": {
+   "main": [
+    [
+     {
+      "node": "Supervise Schedule — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Supervise Schedule — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Supervise Schedule",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Every 30 Minutes": {
+   "main": [
+    [
+     {
+      "node": "Configuration",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Configuration": {
+   "main": [
+    [
+     {
+      "node": "Supervise Schedule — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Inspect Schedule (read-only) — Input": {
+   "main": [
+    [
+     {
+      "node": "Inspect Schedule (read-only) — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Inspect Schedule (read-only) — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Inspect Schedule (read-only)",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Manual Read-only Inspection": {
+   "main": [
+    [
+     {
+      "node": "Inspect Schedule (read-only) — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  }
+ },
+ "active": false,
+ "meta": {
+  "waset": "v2",
+  "built_from": "e37aa4f0-6221-4751-a9a9-95ca706f17f2"
+ }
+}
