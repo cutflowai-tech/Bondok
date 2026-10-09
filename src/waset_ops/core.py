@@ -385,7 +385,7 @@ class CoreMixin:
         columns, compare, group_out = {}, {}, None
         # Merge unsent display jobs so superseding never drops a column write.
         older = c.execute("SELECT id, payload FROM ops_outbox WHERE kind='monday' AND item_id=? AND "
-                          "dedupe_key LIKE 'monday:%' AND state IN ('pending','failed') ORDER BY id",
+                          "dedupe_key LIKE 'monday:%' AND state IN ('pending','failed','escalated') ORDER BY id",
                           (str(item_id),)).fetchall()
         for o in older:
             op = loads(o['payload'], {})
@@ -403,6 +403,11 @@ class CoreMixin:
             group_out = group_change
         payload = {'item_id': str(item_id), 'columns': columns, 'compare': compare, 'group': group_out}
         key = 'monday:' + str(item_id) + ':' + fingerprint(payload)[:16]
+        prior = c.execute('SELECT state FROM ops_outbox WHERE dedupe_key=?', (key,)).fetchone()
+        if prior and prior['state'] not in ('pending', 'failed'):
+            # Same values as an earlier job that already ran (A -> B -> A): a new write is needed, not a
+            # duplicate of the old one, which INSERT OR IGNORE would silently drop.
+            key += ':' + str(next_counter(c, 'outbox:monday'))
         now = self.now()
         if older:
             c.execute(f"UPDATE ops_outbox SET state='superseded', updated=? WHERE id IN ({','.join('?'*len(older))})",
@@ -484,13 +489,25 @@ class CoreMixin:
     def outbox_take(self, kinds, worker, limit=10, lease=300) -> list[dict]:
         now = self.now()
         with self.store.tx() as c:
+            # Escalated display/editor jobs keep being retried hourly so the board recovers after an outage
+            # (audit I1); a lease that expired means the worker died: that counts as a failed attempt (audit I7).
             rows = c.execute(f"SELECT * FROM ops_outbox WHERE kind IN ({','.join('?'*len(kinds))}) AND "
-                             "((state IN ('pending','failed') AND next_at<=?) OR (state='in_flight' AND lease_until<?)) "
-                             'ORDER BY id LIMIT ?', (*kinds, now, now, limit)).fetchall()
+                             "((state IN ('pending','failed') AND next_at<=?) OR (state='in_flight' AND lease_until<?) "
+                             "OR (state='escalated' AND kind!='slack' AND next_at<=?)) "
+                             'ORDER BY id LIMIT ?', (*kinds, now, now, now, limit)).fetchall()
             out = []
             for r in rows:
-                c.execute("UPDATE ops_outbox SET state='in_flight', lease_owner=?, lease_until=?, updated=? WHERE id=?",
-                          (worker, now + lease, now, r['id']))
+                crashed = r['state'] == 'in_flight'
+                if crashed and r['attempts'] + 1 >= OUTBOX_MAX_ATTEMPTS:
+                    c.execute("UPDATE ops_outbox SET state='escalated', attempts=attempts+1, next_at=?, "
+                              "last_error='worker stopped while processing', updated=? WHERE id=?",
+                              (now + 3600, now, r['id']))
+                    if r['kind'] != 'slack':
+                        self.notify(c, f"escalate:{r['id']}", f"Display/sync job keeps stopping its worker "
+                                    f"({r['kind']}, item {r['item_id']}); it will be retried hourly.", r['item_id'])
+                    continue
+                c.execute("UPDATE ops_outbox SET state='in_flight', lease_owner=?, lease_until=?, updated=?, "
+                          'attempts=attempts+? WHERE id=?', (worker, now + lease, now, 1 if crashed else 0, r['id']))
                 out.append({'id': r['id'], 'kind': r['kind'], 'item_id': r['item_id'], 'payload': loads(r['payload'])})
             return out
 
@@ -502,6 +519,8 @@ class CoreMixin:
                 return {'ok': False, 'reason': 'unknown job'}
             if r['state'] == 'done':
                 return {'ok': True, 'duplicate': True}
+            if not ok and r['state'] == 'in_flight' and r['lease_owner'] not in (None, worker):
+                return {'ok': False, 'stale_lease': True}       # another worker holds it now
             p = loads(r['payload'], {})
             if ok:
                 c.execute("UPDATE ops_outbox SET state='done', last_error=NULL, updated=? WHERE id=?", (now, job_id))
@@ -530,18 +549,44 @@ class CoreMixin:
                             observed = {**(loads(it['observed'], {}) or {}), **human}
                             c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(observed), r['item_id']))
                         live = c.execute("SELECT 1 FROM ops_outbox WHERE kind='monday' AND item_id=? AND "
-                                         "state IN ('pending','in_flight','failed')", (r['item_id'],)).fetchone()
+                                         "state IN ('pending','in_flight','failed','escalated')",
+                                         (r['item_id'],)).fetchone()
                         c.execute('UPDATE ops_items SET projected=?, pending_projection=? WHERE item_id=?',
                                   (dumps(confirmed), dumps(pending) if live else None, r['item_id']))
+                        newer = c.execute("SELECT 1 FROM ops_outbox WHERE kind='monday' AND item_id=? AND id>? AND "
+                                          "state='done'", (r['item_id'], job_id)).fetchone()
+                        if newer:
+                            # This older write landed after a newer one (retry/overlapping runs): the board now
+                            # shows these older values, as recorded above. Re-project the current state (audit MS5).
+                            landed = {k for k in compare if not k.startswith('_')}
+                            pend = {k: v for k, v in (pending or {}).items() if k not in landed}
+                            c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?',
+                                      (dumps(pend) if pend else None, r['item_id']))
+                            self.project(c, r['item_id'])
                 elif r['kind'] == 'editor':
                     c.execute("UPDATE ops_editor_tasks SET task_id=COALESCE(?,task_id), state='done', updated=? "
                               'WHERE item_id=? AND issue_key=?',
                               ((result or {}).get('task_id'), now, r['item_id'], p.get('issue_key')))
                 return {'ok': True}
+            if r['kind'] == 'monday' and c.execute(
+                    "SELECT 1 FROM ops_outbox WHERE kind='monday' AND item_id=? AND id>? AND state!='superseded'",
+                    (r['item_id'], job_id)).fetchone():
+                # A newer display job exists: never retry these older values after it (audit MS5). Whatever
+                # this job carried is re-derived from the current state instead.
+                c.execute("UPDATE ops_outbox SET state='superseded', last_error=?, updated=? WHERE id=?",
+                          ((error or '')[:500], now, job_id))
+                it = self.item(c, r['item_id'], required=False)
+                if it:
+                    mine = {k for k in p.get('compare', {}) if not k.startswith('_')}
+                    pend = {k: v for k, v in (loads(it['pending_projection'], {}) or {}).items() if k not in mine}
+                    c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?',
+                              (dumps(pend) if pend else None, r['item_id']))
+                    self.project(c, r['item_id'])
+                return {'ok': False, 'superseded': True}
             attempts = r['attempts'] + 1
             if attempts >= OUTBOX_MAX_ATTEMPTS:
-                c.execute("UPDATE ops_outbox SET state='escalated', attempts=?, last_error=?, updated=? WHERE id=?",
-                          (attempts, (error or '')[:500], now, job_id))
+                c.execute("UPDATE ops_outbox SET state='escalated', attempts=?, last_error=?, next_at=?, updated=? "
+                          'WHERE id=?', (attempts, (error or '')[:500], now + 3600, now, job_id))
                 if r['kind'] != 'slack':
                     self.notify(c, f'escalate:{job_id}',
                                 f'Display/sync update keeps failing ({r["kind"]}, item {r["item_id"]}). '

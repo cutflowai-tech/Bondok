@@ -1230,3 +1230,76 @@ class SchedulingAudit(OpsCase):
         self.clock.set(rules.instant(min(self.res('511')['slot'], self.res('512')['slot'])) - timedelta(minutes=5))
         a = self.ops.submit(owner_cmd('a', 'approve_proposal', None, proposal_id=p['proposal_id']))
         self.assertEqual(a['state'], 'rejected', a)
+
+
+class OutboxRecovery(OpsCase):
+    """Audit I1/MS5/MS7/I7: display jobs recover after outages, never land stale values last."""
+
+    def status_on_board(self, iid):
+        return json.loads(self.item(iid)['projected']).get('status')
+
+    def test_escalated_display_job_is_retried_after_outage(self):
+        self.make_ready('600', 'Story')
+        self.drain_monday()
+        self.ops.submit(owner_cmd('p', 'pause', '600'))
+        for _ in range(6):
+            for j in self.ops.outbox_take(['monday'], 'w', 10):
+                self.ops.outbox_ack(j['id'], 'w', False, 'Monday 500')
+            self.clock.advance(3700)
+        self.assertTrue(any(o['state'] == 'escalated' for o in self.outbox('monday')))
+        self.clock.advance(3700)
+        self.drain_monday()                                   # Monday is back
+        self.assertEqual(self.status_on_board('600'), board.LABELS['paused'])
+
+    def test_failed_older_job_never_overwrites_newer_state(self):
+        self.make_ready('601', 'Story')
+        first = self.ops.outbox_take(['monday'], 'wf2-a', 10)     # Scheduled + slot, in flight
+        self.ops.submit(owner_cmd('p', 'pause', '601'))            # newer job: Paused
+        for j in first:
+            self.ops.outbox_ack(j['id'], 'wf2-a', False, 'timeout')
+        self.clock.advance(400)
+        for _ in range(3):
+            self.drain_monday()
+            self.clock.advance(400)
+        proj = json.loads(self.item('601')['projected'])
+        self.assertEqual(proj.get('status'), board.LABELS['paused'])
+        self.assertIsNone(proj.get('publish_at'))
+
+    def test_older_success_landing_last_is_corrected(self):
+        self.make_ready('602', 'Story')
+        a = self.ops.outbox_take(['monday'], 'wf2-a', 10)
+        self.ops.submit(owner_cmd('p', 'pause', '602'))
+        for j in self.ops.outbox_take(['monday'], 'wf2-b', 10):
+            self.ops.outbox_ack(j['id'], 'wf2-b', True)
+        for j in a:                                               # the slow older write lands last
+            self.ops.outbox_ack(j['id'], 'wf2-a', True)
+        self.drain_monday()
+        self.assertEqual(self.status_on_board('602'), board.LABELS['paused'])
+
+    def test_worker_crashes_escalate_and_stale_failure_ack_is_ignored(self):
+        self.observe(monday_item('603', fmt='Story'))
+        with self.ops.store.tx() as c:
+            self.ops.enqueue(c, 'editor', 'poison', {'item_id': '603'}, '603')
+        for _ in range(10):
+            self.ops.outbox_take(['editor'], 'w', 10)
+            self.clock.advance(400)
+        st = [o for o in self.outbox('editor') if o['dedupe_key'] == 'poison'][0]
+        self.assertEqual(st['state'], 'escalated')
+        with self.ops.store.tx() as c:
+            self.ops.enqueue(c, 'editor', 'shared', {'item_id': '603'}, '603')
+        j = [x for x in self.ops.outbox_take(['editor'], 'A', 10) if x['payload'] == {'item_id': '603'}][-1]
+        self.clock.advance(400)
+        self.ops.outbox_take(['editor'], 'B', 10)                 # A's lease expired, B re-took it
+        self.assertTrue(self.ops.outbox_ack(j['id'], 'A', False, 'late')['stale_lease'])
+
+    def test_value_toggled_back_is_written_again(self):
+        self.make_ready('604', 'Story')
+        self.drain_monday()
+        slot = self.res('604')['slot']
+        self.ops.submit(owner_cmd('p', 'pause', '604'))
+        self.drain_monday()
+        self.ops.submit(owner_cmd('r', 'resume', '604', explicit=True))
+        self.drain_monday()
+        self.assertEqual(self.res('604')['slot'], slot)
+        proj = json.loads(self.item('604')['projected'])
+        self.assertEqual((proj['status'], proj['publish_at']), (board.LABELS['scheduled'], slot))
