@@ -38,9 +38,15 @@ def ops():
     return o
 
 
+ERRORS_LOG_MAX = 5_000_000
+
+
 def log_error(path, error, kind):
     try:
-        with (ROOT / 'errors.log').open('a') as f:
+        log = ROOT / 'errors.log'
+        if log.exists() and log.stat().st_size > ERRORS_LOG_MAX:
+            log.replace(ROOT / 'errors.log.1')     # one generation kept; Bondok resets its offset on shrink
+        with log.open('a') as f:
             f.write(json.dumps({'at': time.time(), 'path': path, 'kind': kind, 'error': str(error)[:900],
                                 'version': __version__}) + '\n')
     except OSError:

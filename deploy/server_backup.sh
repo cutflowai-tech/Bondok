@@ -17,6 +17,8 @@ cp -p "$DATA/helper.py" "$DEST/helper.v1.py"
 getfacl -p "$DATA" "$DATA"/state.sqlite* > "$DEST/acl.txt" 2>/dev/null || true
 tar --exclude=venv --exclude=__pycache__ -C /opt -czf "$DEST/waset-bondok.tgz" waset-bondok   # includes .env (stays on host, 0700 dir)
 cp -p /etc/systemd/system/bondok.service "$DEST/"
-sqlite3 "$DEST/state.sqlite" 'PRAGMA integrity_check;' 2>/dev/null || python3 -c "import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute('PRAGMA integrity_check').fetchone()[0])" "$DEST/state.sqlite"
+# The backup only counts if SQLite says exactly "ok" (sqlite3 exits 0 even for a corrupt file).
+CHECK=$(python3 -c "import sqlite3,sys;print(sqlite3.connect(sys.argv[1]).execute('PRAGMA integrity_check').fetchone()[0])" "$DEST/state.sqlite")
+if [ "$CHECK" != "ok" ]; then echo "BACKUP INVALID: integrity_check=$CHECK" >&2; exit 1; fi
 ( cd "$DEST" && sha256sum * > SHA256SUMS )
 echo "$DEST"

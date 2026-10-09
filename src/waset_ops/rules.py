@@ -81,15 +81,21 @@ def cairo_local(year, month, day, hour, minute) -> datetime:
     than silently shifted, so a requested time is never moved without telling
     the owner.
     """
-    naive = datetime(year, month, day, hour, minute)
+    try:
+        naive = datetime(year, month, day, hour, minute)
+    except ValueError as e:              # e.g. 2026-02-30 or 25:00 from a typed request
+        raise RuleError(f'Invalid date or time ({e})') from None
     first = naive.replace(tzinfo=TZ, fold=0)
     second = naive.replace(tzinfo=TZ, fold=1)
-    if first.utcoffset() != second.utcoffset():
-        raise RuleError('This Cairo local time is ambiguous during a clock change; choose another time')
-    roundtrip = first.astimezone(UTC).astimezone(TZ)
-    if (roundtrip.hour, roundtrip.minute) != (hour, minute):
+    # A skipped wall time (spring forward) also has two offsets, so test existence first (audit: it was
+    # reported as "ambiguous").
+    exists = [d for d in (first, second) if (lambda r: (r.hour, r.minute))(d.astimezone(UTC).astimezone(TZ))
+              == (hour, minute)]
+    if not exists:
         raise RuleError('This Cairo local time does not exist on that day (clock change); choose another time')
-    return first.astimezone(UTC)
+    if first.utcoffset() != second.utcoffset() and len(exists) == 2:
+        raise RuleError('This Cairo local time is ambiguous during a clock change; choose another time')
+    return exists[0].astimezone(UTC)
 
 
 def display(d: datetime) -> str:

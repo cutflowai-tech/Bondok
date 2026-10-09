@@ -1490,3 +1490,43 @@ class TransientProviderErrors(OpsCase):
         self.assertFalse(self.ops.claim('972', 'w', source_status='Canceled')['claimed'])
         self.assertIsNone(self.res('972'))
         self.assertEqual(self.item('972')['owner_state'], 'skipped')
+
+
+class MediaMaintenance(OpsCase):
+    """Audit MP6: prepared files of superseded versions are removed; current and referenced ones are kept."""
+
+    def test_superseded_prepared_files_removed_after_a_week(self):
+        import os
+        from waset_ops import media
+        saved = media.ROOT
+        media.ROOT = self.dir
+        try:
+            (self.dir / 'media').mkdir()
+            self.make_ready('980', 'Story')                          # verified media for FILE1
+            self.select('980', 2)                                    # editor replaced the file: FILE1 superseded
+            files = {}
+            with self.ops.store.tx() as c:
+                for n in (1, 2):
+                    f = self.dir / 'media' / f'm{n}.mp4'
+                    f.write_bytes(b'x')
+                    os.utime(f, (0, 0))
+                    files[n] = f
+                    c.execute('INSERT OR REPLACE INTO media VALUES(?,?,?,?,?)', (f'm{n}', '980', str(f), 's', json.dumps(
+                        {'assetKey': f'id:FILE{n}@rev{n}', 'format': 'Story'})))
+            out = media.maintenance()
+            self.assertEqual(out['removedSupersededFiles'], 1)
+            self.assertFalse(files[1].exists())
+            self.assertTrue(files[2].exists())                       # current version kept
+        finally:
+            media.ROOT = saved
+
+
+class CairoTimeInput(unittest.TestCase):
+    def test_gap_overlap_and_invalid_dates(self):
+        with self.assertRaisesRegex(rules.RuleError, 'does not exist'):
+            rules.cairo_local(2026, 4, 24, 0, 30)                    # spring forward gap (tzdata 2026)
+        with self.assertRaisesRegex(rules.RuleError, 'ambiguous'):
+            rules.cairo_local(2026, 10, 29, 23, 30)                  # fall back overlap
+        with self.assertRaisesRegex(rules.RuleError, 'Invalid date'):
+            rules.cairo_local(2026, 2, 30, 21, 0)
+        self.assertEqual(rules.iso(rules.cairo_local(2026, 10, 15, 21, 0)), '2026-10-15T18:00:00Z')

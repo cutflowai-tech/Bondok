@@ -354,4 +354,25 @@ def maintenance(retain_days=30) -> dict:
         if f.parent == ROOT / 'media' and f.exists():
             f.unlink()
             removed += 1
-    return {'removedPublishedFiles': removed, 'freeBytes': shutil.disk_usage(ROOT).free}
+    # Prepared files of superseded versions (file replaced, format changed) were never removed and filled the
+    # disk until every download failed the free-space guard (audit MP6). Removed after 7 days unless the
+    # current item version, its verification or any unfinished publication attempt still refers to them.
+    superseded = 0
+    old = time.time() - 7 * 86400
+    with store().tx() as c:
+        live = {loads(a['payload'], {}).get('verification_id') for a in c.execute(
+            "SELECT payload FROM ops_attempts WHERE stage IN ('claimed','container_created','committed','outcome_unknown')")}
+        for m in c.execute('SELECT m.id, m.path, m.metadata, i.asset_key, i.format, i.verification_id FROM media m '
+                           'LEFT JOIN ops_items i ON i.item_id=m.item').fetchall():
+            info = loads(m['metadata'], {}) or {}
+            current = info.get('assetKey') == m['asset_key'] and info.get('format') == m['format']
+            f = Path(m['path'])
+            if current or m['id'] == m['verification_id'] or m['id'] in live or f.parent != ROOT / 'media':
+                continue
+            if f.exists() and f.stat().st_mtime > old:
+                continue
+            f.unlink(missing_ok=True)
+            c.execute('DELETE FROM media WHERE id=?', (m['id'],))
+            superseded += 1
+    return {'removedPublishedFiles': removed, 'removedSupersededFiles': superseded,
+            'freeBytes': shutil.disk_usage(ROOT).free}
