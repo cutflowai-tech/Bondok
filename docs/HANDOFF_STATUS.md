@@ -57,3 +57,11 @@ Not authorized: importing/activating the patched WF1 (`95a5868`), any change to 
 
 ## Test commands
 `cd tests && python3 -m unittest test_acceptance test_workflows test_helper_cli test_bondok` → 84 OK (2026-10-09).
+
+## 2026-10-09 evening — recovery and isolated replay
+* Fix 2 (`463bc09`) deployed to helper + Bondok (29 files verified); WF1 imported **inactive**.
+* Restored 116 cleared v1 values (Publish video 14, System update 40, Video measurements 30, Processed format 30,
+  Version Check 2) after verifying each was still in the incident state; recorded as board-owned in the DB.
+* Corrected the misleading "Dropbox request failed" Action text on 7 items (verified cause: WF1 expression bug).
+* Isolated replay (real n8n 2.39.8, production copies, mocked externals): see `REPLAY_RESULTS.md`.
+  12 defects fixed on this branch, **not deployed**. WF1 stays inactive pending owner approval.
