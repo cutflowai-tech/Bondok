@@ -329,11 +329,14 @@ class ItemsMixin:
         caption or format). Recorded as pending so the old board value is not
         mistaken for a new human edit while the write is in flight."""
         pending = loads(it.get('pending_projection'), {}) or {}
-        cols, compare = {}, {}
+        observed = loads(it.get('observed'), {}) or {}
+        cols, compare, guard = {}, {}, {}
         for k, v in values.items():
             cols[board.COL[k]] = board.mutation_value(k, v)
             compare['h:' + k] = board.compare_value(k, v)
-        payload = {'item_id': it['item_id'], 'columns': cols, 'compare': compare, 'group': None}
+            # Skip the write if a person typed something else meanwhile (WF2 compare-before-write).
+            guard[board.COL[k]] = {'kind': board.KIND.get(k, 'text'), 'was': observed.get(k), 'new': compare['h:' + k]}
+        payload = {'item_id': it['item_id'], 'columns': cols, 'compare': compare, 'group': None, 'guard': guard}
         self.enqueue(c, 'monday', 'monday-h:' + it['item_id'] + ':' + fingerprint(payload)[:16], payload, it['item_id'])
         c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?',
                   (dumps({**pending, **compare}), it['item_id']))

@@ -1389,3 +1389,22 @@ class CaptionDraftAndRepairAudit(OpsCase):
         self.ops.inspect = lambda: report                            # repair acts on the earlier snapshot
         self.ops.repair()
         self.assertEqual((self.res('902')['slot'], self.res('902')['owner_pinned']), (at, 1))
+
+
+class DisplaySyncGuardCore(OpsCase):
+    """Audit MS4 (core side): status jobs carry the last written value; a conflict waits for observation."""
+
+    def test_status_job_guarded_and_conflict_retried_without_escalation(self):
+        self.make_ready('950', 'Story')
+        self.drain_monday()
+        self.ops.submit(owner_cmd('p', 'pause', '950'))
+        job = [j for j in self.ops.outbox_take(['monday'], 'w', 10) if j['payload'].get('guard')][0]
+        g = job['payload']['guard'][board.COL['status']]
+        self.assertEqual((g['was'], g['new']), (board.LABELS['scheduled'], board.LABELS['paused']))
+        for _ in range(8):
+            r = self.ops.outbox_ack(job['id'], 'w', False, 'conflict: changed on the board by a person (status)')
+            self.assertTrue(r.get('conflict'), r)
+            with self.ops.store.tx() as c:
+                c.execute("UPDATE ops_outbox SET state='in_flight', lease_owner='w' WHERE id=?", (job['id'],))
+        st = [o for o in self.outbox('monday') if o['id'] == job['id']][0]
+        self.assertNotEqual(st['state'], 'escalated')

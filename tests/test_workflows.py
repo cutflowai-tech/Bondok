@@ -359,3 +359,44 @@ class ExpressionSyntax(unittest.TestCase):
             body = nodes[name]['parameters']['jsonBody']
             self.assertNotIn("'public'}})", body)
             self.assertIn("requested_visibility:'public'} })", body)
+
+
+@unittest.skipUnless(NODE, 'node not installed')
+class DisplaySyncGuard(unittest.TestCase):
+    """Audit MS4: WF2 must not overwrite a status a person changed since v2 last wrote it."""
+
+    def js(self):
+        return next(n for n in WF['pUIshuf16zIYoYRz']['nodes'] if n['name'] == 'Check Board Before Sync')['parameters']['jsCode']
+
+    def check(self, board_cols, guard):
+        m = {'job': 7, 'item': '1', 'guard': guard, 'gql': {}}
+        return run_js(self.js(), {'data': {'items': [{'column_values': board_cols}]}},
+                      refs={'Build Sync Mutation': m}, each=True)['json']
+
+    def test_unchanged_or_already_written_passes(self):
+        g = {'status': {'kind': 'status', 'was': 'Scheduled', 'new': 'Publishing'}}
+        self.assertIsNone(self.check([{'id': 'status', 'text': 'Scheduled', 'value': None}], g)['conflict'])
+        self.assertIsNone(self.check([{'id': 'status', 'text': 'Publishing', 'value': None}], g)['conflict'])
+
+    def test_person_changed_status_is_a_conflict(self):
+        g = {'status': {'kind': 'status', 'was': 'Scheduled', 'new': 'Publishing'}}
+        out = self.check([{'id': 'status', 'text': 'Paused', 'value': None}], g)
+        self.assertTrue(out['conflict'].startswith('conflict'))
+
+    def test_long_text_compared_by_value(self):
+        g = {'long_text_mm7x2ay1': {'kind': 'long', 'was': 'old caption', 'new': 'new caption'}}
+        cell = {'id': 'long_text_mm7x2ay1', 'text': 'old caption', 'value': '{"text":"old caption "}'}
+        self.assertIsNone(self.check([cell], g)['conflict'])
+
+    def test_missing_item_is_a_read_error_not_a_conflict(self):
+        m = {'job': 7, 'item': '1', 'guard': {'status': {'kind': 'status', 'was': 'A', 'new': 'B'}}, 'gql': {}}
+        out = run_js(self.js(), {'data': {'items': []}}, refs={'Build Sync Mutation': m}, each=True)['json']
+        self.assertIsNone(out['conflict'])
+        self.assertIn('not found', out['readError'])
+
+    def test_graph_routes_guarded_jobs_through_the_read(self):
+        c = WF['pUIshuf16zIYoYRz']['connections']
+        self.assertEqual(c['Build Sync Mutation']['main'][0][0]['node'], 'Guarded Sync?')
+        self.assertEqual(c['Guarded Sync?']['main'][0][0]['node'], 'Read Board Before Sync')
+        self.assertEqual(c['Guarded Sync?']['main'][1][0]['node'], 'Apply Display Sync')
+        self.assertEqual(c['Sync Conflict?']['main'][1][0]['node'], 'Apply Display Sync')

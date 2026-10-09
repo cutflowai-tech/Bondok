@@ -32,6 +32,7 @@ OUTBOX_MAX_ATTEMPTS = 6
 # any system column, but only clears values it wrote itself (tracked as '_ours').
 # Found at cutover: clearing v1 dates, delivery links and metadata destroyed data.
 PROPOSAL_TTL = 30 * 60
+CONFLICT_RETRY_SECONDS = 15 * 60  # WF1 observes every 10 minutes
 STALE_SNAPSHOT_SECONDS = 20 * 60   # longer than a WF1 run (lease 15 min): older snapshots can't predate an ack
 RUN_TTL = {'wf1': 900, 'wf3': 600, 'wf2': 300}
 
@@ -401,7 +402,17 @@ class CoreMixin:
         if group_change:
             compare['_group'] = group_change
             group_out = group_change
+        guard = {}
+        for o in older:
+            guard.update(loads(o['payload'], {}).get('guard') or {})
+        if 'status' in changes and 'status' not in force_keys and confirmed.get('status') is not None:
+            # WF2 reads the board first and skips the write if a person changed the status since v2 last wrote
+            # it (e.g. Paused typed between WF1 observations): the edit must reach observe, not be overwritten.
+            guard.setdefault(board.COL['status'], {'kind': 'status', 'was': confirmed.get('status')})
+            guard[board.COL['status']]['new'] = compare.get('status')
         payload = {'item_id': str(item_id), 'columns': columns, 'compare': compare, 'group': group_out}
+        if guard:
+            payload['guard'] = guard
         key = 'monday:' + str(item_id) + ':' + fingerprint(payload)[:16]
         prior = c.execute('SELECT state FROM ops_outbox WHERE dedupe_key=?', (key,)).fetchone()
         if prior and prior['state'] not in ('pending', 'failed'):
@@ -583,6 +594,11 @@ class CoreMixin:
                               (dumps(pend) if pend else None, r['item_id']))
                     self.project(c, r['item_id'])
                 return {'ok': False, 'superseded': True}
+            if (error or '').startswith('conflict'):
+                # A person changed the board since v2 last wrote: wait for WF1 to observe that edit.
+                c.execute("UPDATE ops_outbox SET state='failed', last_error=?, next_at=?, updated=? WHERE id=?",
+                          ((error or '')[:500], now + CONFLICT_RETRY_SECONDS, now, job_id))
+                return {'ok': False, 'conflict': True}
             attempts = r['attempts'] + 1
             if attempts >= OUTBOX_MAX_ATTEMPTS:
                 c.execute("UPDATE ops_outbox SET state='escalated', attempts=?, last_error=?, next_at=?, updated=? "

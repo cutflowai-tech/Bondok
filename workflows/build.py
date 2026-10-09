@@ -198,8 +198,31 @@ if(j.kind==='source_monday'){
 let q='mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v,create_labels_if_missing:false){id}';
 const vars={b:'5105608159',i:String(p.item_id),v:JSON.stringify(p.columns||{})};
 if(p.group){q=q.replace('$v:JSON!)','$v:JSON!,$g:String!)')+' move_item_to_group(item_id:$i,group_id:$g){id}';vars.g=p.group}
-return {json:{job:j.id,gql:{query:q+'}',variables:vars}}};
+const guard=p.guard&&Object.keys(p.guard).length?p.guard:null;
+return {json:{job:j.id,item:String(p.item_id),guard,gql:{query:q+'}',variables:vars}}};
 """, each=True)
+    # Compare-before-write: a status or human column a person changed since v2 last wrote it is not
+    # overwritten (audit MS4); the job is retried after WF1 has observed the person's edit.
+    guarded = f.cond('Guarded Sync?', '!!$json.guard')
+    g_read = f.monday('Read Board Before Sync', "JSON.stringify({query:'query($i:[ID!],$c:[String!]){items(ids:$i){"
+                      "column_values(ids:$c){id text value} } }',variables:{i:[$json.item],c:Object.keys($json.guard)} })",
+                      on_error='continueRegularOutput')
+    g_check = f.code('Check Board Before Sync', r"""
+const m=$('Build Sync Mutation').item.json;
+if($json.error||$json.errors)return {json:{...m,conflict:null,readError:String(($json.error&&$json.error.message)||JSON.stringify($json.errors)).slice(0,300)}};
+if(!($json.data?.items||[]).length)return {json:{...m,conflict:null,readError:'item not found on the board'}};
+const cols=$json.data.items[0].column_values||[];
+const norm=(c,kind)=>{if(!c)return null;
+  if(kind==='long'){try{const v=JSON.parse(c.value||'null');if(v&&typeof v.text==='string')return v.text.trim()||null}catch(e){}}
+  return String(c.text||'').trim()||null};
+const changed=Object.entries(m.guard).filter(([id,g])=>{const cur=norm(cols.find(c=>c.id===id),g.kind);
+  return cur!==(g.was??null)&&cur!==(g.new??null)}).map(([id])=>id);
+return {json:{...m,conflict:changed.length?'conflict: changed on the board by a person ('+changed.join(',')+')':null}};
+""", each=True)
+    conflict = f.cond('Sync Conflict?', '!!$json.conflict || !!$json.readError')
+    c_ack_in, c_ack = f.helper('Display Sync — Conflict Ack', '/v2/outbox/ack', r"""({id:$json.job,
+worker:$('Configuration').first().json.worker,ok:false,error:$json.conflict||('read before sync failed: '+$json.readError)})""",
+                               each=True, fail=False)
     apply_ = f.monday('Apply Display Sync', 'JSON.stringify($json.gql)', on_error='continueRegularOutput')
     ack_in, ack = f.helper('Display Sync — Ack', '/v2/outbox/ack', r"""(()=>{
 const job=$('Build Sync Mutation').item.json.job;
@@ -207,7 +230,13 @@ const err=$json.error?(($json.error.message||JSON.stringify($json.error))):($jso
 return {id:job,worker:$('Configuration').first().json.worker,ok:!err&&!!$json.data,error:err?String(err).slice(0,500):null};})()""",
                            each=True, fail=False)
     f.chain(cfg, take_in)
-    f.chain(take, jobs, mut, apply_, ack_in)
+    f.chain(take, jobs, mut, guarded)
+    f.link(guarded, g_read, 0)
+    f.link(guarded, apply_, 1)
+    f.chain(g_read, g_check, conflict)
+    f.link(conflict, c_ack_in, 0)
+    f.link(conflict, apply_, 1)
+    f.chain(apply_, ack_in)
 
     # ---- due work from durable state (empty queue ends cleanly: no Monday call)
     due_in, due = f.helper('Due Work', '/v2/publish/due', "{worker:$('Configuration').first().json.worker,limit:5}")

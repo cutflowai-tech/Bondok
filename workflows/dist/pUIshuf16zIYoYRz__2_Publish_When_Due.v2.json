@@ -106,13 +106,173 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const j=$json,p=j.payload;\nif(j.kind==='source_monday'){\n  return {json:{job:j.id,gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:\"color_mm1ryfcb\",value:$v){id}}',variables:{b:'5091110326',i:String(p.source_item_id),v:JSON.stringify({label:p.label})}}}};\n}\nlet q='mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v,create_labels_if_missing:false){id}';\nconst vars={b:'5105608159',i:String(p.item_id),v:JSON.stringify(p.columns||{})};\nif(p.group){q=q.replace('$v:JSON!)','$v:JSON!,$g:String!)')+' move_item_to_group(item_id:$i,group_id:$g){id}';vars.g=p.group}\nreturn {json:{job:j.id,gql:{query:q+'}',variables:vars}}};",
+    "jsCode": "const j=$json,p=j.payload;\nif(j.kind==='source_monday'){\n  return {json:{job:j.id,gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:\"color_mm1ryfcb\",value:$v){id}}',variables:{b:'5091110326',i:String(p.source_item_id),v:JSON.stringify({label:p.label})}}}};\n}\nlet q='mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v,create_labels_if_missing:false){id}';\nconst vars={b:'5105608159',i:String(p.item_id),v:JSON.stringify(p.columns||{})};\nif(p.group){q=q.replace('$v:JSON!)','$v:JSON!,$g:String!)')+' move_item_to_group(item_id:$i,group_id:$g){id}';vars.g=p.group}\nconst guard=p.guard&&Object.keys(p.guard).length?p.guard:null;\nreturn {json:{job:j.id,item:String(p.item_id),guard,gql:{query:q+'}',variables:vars}}};",
     "mode": "runOnceForEachItem"
    },
    "id": "bc858b5c-c5f3-5a39-b85d-8780498c5fa4",
    "position": [
     1440,
     0
+   ]
+  },
+  {
+   "name": "Guarded Sync?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "fd6bb9a0-86c1-5892-aedb-08dd216ac019",
+       "leftValue": "={{ !!$json.guard }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "1edd0c8d-217c-54f4-b6ac-35d0de14b4f3",
+   "position": [
+    1680,
+    0
+   ]
+  },
+  {
+   "name": "Read Board Before Sync",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.3,
+   "parameters": {
+    "url": "https://api.monday.com/v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "mondayComApi",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({query:'query($i:[ID!],$c:[String!]){items(ids:$i){column_values(ids:$c){id text value} } }',variables:{i:[$json.item],c:Object.keys($json.guard)} }) }}"
+   },
+   "credentials": {
+    "mondayComApi": {
+     "id": "<REDACTED>",
+     "name": "Monday.com account"
+    }
+   },
+   "onError": "continueRegularOutput",
+   "id": "90369fb0-090f-5b49-b84a-02650637a38b",
+   "position": [
+    1920,
+    0
+   ]
+  },
+  {
+   "name": "Check Board Before Sync",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const m=$('Build Sync Mutation').item.json;\nif($json.error||$json.errors)return {json:{...m,conflict:null,readError:String(($json.error&&$json.error.message)||JSON.stringify($json.errors)).slice(0,300)}};\nif(!($json.data?.items||[]).length)return {json:{...m,conflict:null,readError:'item not found on the board'}};\nconst cols=$json.data.items[0].column_values||[];\nconst norm=(c,kind)=>{if(!c)return null;\n  if(kind==='long'){try{const v=JSON.parse(c.value||'null');if(v&&typeof v.text==='string')return v.text.trim()||null}catch(e){}}\n  return String(c.text||'').trim()||null};\nconst changed=Object.entries(m.guard).filter(([id,g])=>{const cur=norm(cols.find(c=>c.id===id),g.kind);\n  return cur!==(g.was??null)&&cur!==(g.new??null)}).map(([id])=>id);\nreturn {json:{...m,conflict:changed.length?'conflict: changed on the board by a person ('+changed.join(',')+')':null}};",
+    "mode": "runOnceForEachItem"
+   },
+   "id": "4f45e793-3d7a-59d2-9034-33102ea69ae8",
+   "position": [
+    2160,
+    0
+   ]
+  },
+  {
+   "name": "Sync Conflict?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "87150ea1-e8c9-594b-abe9-355dac84ceb7",
+       "leftValue": "={{ !!$json.conflict || !!$json.readError }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "418f9c31-7edd-56dc-9b22-e9dfe45c61d8",
+   "position": [
+    2400,
+    0
+   ]
+  },
+  {
+   "name": "Display Sync — Conflict Ack — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body=({id:$json.job,\nworker:$('Configuration').first().json.worker,ok:false,error:$json.conflict||('read before sync failed: '+$json.readError)});\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/outbox/ack\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn {json:{command}};",
+    "mode": "runOnceForEachItem"
+   },
+   "id": "2c986d52-f819-5ab7-a9af-6c4da7705a54",
+   "position": [
+    2640,
+    0
+   ]
+  },
+  {
+   "name": "Display Sync — Conflict Ack — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "67233a88-b547-567a-a735-1f098e23bc2f",
+   "position": [
+    0,
+    200
+   ]
+  },
+  {
+   "name": "Display Sync — Conflict Ack",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn {json:r};",
+    "mode": "runOnceForEachItem"
+   },
+   "id": "6d276111-317b-54c6-94a7-1c4cf9da655f",
+   "position": [
+    240,
+    200
    ]
   },
   {
@@ -147,8 +307,8 @@
    "onError": "continueRegularOutput",
    "id": "48515bec-ad78-56ea-a062-dceda6fc3072",
    "position": [
-    1680,
-    0
+    480,
+    200
    ]
   },
   {
@@ -161,8 +321,8 @@
    },
    "id": "a041b2cb-00d3-52b9-857b-40e21d732241",
    "position": [
-    1920,
-    0
+    720,
+    200
    ]
   },
   {
@@ -175,8 +335,8 @@
    },
    "id": "3c055078-53f1-5a3c-8898-c7001736a884",
    "position": [
-    2160,
-    0
+    960,
+    200
    ]
   },
   {
@@ -189,8 +349,8 @@
    },
    "id": "16f66a6f-76b5-5056-961c-8cc3a0838e89",
    "position": [
-    2400,
-    0
+    1200,
+    200
    ]
   },
   {
@@ -202,8 +362,8 @@
    },
    "id": "a9a4bf01-3d98-5372-9cbf-e2f3482bbf79",
    "position": [
-    2640,
-    0
+    1440,
+    200
    ]
   },
   {
@@ -216,7 +376,7 @@
    },
    "id": "69410b88-5f16-5e2f-a438-7ab4bc7253c0",
    "position": [
-    0,
+    1680,
     200
    ]
   },
@@ -229,7 +389,7 @@
    },
    "id": "b17c8dd3-6be7-525f-8b29-7c13a5798c83",
    "position": [
-    240,
+    1920,
     200
    ]
   },
@@ -242,7 +402,7 @@
    },
    "id": "c6d1118a-3c5b-56e1-9f2b-9b2726b090e4",
    "position": [
-    480,
+    2160,
     200
    ]
   },
@@ -290,7 +450,7 @@
    },
    "id": "3f79e619-3a8a-591b-8c2b-0f3e6fff0b25",
    "position": [
-    960,
+    2640,
     200
    ]
   },
@@ -303,8 +463,8 @@
    },
    "id": "9473083c-674b-585c-9295-e865681ccd00",
    "position": [
-    1200,
-    200
+    0,
+    400
    ]
   },
   {
@@ -342,8 +502,8 @@
    },
    "id": "5d878a11-3dc6-511d-b96b-d8456dc9e213",
    "position": [
-    1680,
-    200
+    480,
+    400
    ]
   },
   {
@@ -356,8 +516,8 @@
    },
    "id": "5b2b0044-a4a9-5e84-b163-61c19aa27e45",
    "position": [
-    1920,
-    200
+    720,
+    400
    ]
   },
   {
@@ -369,8 +529,8 @@
    },
    "id": "709c46a8-f571-5dee-8bec-e6118de57c56",
    "position": [
-    2160,
-    200
+    960,
+    400
    ]
   },
   {
@@ -382,8 +542,8 @@
    },
    "id": "cb4fdadc-c18a-5600-a566-4fd967e3cf52",
    "position": [
-    2400,
-    200
+    1200,
+    400
    ]
   },
   {
@@ -418,8 +578,8 @@
    "onError": "continueErrorOutput",
    "id": "fe992571-3d20-5626-9593-3373516ed693",
    "position": [
-    2640,
-    200
+    1440,
+    400
    ]
   },
   {
@@ -432,7 +592,7 @@
    "onError": "continueErrorOutput",
    "id": "543263c5-5333-575f-a8cb-fec83bed5c90",
    "position": [
-    0,
+    1680,
     400
    ]
   },
@@ -468,7 +628,7 @@
    "onError": "continueErrorOutput",
    "id": "a5140920-c726-5308-8e93-cb2c74273414",
    "position": [
-    240,
+    1920,
     400
    ]
   },
@@ -481,7 +641,7 @@
    },
    "id": "af289a09-c679-5713-88b0-8072892e8b0a",
    "position": [
-    480,
+    2160,
     400
    ]
   },
@@ -495,7 +655,7 @@
    },
    "id": "a4ab9774-b415-515f-9c58-3609948484a9",
    "position": [
-    720,
+    2400,
     400
    ]
   },
@@ -509,7 +669,7 @@
    "onError": "continueErrorOutput",
    "id": "f9717995-5f15-5e21-b82b-c55bb745a9e1",
    "position": [
-    960,
+    2640,
     400
    ]
   },
@@ -543,8 +703,8 @@
    },
    "id": "89248609-dd07-5104-8993-5c62fbafd42f",
    "position": [
-    1200,
-    400
+    0,
+    600
    ]
   },
   {
@@ -577,8 +737,8 @@
    },
    "id": "c87183cc-f72f-5000-890e-3c2401c3f290",
    "position": [
-    1440,
-    400
+    240,
+    600
    ]
   },
   {
@@ -590,8 +750,8 @@
    },
    "id": "53908116-1f16-521f-9377-54dfb69e7aef",
    "position": [
-    1680,
-    400
+    480,
+    600
    ]
   },
   {
@@ -632,8 +792,8 @@
    "onError": "continueErrorOutput",
    "id": "a840e51b-4b0a-5071-a70d-ee0355e756de",
    "position": [
-    2160,
-    400
+    960,
+    600
    ]
   },
   {
@@ -645,8 +805,8 @@
    },
    "id": "479df78e-8b24-5ea0-b560-952170d01ec8",
    "position": [
-    2400,
-    400
+    1200,
+    600
    ]
   },
   {
@@ -659,8 +819,8 @@
    },
    "id": "1edcd826-1d9d-5f7e-8329-4a31d153b946",
    "position": [
-    2640,
-    400
+    1440,
+    600
    ]
   },
   {
@@ -673,7 +833,7 @@
    "onError": "continueErrorOutput",
    "id": "5cf48501-c5ef-5ba1-90de-64ae2fbaa589",
    "position": [
-    0,
+    1680,
     600
    ]
   },
@@ -686,7 +846,7 @@
    },
    "id": "3c0aec9e-1300-5ae0-ba46-59c6eac402ba",
    "position": [
-    240,
+    1920,
     600
    ]
   },
@@ -699,7 +859,7 @@
    },
    "id": "626061d0-c671-5429-b964-44b1bb23bb70",
    "position": [
-    480,
+    2160,
     600
    ]
   },
@@ -725,7 +885,7 @@
    },
    "id": "fbbc3f8d-2c84-5908-b45f-2a2820b3ee68",
    "position": [
-    960,
+    2640,
     600
    ]
   },
@@ -739,8 +899,8 @@
    },
    "id": "a730acb2-a763-561b-9f88-c54b5c849ba0",
    "position": [
-    1200,
-    600
+    0,
+    800
    ]
   },
   {
@@ -753,8 +913,8 @@
    "onError": "continueErrorOutput",
    "id": "69ac5d99-8275-59d5-817e-319e4e1c7bd6",
    "position": [
-    1440,
-    600
+    240,
+    800
    ]
   },
   {
@@ -792,8 +952,8 @@
    },
    "id": "ac0c210f-713f-58a9-98eb-79dc65d2bc23",
    "position": [
-    1920,
-    600
+    720,
+    800
    ]
   },
   {
@@ -860,8 +1020,8 @@
    },
    "id": "bb80af71-95eb-57d7-a628-3658981e3098",
    "position": [
-    2400,
-    600
+    1200,
+    800
    ]
   },
   {
@@ -873,8 +1033,8 @@
    },
    "id": "609a4a88-4329-581e-824d-d075ecc0ee49",
    "position": [
-    2640,
-    600
+    1440,
+    800
    ]
   },
   {
@@ -887,7 +1047,7 @@
    },
    "id": "d2f217bb-bf1a-5792-9019-895da6443756",
    "position": [
-    0,
+    1680,
     800
    ]
   },
@@ -900,7 +1060,7 @@
    },
    "id": "085b522f-6b7f-512f-a14b-9f53683895ee",
    "position": [
-    240,
+    1920,
     800
    ]
   },
@@ -952,7 +1112,7 @@
    },
    "id": "95fbede0-1a29-573c-baf0-4dc46b673dc7",
    "position": [
-    720,
+    2400,
     800
    ]
   },
@@ -966,7 +1126,7 @@
    },
    "id": "6d25082c-519c-5ce1-9a47-7e72f35af35d",
    "position": [
-    960,
+    2640,
     800
    ]
   },
@@ -980,8 +1140,8 @@
    "onError": "continueErrorOutput",
    "id": "f12479d3-8bdc-52ed-8755-e341f4aa9c06",
    "position": [
-    1200,
-    800
+    0,
+    1000
    ]
   },
   {
@@ -1014,8 +1174,8 @@
    },
    "id": "ec54c5a7-f4b6-5767-9dc6-1a6d2f98a1aa",
    "position": [
-    1440,
-    800
+    240,
+    1000
    ]
   },
   {
@@ -1063,8 +1223,8 @@
    },
    "id": "edaa0146-ac04-551f-aed1-459ecddba074",
    "position": [
-    1920,
-    800
+    720,
+    1000
    ]
   },
   {
@@ -1077,8 +1237,8 @@
    },
    "id": "c2747acc-a97f-5fd1-ab18-ba1dd2d89d8b",
    "position": [
-    2160,
-    800
+    960,
+    1000
    ]
   },
   {
@@ -1090,8 +1250,8 @@
    },
    "id": "e2f8528f-bd6d-5c12-adcf-b8b011f78e1f",
    "position": [
-    2400,
-    800
+    1200,
+    1000
    ]
   },
   {
@@ -1124,8 +1284,8 @@
    },
    "id": "ab320b0b-4512-55a3-91c6-6ad2e7eb55cc",
    "position": [
-    2640,
-    800
+    1440,
+    1000
    ]
   },
   {
@@ -1169,7 +1329,7 @@
    },
    "id": "a625ecdc-1db8-5669-89aa-0e52684eba32",
    "position": [
-    240,
+    1920,
     1000
    ]
   },
@@ -1183,7 +1343,7 @@
    },
    "id": "16eb0357-d61e-58f3-adc1-99391b4c0741",
    "position": [
-    480,
+    2160,
     1000
    ]
   },
@@ -1196,7 +1356,7 @@
    },
    "id": "fa49fcfe-53fd-5c92-8a3e-35e25e1358ae",
    "position": [
-    720,
+    2400,
     1000
    ]
   }
@@ -1229,6 +1389,28 @@
     [
      {
       "node": "Display Sync — Take",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Display Sync — Conflict Ack — Input": {
+   "main": [
+    [
+     {
+      "node": "Display Sync — Conflict Ack — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Display Sync — Conflict Ack — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Display Sync — Conflict Ack",
       "type": "main",
       "index": 0
      }
@@ -1297,6 +1479,64 @@
   },
   "Build Sync Mutation": {
    "main": [
+    [
+     {
+      "node": "Guarded Sync?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Guarded Sync?": {
+   "main": [
+    [
+     {
+      "node": "Read Board Before Sync",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Apply Display Sync",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Board Before Sync": {
+   "main": [
+    [
+     {
+      "node": "Check Board Before Sync",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Board Before Sync": {
+   "main": [
+    [
+     {
+      "node": "Sync Conflict?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Sync Conflict?": {
+   "main": [
+    [
+     {
+      "node": "Display Sync — Conflict Ack — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
     [
      {
       "node": "Apply Display Sync",
