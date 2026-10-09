@@ -1456,3 +1456,37 @@ class MondaySyncMedium(OpsCase):
         self.observe(b)
         jobs = [json.loads(o['payload']) for o in self.outbox('monday') if o['state'] == 'pending']
         self.assertFalse(any(j.get('group') for j in jobs), jobs)
+
+
+class TransientProviderErrors(OpsCase):
+    """Audit P10: a rate-limit / transient Meta error is not a permanent failure."""
+
+    def fail_once(self, iid, err):
+        self.clock.set(rules.instant(self.res(iid)['slot']) + timedelta(seconds=30))
+        cl = self.ops.claim(iid, 'w')
+        self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
+        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        return self.ops.result(cl['attempt_id'], 'w', error=err, http_status=400, definitive=True)
+
+    def test_transient_error_reschedules_then_gives_up(self):
+        self.make_ready('970', 'Story')
+        err = json.dumps({'error': {'code': 4, 'is_transient': True, 'message': 'Application request limit reached'}})
+        for _ in range(3):
+            self.fail_once('970', err)
+            self.assertEqual(self.item('970')['publication'], 'not_started')
+            self.assertIsNotNone(self.res('970'))
+        self.fail_once('970', err)
+        self.assertEqual(self.item('970')['publication'], 'failed')
+
+    def test_real_rejection_still_fails(self):
+        self.make_ready('971', 'Story')
+        self.fail_once('971', json.dumps({'error': {'code': 100, 'message': 'Invalid parameter'}}))
+        self.assertEqual(self.item('971')['publication'], 'failed')
+        self.assertIsNone(self.res('971'))
+
+    def test_canceled_source_releases_at_claim(self):
+        self.make_ready('972', 'Story')
+        self.clock.set(rules.instant(self.res('972')['slot']) + timedelta(seconds=30))
+        self.assertFalse(self.ops.claim('972', 'w', source_status='Canceled')['claimed'])
+        self.assertIsNone(self.res('972'))
+        self.assertEqual(self.item('972')['owner_state'], 'skipped')

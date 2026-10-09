@@ -10,6 +10,7 @@ Exactly-once publication across SQLite, Monday and Instagram is NOT claimed.
 """
 from __future__ import annotations
 
+import json
 import secrets
 
 from . import rules
@@ -20,7 +21,20 @@ LEASE = 180                    # DEFAULT: deployed publish lease (seconds)
 COMMIT_LEASE = 900             # time allowed to deliver the result after commit
 RECONCILE_INTERVALS = (300, 600, 900, 1800, 3600, 7200)
 MAX_RECONCILE_CHECKS = 12
+MAX_TRANSIENT_RETRIES = 3
 MAX_ATTEMPTS_PER_SLOT = 3      # each claim creates an Instagram container; stop retrying a failing slot
+
+
+TRANSIENT_CODES = {1, 2, 4, 17, 32, 341, 613}   # Meta Graph API: temporary / throttling
+
+
+def _transient_provider_error(error) -> bool:
+    try:
+        e = json.loads(error) if isinstance(error, str) else (error or {})
+    except ValueError:
+        return False
+    e = e.get('error', e) if isinstance(e, dict) else {}
+    return isinstance(e, dict) and (e.get('is_transient') is True or e.get('code') in TRANSIENT_CODES)
 
 
 class PublishMixin:
@@ -64,6 +78,12 @@ class PublishMixin:
             it = self.item(c, item_id)
             res = self.reservation(c, item_id)
             if source_status == 'Canceled':
+                # Same outcome WF1 records later; releasing now stops WF2 re-reading Monday every minute and WF3
+                # moving the item to the next slot (audit, publishing LOW).
+                if not self.active_attempt(c, item_id):
+                    self.release(c, it, 'source canceled', keep_request=False)
+                    self.update_item(c, it['item_id'], worker, 'source canceled', owner_state='skipped',
+                                     owner_state_reason='Canceled in Customer Projects')
                 return self._refuse(c, it, 'Source project was canceled', notify=True)
             if not res:
                 return self._refuse(c, it, 'No confirmed reservation', quiet=True)
@@ -268,11 +288,24 @@ class PublishMixin:
             if media_id:
                 return self._published(c, a, worker, {'media_id': str(media_id), 'source': 'media_publish response'})
             if definitive and http_status and 400 <= int(http_status) < 500:
+                transient = _transient_provider_error(error)
                 c.execute("UPDATE ops_attempts SET stage='failed', evidence=?, updated=? WHERE id=?",
-                          (dumps({'http_status': http_status, 'error': str(error)[:800]}), self.now(), attempt_id))
+                          (dumps({'http_status': http_status, 'error': str(error)[:800], 'transient': transient}),
+                           self.now(), attempt_id))
                 # Definitive rejection: nothing was published; drop the rollback guard row.
                 c.execute('DELETE FROM publications WHERE item=? AND owner=?', (a['item_id'], 'ops:' + attempt_id))
                 self.release(c, self.item(c, a['item_id']), 'publication failed')
+                tries = c.execute("SELECT COUNT(*) FROM ops_attempts WHERE item_id=? AND stage='failed' AND "
+                                  "json_extract(evidence,'$.transient')=1", (a['item_id'],)).fetchone()[0]
+                if transient and tries <= MAX_TRANSIENT_RETRIES:
+                    # Rate limit / temporary Meta error: nothing was published; take the next slot (audit P10).
+                    out = self.try_schedule(c, a['item_id'], worker)
+                    it = self.item(c, a['item_id'])
+                    when = rules.display(rules.instant(out['scheduled'])) if out.get('scheduled') else 'the next free slot'
+                    self.notify(c, f'pub-transient:{attempt_id}', f"Instagram had a temporary error for {it['name']} "
+                                f"({it['item_id']}): {str(error)[:200]}. Nothing was published; it will be tried again "
+                                f"at {when}.", it['item_id'])
+                    return {'stage': 'failed', 'retry': out}
                 it = self.update_item(c, a['item_id'], worker, 'publication failed', publication='failed')
                 self.notify(c, f'pub-failed:{attempt_id}', f"Instagram rejected {it['name']} ({it['item_id']}): "
                             f"{str(error)[:300]}. Nothing was published. Tell Bondok to retry when fixed.", it['item_id'])
