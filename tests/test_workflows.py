@@ -226,6 +226,45 @@ class EditorTaskReuse(unittest.TestCase):
         self.assertIsNone(out[0]['json']['taskId'])
         self.assertIn('create_subitem', out[0]['json']['gql']['query'])
 
+    # Cutover finding: v1 had already posted the same instruction to the subitem v2 reuses.
+    ASSET = 'id:BVZcAensggYAAAAAAAFz_w@0165a9644026dc50000000368703f23'
+    V1_TOPAZ = (f'Selected asset: {ASSET} / Amy 2 v3 topaz .mp4; reason: Topaz version confirmation is required\n'
+                'Social delivery: exp#729 / Story\nApply Topaz ... Story must be strictly under 60 seconds')
+
+    def job(self, issue, body='v2 body'):
+        return {'payload': {'item_id': '3267610953', 'source_item_id': '99', 'task_id': None, 'issue_key': issue,
+                            'task_name': 'Social 3267610953 — تجهيز أو استبدال الفيديو', 'body': body}}
+
+    def lookup(self, *texts):
+        return {'data': {'items': [{'id': '99', 'subitems': [
+            {'id': '555', 'name': 'Social 3267610953 — تجهيز أو استبدال الفيديو',
+             'updates': [{'text_body': t} for t in texts]}]}]}}
+
+    def test_same_issue_already_posted_by_v1_is_not_reposted(self):
+        out = run_js(self.js(), self.lookup(self.V1_TOPAZ), {'Each Editor Job': self.job('topaz:' + self.ASSET)})[0]['json']
+        self.assertEqual((out['taskId'], out.get('already')), ('555', True))
+        self.assertNotIn('gql', out)
+
+    def test_identical_v2_body_is_not_reposted(self):
+        out = run_js(self.js(), self.lookup('Social delivery x\nIssue: y'),
+                     {'Each Editor Job': self.job('editor:abc', 'Social delivery x\nIssue: y')})[0]['json']
+        self.assertTrue(out.get('already'))
+
+    def test_new_version_or_new_issue_is_posted(self):
+        other = 'topaz:id:BVZcAensggYAAAAAAAFz_w@0165ffffffffffff000000368703f23'      # editor uploaded a new version
+        self.assertIn('gql', run_js(self.js(), self.lookup(self.V1_TOPAZ), {'Each Editor Job': self.job(other)})[0]['json'])
+        duration = 'story_duration:' + self.ASSET                                     # same file, different problem
+        self.assertIn('gql', run_js(self.js(), self.lookup(self.V1_TOPAZ), {'Each Editor Job': self.job(duration)})[0]['json'])
+        media = 'media:' + self.ASSET + ':h1'                                          # media failures: text must match
+        self.assertIn('gql', run_js(self.js(), self.lookup(self.V1_TOPAZ), {'Each Editor Job': self.job(media)})[0]['json'])
+
+    def test_already_notified_skips_mutation_and_post(self):
+        w = WF['qI1N5VNgpRjnZAKH']['connections']
+        self.assertEqual(w['Editor Task Mutation']['main'][0][0]['node'], 'Editor Already Notified?')
+        told = w['Editor Already Notified?']['main']
+        self.assertEqual(told[0][0]['node'], 'Editor Task — Ack — Input')
+        self.assertEqual(told[1][0]['node'], 'Apply Editor Task')
+
 
 @unittest.skipUnless(NODE, 'node not installed')
 class DropboxErrorText(unittest.TestCase):

@@ -596,7 +596,7 @@ mediaId:$('Preparation Step').item.json.mediaId,url:$json.url}""", on_error='con
     # "Social <itemId> — " name) instead of creating a duplicate.
     e_find_q = f.code('Editor Task Lookup — Query', r"""
 const p=$json.payload;
-return [{json:{queryBody:JSON.stringify({query:'query($id:[ID!]){items(ids:$id){id subitems{id name}}}',variables:{id:[String(p.source_item_id)]}})}}];""")
+return [{json:{queryBody:JSON.stringify({query:'query($id:[ID!]){items(ids:$id){id subitems{id name updates(limit:25){text_body}}}}',variables:{id:[String(p.source_item_id)]}})}}];""")
     e_find = f.monday('Find Existing Editor Task', '$json.queryBody')
     e_mut = f.code('Editor Task Mutation', r"""
 if($json.errors)throw new Error(JSON.stringify($json.errors));
@@ -604,9 +604,20 @@ const p=$('Each Editor Job').item.json.payload;
 const subs=$json.data?.items?.[0]?.subitems||[];
 const prefix='Social '+p.item_id+' — ';
 const existing=p.task_id||(subs.find(s=>String(s.name||'').startsWith(prefix))||{}).id||null;
+// Already told (v1 or v2): an update on this subitem names the same file version for the same kind of
+// issue, or carries the same text. Record the task without posting again or touching its status.
+const ups=((existing&&subs.find(s=>String(s.id)===String(existing)))||{}).updates||[];
+const m=String(p.issue_key||'').match(/^(topaz|story_duration|media):(id:[^@\s]+@[0-9a-f]+)/);
+const kind=m?m[1]:null,asset=m?m[2]:null;
+const norm=t=>String(t||'').replace(/\s+/g,' ').trim();
+const reason=t=>(String(t||'').match(/(?:reason|Issue):\s*([^\n]*)/)||[])[1]||'';
+const sameKind=t=>kind==='topaz'?/topaz/i.test(reason(t)):kind==='story_duration'?(!/topaz/i.test(reason(t))&&/مدة الستوري|duration|ثانية|seconds/i.test(reason(t))):false;
+const already=!!existing&&ups.some(u=>norm(u.text_body)===norm(p.body)||(asset&&String(u.text_body||'').includes(asset)&&sameKind(u.text_body)));
+if(already)return [{json:{taskId:String(existing),already:true,data:{alreadyNotified:true}}}];
 if(existing)return [{json:{taskId:String(existing),gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:"status",value:$v){id}}',variables:{b:'5091137380',i:String(existing),v:JSON.stringify({label:'Working on it'})}}}}];
 return [{json:{taskId:null,gql:{query:'mutation($p:ID!,$n:String!,$v:JSON!){create_subitem(parent_item_id:$p,item_name:$n,column_values:$v){id}}',variables:{p:String(p.source_item_id),n:p.task_name,v:JSON.stringify({status:{label:'Working on it'}})}}}}];""",
                    on_error='continueErrorOutput')
+    e_told = f.cond('Editor Already Notified?', '$json.already===true')
     e_apply = f.monday('Apply Editor Task', 'JSON.stringify($json.gql)')
     e_body = f.code('Editor Task Update', r"""
 if($json.errors)throw new Error(JSON.stringify($json.errors));
@@ -618,10 +629,14 @@ return [{json:{taskId:String(id),gql:{query:'mutation($i:ID!,$b:String!){create_
     e_ack_in, e_ack = f.helper('Editor Task — Ack', '/v2/outbox/ack', r"""(()=>{
 const ok=!$json.errors&&!$json.error&&!!$json.data;
 let task=null;try{task=$('Editor Task Update').item.json.taskId}catch{}
+if(!task){try{task=$('Editor Task Mutation').item.json.taskId||null}catch{}}
 return {id:$('Each Editor Job').item.json.id,worker:$('Configuration').first().json.runId,ok,
 error:ok?null:JSON.stringify($json.errors||$json.error||'editor task failed').slice(0,400),result:{task_id:task}};})()""", fail=False)
     f.link(e_has, e_find_q, 0)
-    f.chain(e_find_q, e_find, e_mut, e_apply, e_body, e_upd, e_ack_in)
+    f.chain(e_find_q, e_find, e_mut, e_told)
+    f.link(e_told, e_ack_in, 0)
+    f.link(e_told, e_apply, 1)
+    f.chain(e_apply, e_body, e_upd, e_ack_in)
     f.link(e_find, e_ack_in, 1)
     f.link(e_mut, e_ack_in, 1)
     f.link(e_apply, e_ack_in, 1)
