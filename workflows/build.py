@@ -56,6 +56,12 @@ class Flow:
                 n['parameters'] = v
             else:
                 n[k] = v
+        # v1 bug: an object literal ending in '}}' closes the n8n {{ }} expression early, so n8n
+        # fails with "invalid syntax" before any request is sent (Dropbox share links never created).
+        body = n.get('parameters', {}).get('jsonBody')
+        if isinstance(body, str) and "requested_visibility:'public'}})" in body:
+            n['parameters']['jsonBody'] = body.replace("requested_visibility:'public'}})",
+                                                       "requested_visibility:'public'} })")
         return self._add(n)
 
     def code(self, name, js, *, each=False, on_error=None):
@@ -527,8 +533,10 @@ const raw=$json.error;const e=(raw&&typeof raw==='object')?raw:{};
 // n8n error outputs may carry the message as a plain string; keep it.
 const msg=String((typeof raw==='string'&&raw)||e.message||e.description||$json.error_summary||$json.message||'Dropbox request failed');
 const code=String(e.httpCode||e.status||(msg.match(/\b([45]\d\d)\b/)||[])[1]||'');
-const infra=/^5|^429/.test(code)||/ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|timeout|socket hang up/i.test(msg);
-return [{json:{error:msg.slice(0,400),errorKind:infra?'infra':'config'}}];""")
+// Only a Dropbox 4xx answer says something about the folder/file; anything else (5xx, 429, network,
+// or an n8n-internal failure with no HTTP status) is a system problem and must not block the content.
+const config=/^4/.test(code)&&code!=='429';
+return [{json:{error:msg.slice(0,400),errorKind:config?'config':'infra'}}];""")
     for n in ('Create Project Folder', 'Check Folder Creation', 'Share New Folder', 'Find Folder Link',
               'New Folder Ready', 'Folder Metadata', 'Plan Listing', 'List Files', 'Collect Files', 'Candidates',
               'Existing File Link', 'File Share Context', 'Share Final File', 'New File Link', sel):

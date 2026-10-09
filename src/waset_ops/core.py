@@ -494,6 +494,10 @@ class CoreMixin:
     def check_bindings(self, c, p) -> None:
         if p['expires'] < self.now():
             raise Rejected('This proposal expired; ask for an updated one', 'expired')
+        if p['kind'] == 'approve_caption':
+            # Bound to the exact draft and text instead (checked in execute_approve_caption): system
+            # updates such as readiness or media changes bump the item version but do not touch the caption.
+            return
         for b in loads(p['bindings'], []):
             it = self.item(c, b['item_id'])
             res = self.reservation(c, b['item_id'])

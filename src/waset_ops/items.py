@@ -758,6 +758,11 @@ class ItemsMixin:
         if recheck:
             c.execute("UPDATE ops_checks SET state='running', updated=? WHERE item_id=? AND kind='media'",
                       (self.now(), it['item_id']))
+        if it['readiness'] == 'blocked' and (it['block_key'] or '').startswith(('config:', 'editor:')):
+            # The block came from this step (folder/file/share problem) and the file now resolves:
+            # the problem is gone. Other blocks (Topaz, duration, media, code, collab) keep their own rules.
+            it = self.update_item(c, it['item_id'], cmd.actor, 'source problem resolved', readiness='checking',
+                                  block_kind=None, block_reason=None, block_key=None)
         if it['readiness'] == 'ready' and not changed and not recheck:
             return {'next': 'none', 'unchanged': True}
         if it['readiness'] == 'blocked' and not changed and not recheck and it['block_kind'] != 'infra':

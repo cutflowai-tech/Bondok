@@ -490,6 +490,77 @@ class Scenario22Outage(OpsCase):
         self.assertTrue((self.dir / 'broken' / 'errors.log').read_text().strip())
 
 
+class SourceProblemRecovery(OpsCase):
+    """Cutover finding: a Dropbox share failure blocked items permanently, even after the file resolved."""
+
+    def test_resolved_source_problem_unblocks_same_file(self):
+        self.observe(monday_item('195', fmt='Story', code='LIP12'))
+        self.select('195')                                  # file known before the failure
+        r = self.wf1('prep_source', '195', error='Dropbox request failed', error_kind='config')
+        self.assertEqual(r['blocked'], 'config')
+        self.assertEqual(self.item('195')['readiness'], 'blocked')
+        r = self.select('195')                              # same file now resolves with a link
+        self.assertNotEqual(r.get('unchanged'), True)
+        it = self.item('195')
+        self.assertNotEqual(it['block_reason'], 'Dropbox request failed')
+        self.assertEqual(r['next'], 'preflight')            # normal checks resume (Story duration)
+
+    def test_other_blocks_are_not_cleared_by_source_success(self):
+        self.observe(monday_item('196', fmt='Story', code='LIP12'))
+        self.select('196')
+        self.duration('196', 75.0)                          # Story too long: content block on this asset
+        self.assertEqual(self.item('196')['block_kind'], 'content')
+        r = self.select('196')
+        self.assertTrue(r.get('unchanged'))
+        self.assertEqual(self.item('196')['block_kind'], 'content')
+
+
+class CaptionDraftApproval(OpsCase):
+    """Cutover finding: WF1 drafts were bound to an item version the system itself bumped, so the owner's
+    approval could never execute."""
+
+    TAGS = ' '.join('#tag' + str(i) for i in range(12))
+    TEXT = 'Golden hour on the water, DM us to book. 🌅\n\n' + TAGS
+
+    def draft(self, iid, h='h1', text=TEXT):
+        return self.ops.submit(Command(self.rid('draft'), 'caption_draft', 'service:wf1', 'service:wf1', iid,
+                                       {'input_hash': h, 'text': text, 'model': 'm'}))
+
+    def approve(self, pid):
+        return self.ops.submit(owner_cmd(self.rid('ok'), 'approve_proposal', None, proposal_id=pid))
+
+    def test_approval_survives_system_updates(self):
+        self.observe(monday_item('197', fmt='Post', code='LIP12'))
+        pid = self.draft('197')['proposal_id']
+        self.wf1('prep_source', '197', error='Dropbox request failed', error_kind='config')   # version bump
+        self.select('197')                                                                   # another bump
+        r = self.approve(pid)
+        self.assertEqual(r['state'], 'completed', r)
+        it = self.item('197')
+        self.assertEqual((it['caption'], it['caption_state']), (self.TEXT, 'approved'))
+
+    def test_approval_rejected_after_caption_changed(self):
+        self.observe(monday_item('198', fmt='Post', code='LIP12'))
+        pid = self.draft('198')['proposal_id']
+        self.ops.submit(owner_cmd(self.rid('cap'), 'update_caption', '198', text='Owner wrote this one. ✨\n\n#reel'))
+        r = self.approve(pid)
+        self.assertEqual((r['state'], r['code']), ('rejected', 'stale'))
+        self.assertEqual(self.item('198')['caption'], 'Owner wrote this one. ✨\n\n#reel')
+
+    def test_newer_draft_supersedes_older(self):
+        self.observe(monday_item('199', fmt='Post', code='LIP12'))
+        old = self.draft('199', 'h1')['proposal_id']
+        new = self.draft('199', 'h2', 'Second take, DM us. 🎬\n\n' + self.TAGS)['proposal_id']
+        self.assertEqual(self.approve(old)['code'], 'stale')
+        self.assertEqual(self.approve(new)['state'], 'completed')
+
+    def test_still_expires(self):
+        self.observe(monday_item('200', fmt='Post', code='LIP12'))
+        pid = self.draft('200')['proposal_id']
+        self.clock.advance(31 * 60)
+        self.assertEqual(self.approve(pid)['code'], 'expired')
+
+
 class Scenario23ZeroRow(OpsCase):
     def test_retired_commit_and_normalization(self):
         self.assertEqual(rules.iso('2026-10-12T21:00:00+03:00'), rules.iso('2026-10-12T18:00:00Z'))

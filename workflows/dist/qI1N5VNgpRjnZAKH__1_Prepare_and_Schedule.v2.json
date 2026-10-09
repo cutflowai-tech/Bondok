@@ -1168,7 +1168,7 @@
     "sendBody": true,
     "contentType": "json",
     "specifyBody": "json",
-    "jsonBody": "={{ JSON.stringify({path:$json.folderPath,settings:{requested_visibility:'public'}}) }}"
+    "jsonBody": "={{ JSON.stringify({path:$json.folderPath,settings:{requested_visibility:'public'} }) }}"
    },
    "onError": "continueErrorOutput",
    "credentials": {
@@ -1533,7 +1533,7 @@
     "sendBody": true,
     "contentType": "json",
     "specifyBody": "json",
-    "jsonBody": "={{ JSON.stringify({path:$json.file.path,settings:{requested_visibility:'public'}}) }}"
+    "jsonBody": "={{ JSON.stringify({path:$json.file.path,settings:{requested_visibility:'public'} }) }}"
    },
    "onError": "continueErrorOutput",
    "credentials": {
@@ -1612,7 +1612,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const raw=$json.error;const e=(raw&&typeof raw==='object')?raw:{};\n// n8n error outputs may carry the message as a plain string; keep it.\nconst msg=String((typeof raw==='string'&&raw)||e.message||e.description||$json.error_summary||$json.message||'Dropbox request failed');\nconst code=String(e.httpCode||e.status||(msg.match(/\\b([45]\\d\\d)\\b/)||[])[1]||'');\nconst infra=/^5|^429/.test(code)||/ETIMEDOUT|ECONNRESET|ENOTFOUND|EAI_AGAIN|timeout|socket hang up/i.test(msg);\nreturn [{json:{error:msg.slice(0,400),errorKind:infra?'infra':'config'}}];"
+    "jsCode": "const raw=$json.error;const e=(raw&&typeof raw==='object')?raw:{};\n// n8n error outputs may carry the message as a plain string; keep it.\nconst msg=String((typeof raw==='string'&&raw)||e.message||e.description||$json.error_summary||$json.message||'Dropbox request failed');\nconst code=String(e.httpCode||e.status||(msg.match(/\\b([45]\\d\\d)\\b/)||[])[1]||'');\n// Only a Dropbox 4xx answer says something about the folder/file; anything else (5xx, 429, network,\n// or an n8n-internal failure with no HTTP status) is a system problem and must not block the content.\nconst config=/^4/.test(code)&&code!=='429';\nreturn [{json:{error:msg.slice(0,400),errorKind:config?'config':'infra'}}];"
    },
    "id": "dc798626-db84-58c5-8afa-d91119d55ec9",
    "position": [
@@ -1832,7 +1832,7 @@
     "sendBody": true,
     "contentType": "json",
     "specifyBody": "json",
-    "jsonBody": "={{ JSON.stringify({path:$json.path_lower,settings:{requested_visibility:'public'}}) }}"
+    "jsonBody": "={{ JSON.stringify({path:$json.path_lower,settings:{requested_visibility:'public'} }) }}"
    },
    "position": [
     2080,

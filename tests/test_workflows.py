@@ -240,3 +240,51 @@ class DropboxErrorText(unittest.TestCase):
         self.assertEqual(out['errorKind'], 'config')
         out = run_js(self.js(), {'error': 'Request failed with status code 503'})[0]['json']
         self.assertEqual(out['errorKind'], 'infra')
+
+    def test_internal_failure_without_status_does_not_block_content(self):
+        # n8n's own "invalid syntax" (cutover finding) must never be blamed on the folder or the editor.
+        for err in ('invalid syntax', {'message': 'invalid syntax'}, 'socket hang up', '429 - rate limited'):
+            out = run_js(self.js(), {'error': err})[0]['json']
+            self.assertEqual(out['errorKind'], 'infra', err)
+        self.assertEqual(run_js(self.js(), {'error': {'message': 'not found', 'httpCode': '409'}})[0]['json']['errorKind'],
+                         'config')
+
+
+@unittest.skipUnless(NODE, 'node not installed')
+class ExpressionSyntax(unittest.TestCase):
+    """Every {{ }} segment must compile as n8n splits it (first '}}' closes the expression)."""
+
+    def segments(self, w):
+        def strings(o):
+            if isinstance(o, dict):
+                for v in o.values():
+                    yield from strings(v)
+            elif isinstance(o, list):
+                for v in o:
+                    yield from strings(v)
+            elif isinstance(o, str) and o.startswith('=') and '{{' in o:
+                yield o
+        for n in w['nodes']:
+            for s in strings(n.get('parameters', {})):
+                rest = s[1:]
+                while '{{' in rest:
+                    a = rest.index('{{')
+                    b = rest.find('}}', a + 2)
+                    yield n['name'], rest[a + 2:b if b >= 0 else None]
+                    rest = rest[b + 2:] if b >= 0 else ''
+
+    def test_all_expressions_compile(self):
+        segs = [[wid, name, c] for wid, w in WF.items() for name, c in self.segments(w)]
+        js = ("const s=JSON.parse(require('fs').readFileSync(0,'utf8'));const bad=[];"
+              "for(const [w,n,c] of s){try{new Function('return ('+c+')')}catch(e){bad.push(w+' / '+n+': '+e.message)}}"
+              "process.stdout.write(JSON.stringify(bad))")
+        p = subprocess.run([NODE, '-e', js], input=json.dumps(segs), capture_output=True, text=True, timeout=30)
+        self.assertEqual(json.loads(p.stdout), [])
+        self.assertGreater(len(segs), 50)
+
+    def test_dropbox_share_bodies_fixed(self):
+        nodes = {n['name']: n for n in WF['qI1N5VNgpRjnZAKH']['nodes']}
+        for name in ('Share New Folder', 'Share Final File', 'Share Verified Video'):
+            body = nodes[name]['parameters']['jsonBody']
+            self.assertNotIn("'public'}})", body)
+            self.assertIn("requested_visibility:'public'} })", body)

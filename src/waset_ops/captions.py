@@ -56,6 +56,8 @@ class CaptionMixin:
             self.notify(c, f"draft-invalid:{a['input_hash'][:12]}", f"Caption draft for {it['name']} "
                         f"({it['item_id']}) failed validation ({bad}); it was not used.", it['item_id'])
             return {'draft_state': 'invalid', 'reason': bad}
+        c.execute("UPDATE ops_caption_drafts SET state='superseded', updated=? WHERE item_id=? AND state='pending_approval'",
+                  (now, it['item_id']))
         p = self.create_proposal(c, 'approve_caption', [it['item_id']],
                                  {'item_id': it['item_id'], 'input_hash': a['input_hash'], 'text': text},
                                  f"Caption draft for {it['name']} ({it['item_id']}):\n\n{text}", cmd.actor)
@@ -70,6 +72,9 @@ class CaptionMixin:
         it = self.item(c, payload['item_id'])
         if not d or d['state'] != 'pending_approval' or d['text'] != payload['text']:
             raise Rejected('Draft was superseded; nothing approved', 'stale')
+        if it['caption_state'] != 'pending_approval' or it['format'] != 'Post':
+            # The caption or format changed since the draft (board edit, Bondok, format change).
+            raise Rejected('The caption or format changed after this draft; nothing approved', 'stale')
         self._guard_mutable(c, it, allow_paused=True)
         c.execute("UPDATE ops_caption_drafts SET state='approved', updated=? WHERE input_hash=?",
                   (self.now(), payload['input_hash']))
