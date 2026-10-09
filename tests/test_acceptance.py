@@ -1074,3 +1074,65 @@ class PublishingAuditCritical(OpsCase):
         self.assertIsNotNone(res)
         self.clock.set(rules.instant(res['slot']) + timedelta(seconds=30))
         self.assertTrue(self.ops.claim('407', 'w2')['claimed'])
+
+
+class PublishingAuditHigh(OpsCase):
+    """Audit P3/P4/P5 and unclearable holds."""
+
+    def test_container_errors_stop_after_three_attempts_and_notify(self):
+        self.make_ready('410', 'Story')
+        self.clock.set(rules.instant(self.res('410')['slot']) + timedelta(seconds=30))
+        containers = 0
+        for cycle in range(130):
+            w = 'wf2-%d' % cycle
+            if not [x for x in self.ops.due(w)['work'] if x['kind'] == 'publish']:
+                break
+            cl = self.ops.claim('410', w)
+            if not cl.get('claimed'):
+                break
+            self.ops.container(cl['attempt_id'], w, cl['fence'], 'C%d' % cycle)
+            containers += 1
+            self.ops.abandon(cl['attempt_id'], w, cl['fence'], 'Container status ERROR after 2 polls')
+            self.clock.advance(60)
+        self.assertEqual(containers, 3)
+        it = self.item('410')
+        self.assertEqual(json.loads(it['hold'])['kind'], 'publish_retry_limit')
+        self.assertIsNone(self.res('410'))
+        self.assertTrue(any('failed 3 times' in o['payload'] for o in self.outbox('slack')))
+        r = self.ops.submit(owner_cmd('res410', 'resume', '410', explicit=True))
+        self.assertTrue(r['resumed'], r)
+        self.assertIsNotNone(self.res('410'))
+
+    def test_ready_item_rescheduled_after_dead_pre_commit_attempt(self):
+        self.make_ready('411', 'Story')
+        self.clock.set(rules.instant(self.res('411')['slot']) + timedelta(seconds=30))
+        self.ops.claim('411', 'w')                                    # worker dies right after claim
+        self.ops.submit(owner_cmd('p', 'pause', '411'))
+        self.clock.advance(300)
+        self.ops.submit(owner_cmd('r', 'resume', '411', explicit=True))
+        self.clock.advance(3 * 3600)
+        self.ops.due('w2')                                            # abandons the dead attempt
+        self.assertIsNotNone(self.res('411'))
+
+    def test_unverifiable_source_keeps_verification_and_slot(self):
+        self.make_ready('412', 'Story')
+        slot = self.res('412')['slot']
+        self.clock.set(rules.instant(slot) + timedelta(seconds=30))
+        cl = self.ops.claim('412', 'w')
+        self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
+        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], source_asset='unverifiable', container_status='FINISHED')
+        self.assertFalse(r['committed'])
+        it = self.item('412')
+        self.assertEqual((it['readiness'], self.res('412')['slot']), ('ready', slot))
+        self.assertIsNotNone(it['verification_id'])
+        self.assertFalse(any('changed after it was verified' in o['payload'] for o in self.outbox('slack')))
+
+    def test_rejected_edit_hold_on_active_item_cleared_by_resume(self):
+        self.make_ready('413', 'Story')
+        with self.ops.store.tx() as c:
+            self.ops.update_item(c, '413', 'monday', 'x', hold=json.dumps({'kind': 'rejected_edit', 'reason': 'x'}))
+            self.ops.release(c, self.ops.item(c, '413'), 'x')
+        r = self.ops.submit(owner_cmd('r413', 'resume', '413', explicit=True))
+        self.assertTrue(r['resumed'], r)
+        self.assertIsNone(self.item('413')['hold'])
+        self.assertIsNotNone(self.res('413'))

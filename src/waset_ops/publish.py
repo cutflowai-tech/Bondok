@@ -20,6 +20,7 @@ LEASE = 180                    # DEFAULT: deployed publish lease (seconds)
 COMMIT_LEASE = 900             # time allowed to deliver the result after commit
 RECONCILE_INTERVALS = (300, 600, 900, 1800, 3600, 7200)
 MAX_RECONCILE_CHECKS = 12
+MAX_ATTEMPTS_PER_SLOT = 3      # each claim creates an Instagram container; stop retrying a failing slot
 
 
 class PublishMixin:
@@ -38,6 +39,7 @@ class PublishMixin:
                 if rules.instant(a['slot']) + rules.LATE_WINDOW < now_dt:
                     c.execute("UPDATE ops_attempts SET stage='abandoned', updated=? WHERE id=?", (now, a['id']))
                     audit(c, a['item_id'], 'attempt_abandoned', worker, {'attempt': a['id'], 'why': 'window passed'})
+                    self.evaluate(c, a['item_id'], worker)     # a ready item gets its next slot (audit P4)
                     self.project(c, a['item_id'])
             rows = c.execute('SELECT r.*, i.publication, i.owner_state FROM ops_reservations r JOIN ops_items i '
                              'USING(item_id) WHERE r.slot<=? ORDER BY r.slot', (rules.iso(now_dt),)).fetchall()
@@ -75,6 +77,21 @@ class PublishMixin:
                 self.update_item(c, it['item_id'], worker, 'v1 receipt hold',
                                  hold=dumps({'kind': 'external_posted', 'reason': reason}))
                 self.notify(c, f"v1-receipt:{it['item_id']}", f"Held {it['name']} ({it['item_id']}): {reason}",
+                            it['item_id'])
+                return {'claimed': False, 'reason': reason, 'held': True}
+            tries = c.execute("SELECT COUNT(*) FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned'",
+                              (str(item_id), res['slot'])).fetchone()[0]
+            if tries >= MAX_ATTEMPTS_PER_SLOT and not self.active_attempt(c, item_id):
+                # Container errors or commit refusals repeat every minute, each with a new Instagram container.
+                last = c.execute("SELECT evidence FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned' "
+                                 'ORDER BY updated DESC LIMIT 1', (str(item_id), res['slot'])).fetchone()
+                why = str((loads(last['evidence'], {}) or {}) if last else '')[:300]
+                reason = (f'Publication failed {tries} times at {rules.display(rules.instant(res["slot"]))} '
+                          f'({why}). Nothing was published. Tell Bondok to resume it when it should be retried.')
+                self.release(c, it, 'publish retry limit')
+                self.update_item(c, it['item_id'], worker, 'publish retry limit',
+                                 hold=dumps({'kind': 'publish_retry_limit', 'reason': reason}))
+                self.notify(c, f"retry-limit:{it['item_id']}:{res['slot']}", f"{it['name']} ({it['item_id']}): {reason}",
                             it['item_id'])
                 return {'claimed': False, 'reason': reason, 'held': True}
             slot = rules.instant(res['slot'])
@@ -158,6 +175,7 @@ class PublishMixin:
             c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
                       (dumps({'abandoned': str(reason)[:300]}), self.now(), attempt_id))
             audit(c, a['item_id'], 'attempt_abandoned', worker, {'attempt': attempt_id, 'why': str(reason)[:300]})
+            self.evaluate(c, a['item_id'], worker)
             self.project(c, a['item_id'])
             return {'abandoned': True}
 
@@ -189,7 +207,12 @@ class PublishMixin:
                 problems.append('reservation changed after the claim')
             elif self.payload_fp(c, it) != a['payload_fp']:
                 problems.append('publication payload changed after the claim')
-            if source_asset is not None and source_asset != it['asset_key']:
+            unverifiable = source_asset == 'unverifiable'
+            changed = source_asset is not None and not unverifiable and source_asset != it['asset_key']
+            if unverifiable:
+                # Dropbox could not be read: refuse this commit only; verification and slot stay (audit P5).
+                problems.append('Dropbox file version could not be checked (temporary)')
+            if changed:
                 problems.append('Dropbox file version changed after verification')
             if self.verification_problem(c, it):
                 problems.append(self.verification_problem(c, it))
@@ -200,7 +223,7 @@ class PublishMixin:
                 c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
                           (dumps({'refused': problems}), now, attempt_id))
                 audit(c, a['item_id'], 'commit_refused', worker, {'attempt': attempt_id, 'problems': problems})
-                if source_asset is not None and source_asset != it['asset_key']:
+                if changed:
                     self.request_check(c, it['item_id'], worker, 'source_changed_before_publish')
                     # The verified media no longer matches Dropbox: drop the authorization so the next run
                     # does not claim again (each claim creates a new Instagram container).

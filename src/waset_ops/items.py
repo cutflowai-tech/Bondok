@@ -13,6 +13,7 @@ from .db import audit, dumps, loads
 
 PROTECTED_PUBLICATION = ('published', 'outcome_unknown', 'in_progress')
 RELIST_READY_SECONDS = 30 * 60          # metadata-only revision check for ready items
+RESUMABLE_HOLDS = ('resume', 'rejected_edit', 'publish_retry_limit')
 BACKOFF_STEPS = (600, 1200, 2400, 3600) # waiting/blocked items: fair, bounded backoff
 
 
@@ -383,11 +384,14 @@ class ItemsMixin:
 
     def op_resume(self, c, cmd: Command):
         it = self.item(c, cmd.item_id)
-        if it['owner_state'] == 'active':
-            return {'resumed': False, 'message': 'Item is not paused or skipped'}
         hold = loads(it['hold'], None)
+        clearable = bool(hold and hold.get('kind') in RESUMABLE_HOLDS)
+        if it['owner_state'] == 'active' and not clearable:
+            return {'resumed': False, 'message': 'Item is not paused or skipped'}
+        # Resume also clears holds that only wait for the owner to say "continue" (audit: a rejected board
+        # edit or the publish retry limit on an active item could otherwise never be cleared).
         self.update_item(c, it['item_id'], cmd.actor, 'resume', owner_state='active', owner_state_reason=None,
-                         hold=None if hold and hold.get('kind') in ('resume', 'rejected_edit') else it['hold'])
+                         hold=None if clearable else it['hold'])
         out = self.try_schedule(c, it['item_id'], cmd.actor)
         return {'resumed': True, **out}
 
