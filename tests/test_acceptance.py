@@ -1601,3 +1601,17 @@ class OwnerJourneySequence(OpsCase):
         self.ops.repair()
         self.assertEqual(self.ops.due('wf2-d')['work'], [])
         self.assertEqual(self.published_count(iid), 1)
+
+
+class CaptionBriefRequests(OpsCase):
+    """Audit (performance): no client-brief fetch every cycle after a rejected or failed draft."""
+
+    def test_brief_rechecked_at_most_daily_after_draft(self):
+        self.observe(monday_item('995', fmt='Post'))
+        q = lambda: [w for w in self.ops.work_queue(limit=50) if w['item_id'] == '995'][0]['needs_caption']
+        self.assertTrue(q())
+        self.wf1('caption_draft', '995', input_hash='h995', text=None, model='m', error='model down')
+        self.clock.advance(3600)
+        self.assertFalse(q())
+        self.clock.advance(86400)
+        self.assertTrue(q())

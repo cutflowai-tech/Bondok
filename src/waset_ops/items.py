@@ -739,9 +739,12 @@ class ItemsMixin:
                             'waiting_since': it['waiting_since'] or it['created'], 'format': it['format'],
                             'code': it['code'], 'name': it['name'], 'source_item_id': it['source_item_id'],
                             'folder_url': it['folder_url'], 'file_url': it['source_override_url'] or it['file_url'],
+                            # A brief is fetched (Monday request) only when a draft could follow: never while one
+                            # waits, and after a rejected/failed draft at most daily (a changed brief) (audit perf).
                             'needs_caption': it['format'] == 'Post' and it['caption_state'] in ('missing',) and
                                              not c.execute("SELECT 1 FROM ops_caption_drafts WHERE item_id=? AND "
-                                                           "state IN ('pending_approval')", (it['item_id'],)).fetchone(),
+                                                           "(state='pending_approval' OR updated>?)",
+                                                           (it['item_id'], now - 86400)).fetchone(),
                             'version': it['version']})
         urgent = [x for x in out if x['priority'] == 0]
         rest = [x for x in out if x['priority'] == 1]
