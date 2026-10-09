@@ -10,22 +10,24 @@ Nothing is DEPLOYED or ACTIVE. Production is unchanged by this work.
   `release/<sha>/` with `MANIFEST.json` (sha256 per file). Raw evidence (DB snapshot, board snapshot, live workflow
   JSON with credential ids) is in gitignored `.local-snapshots/2026-10-09/` on the Mac only.
 
-## Component status
+## Component status (2026-10-09 ~18:05 UTC)
 | Component | Status |
 |---|---|
-| `waset_ops` handler + helper v2 | IMPLEMENTED, TESTED (3.12, 3.13, 3.14) |
-| WF1/WF2/WF3 v2 exports | IMPLEMENTED, contract-TESTED; not imported into n8n |
-| Bondok v2 service | IMPLEMENTED, TESTED offline; deployed Bondok is still the old version |
-| Migration/rollback | REHEARSED on isolated copies of live data |
-| Live v1 system | **Recovered** by Change Set A (2026-10-09 17:39 UTC). WF2 + WF3 active (v1); **WF1 deactivated** until the v2 cutover |
-| Change Set A | **DEPLOYED** — ACL entries for uid 1000 on the SQLite sidecars + default ACL on the data dir; WF1 unpublished |
+| Helper v2 + `waset_ops` (data volume) | **DEPLOYED, ACTIVE** — release `60bbab0` (= `f5438c1`), 12/12 files hash-verified; v1 kept as `helper.v1.py` |
+| Operational DB schema v1 (additive) | **DEPLOYED** — 16 `ops_*` tables; legacy rows unchanged; integrity ok |
+| WF2 Publish When Due v2 | **DEPLOYED, ACTIVE** — active version `4c6e30a8…`; runs every minute, empty queue ends without Monday calls |
+| WF3 Schedule Supervisor v2 | **DEPLOYED, ACTIVE** — active version `b037b023…`; first run 18:05 UTC |
+| WF1 Prepare & Schedule v2 | **IMPORTED (inactive), NOT ACTIVE** — imported version `36b9fcb7…` (release `60bbab0`). Held: cutover gap found (duplicate editor subitems). Fix in `95a5868` (tested), needs owner approval to import + activate |
+| Bondok v2 service | **DEPLOYED, ACTIVE** — 17/17 files hash-verified; `.env` +2 authorized keys; started 17:59:19 UTC, Slack identity/channel checks passed, Socket Mode connected, ops DB read/write verified in-service |
+| Change Set A | DEPLOYED (17:39 UTC) |
+| Backup | `/root/waset-v2-backup-20261009T175434Z/` (DB, v1 helper, ACLs, Bondok tarball, unit, v1 workflow JSON) |
 
 ## Authorization boundary
 Granted: read-only inspection, local development, isolated tests, repository pushes (repo is public by owner decision);
 **Change Set A with WF1 paused** (executed); adding `SLACK_BOT_USER_ID`/`SLACK_APP_ID` to the production `.env`
 **only during an approved v2 deployment**.
-Not granted: **Change Set B** (v2 cutover). Final checklist: `docs/CHANGE_SET_B_CHECKLIST.md`.
-Keep WF1 inactive until the cutover.
+**Change Set B authorized** (2026-10-09) and executed through step 8; WF1 activation held (see above).
+Not authorized: importing/activating the patched WF1 (`95a5868`), any change to the Instagram token, approving captions on the owner's behalf.
 
 ## Known blockers / open items
 1. Outage repaired by Change Set A. Rollback record on the server: `/root/waset-changeset-A-20261009T173954Z/` (ACL before/after, stat, DB sha256).
