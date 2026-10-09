@@ -6,7 +6,12 @@ Server paths below are the existing production paths (they are not moved).
 * Data volume (n8n `/home/node/.n8n-files/waset-social`, host `/var/lib/docker/volumes/waset_social_data/_data`, Bondok `/var/lib/bondok/pipeline`)
 * Bondok code `/opt/waset-bondok` (service `bondok.service`, user `bondok`), state `/var/lib/bondok/bondok.sqlite`
 
-## Change set A — repair the current outage (small, independent)
+## Change set A — repair the current outage (small, independent) — APPLIED 2026-10-09 17:39 UTC
+
+Executed with WF1 deactivated first (owner authorization). Result: WF2 execution 52015 (17:40:04 UTC) succeeded —
+first success since ~15:00 UTC; due queue empty; no claim/container/publish; data counts unchanged; the SQLite
+sidecars were checkpointed and removed by the next clean close. Rollback record kept on the server (root-only).
+Note: BusyBox `test -w` ignores ACLs; use `os.access()`/open checks when verifying.
 
 **Problem (INFERRED, strong evidence):** `state.sqlite-shm`/`-wal` were created by Bondok (uid 999) and are not writable by
 n8n's uid 1000, so every helper call fails (see ACCESS_AND_BASELINE.md).
