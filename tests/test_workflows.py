@@ -309,6 +309,17 @@ class DropboxErrorText(unittest.TestCase):
         self.assertEqual(run_js(self.js(), {'error': {'message': 'not found', 'httpCode': '409'}})[0]['json']['errorKind'],
                          'config')
 
+    def test_credentials_and_numbers_in_text_are_not_content_problems(self):
+        # Audit MP4: a 401 (expired token) or a number inside free text blocked items and released slots.
+        for err in ({'httpCode': '401', 'message': 'Authorization failed', 'description': '{"error_summary": "expired_access_token/"}'},
+                    '401 - {"error_summary":"invalid_access_token/"}', 'list_folder failed for "Calli 403": other/...',
+                    {'message': 'connect ETIMEDOUT 162.125.1.1:443'}, {'httpCode': '408', 'message': 'timeout'}):
+            self.assertEqual(run_js(self.js(), {'error': err})[0]['json']['errorKind'], 'infra', err)
+        out = run_js(self.js(), {'error': {'httpCode': '409', 'message': 'Conflict',
+                                           'description': '{"error_summary": "path/not_found/.."}'}})[0]['json']
+        self.assertEqual(out['errorKind'], 'config')
+        self.assertIn('folder or file was not found', out['error'])
+
 
 @unittest.skipUnless(NODE, 'node not installed')
 class ExpressionSyntax(unittest.TestCase):

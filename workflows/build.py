@@ -532,12 +532,17 @@ error:$json.error?String($json.error.message||$json.error).slice(0,300):(t?null:
 const raw=$json.error;const e=(raw&&typeof raw==='object')?raw:{};
 // n8n error outputs may carry the message as a plain string; keep it.
 const msg=String((typeof raw==='string'&&raw)||e.message||e.description||$json.error_summary||$json.message||'Dropbox request failed');
-const code=String(e.httpCode||e.status||(msg.match(/\b([45]\d\d)\b/)||[])[1]||'');
-// Only a Dropbox 4xx answer says something about the folder/file; anything else (5xx, 429, network,
-// or an n8n-internal failure with no HTTP status) is a system problem and must not block the content.
-const config=/^4/.test(code)&&code!=='429';
+// Status from structured HTTP fields or n8n's "409 - {...}" / "status code 503" forms only: a number
+// elsewhere in free text (an item name like "Calli 403", an address) says nothing (audit MP4).
+const code=String(e.httpCode||e.statusCode||e.status||(e.response&&e.response.status)||$json.statusCode||
+  (msg.match(/^\s*([45]\d\d) - /)||msg.match(/status code ([45]\d\d)\b/)||[])[1]||'');
+const blob=msg+' '+String(e.description||'');
 // Owner-readable text instead of raw API JSON; the Dropbox error tag is kept in brackets.
-const tag=String(e.error_summary||$json.error_summary||(msg.match(/"error_summary"\s*:\s*"([^"]+)"/)||[])[1]||'').replace(/\/+(\.\.)?$/,'');
+const tag=String(e.error_summary||$json.error_summary||(blob.match(/"error_summary"\s*:\s*"([^"]+)"/)||[])[1]||'').replace(/\/+(\.\.)?$/,'');
+// Only a Dropbox 4xx about the request itself blocks the content. 401/403 (expired or revoked token,
+// app permission) affect every item, 408/429 are temporary, and no status at all is a system problem.
+const credential=(code==='401'||code==='403')&&!/^shared_link/.test(tag);
+const config=/^4/.test(code)&&!['408','429'].includes(code)&&!credential;
 const known={'shared_link_not_found':'The Dropbox link on the board no longer works. Replace the folder link on the board.',
 'shared_link_access_denied':'Dropbox refused access to the link on the board. Check the link\'s sharing settings.',
 'path/not_found':'The Dropbox folder or file was not found. Check the folder link on the board.',
