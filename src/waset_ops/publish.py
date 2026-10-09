@@ -190,6 +190,15 @@ class PublishMixin:
                 audit(c, a['item_id'], 'commit_refused', worker, {'attempt': attempt_id, 'problems': problems})
                 if source_asset is not None and source_asset != it['asset_key']:
                     self.request_check(c, it['item_id'], worker, 'source_changed_before_publish')
+                    # The verified media no longer matches Dropbox: drop the authorization so the next run
+                    # does not claim again (each claim creates a new Instagram container).
+                    self.release(c, it, 'source changed before publish', keep_request=True)
+                    self.update_item(c, it['item_id'], worker, 'source changed before publish', readiness='checking',
+                                     verification_id=None)
+                    self.notify(c, 'source-changed:' + attempt_id, f"Publication of {it['name']} ({it['item_id']}) at "
+                                f"{rules.display(slot)} was stopped: the Dropbox file changed after it was verified. "
+                                'Nothing was published; the new version will be checked before it is scheduled again.',
+                                it['item_id'])
                 self.evaluate(c, a['item_id'], worker)
                 self.project(c, a['item_id'])
                 return {'committed': False, 'reasons': problems}

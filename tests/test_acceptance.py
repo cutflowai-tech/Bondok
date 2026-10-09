@@ -95,6 +95,16 @@ class Scenario03FileChange(OpsCase):
                             container_status='FINISHED')
         self.assertFalse(r['committed'])
         self.assertIn('Dropbox file version changed after verification', r['reasons'])
+        # Replay finding: the authorization must be dropped, otherwise WF2 re-claims every minute and
+        # creates a new Instagram container each time.
+        self.assertIsNone(self.res('21'))
+        it = self.item('21')
+        self.assertEqual((it['readiness'], it['verification_id']), ('checking', None))
+        self.clock.advance(60)
+        self.assertFalse(self.ops.claim('21', 'w2').get('claimed'))
+        self.assertEqual(self.ops.due('w2')['work'], [])
+        notes = [o for o in self.outbox('slack') if 'Dropbox file changed after it was verified' in o['payload']]
+        self.assertEqual(len(notes), 1)
 
 
 class Scenario04ConflictingSchedulers(OpsCase):
