@@ -519,6 +519,9 @@ class ItemsMixin:
             if asset != it['asset_key']:
                 raise Rejected('Topaz confirmation refers to a different file version than the selected one', 'stale')
             self.update_item(c, it['item_id'], cmd.actor, 'topaz confirmed', topaz_asset=it['asset_key'])
+            obs = loads(self.item(c, it['item_id'])['observed'], {}) or {}
+            obs['_nudge'] = self.now()             # a person acted: prepare it on the next cycle
+            c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
             if cmd.actor_kind != MONDAY:
                 self.write_human(c, self.item(c, it['item_id']), {'topaz': 'Topazed'})
         else:
@@ -670,6 +673,7 @@ class ItemsMixin:
                 chk = checks.get(it['item_id'])
                 requested = chk and chk['state'] == 'requested'
                 last = (loads(it['observed'], {}) or {}).get('_last_prep') or 0
+                requested = requested or ((loads(it['observed'], {}) or {}).get('_nudge') or 0) > last
                 if requested:
                     due = 0
                 elif it['readiness'] == 'ready':
@@ -686,6 +690,7 @@ class ItemsMixin:
                 except rules.RuleError:
                     rot = 'INVALID'
                 out.append({'item_id': it['item_id'], 'rotation': rot, 'priority': 0 if requested else 1, '_last': last,
+                            '_pending': it['readiness'] == 'checking',
                             'waiting_since': it['waiting_since'] or it['created'], 'format': it['format'],
                             'code': it['code'], 'name': it['name'], 'source_item_id': it['source_item_id'],
                             'folder_url': it['folder_url'], 'file_url': it['source_override_url'] or it['file_url'],
@@ -696,13 +701,16 @@ class ItemsMixin:
         urgent = [x for x in out if x['priority'] == 0]
         rest = [x for x in out if x['priority'] == 1]
         from .rules import fair_order
-        # Coverage: never-checked items first (rotation-fair), then the least recently checked. Ordering
-        # only by publication rotation re-picked the same items every cycle while others were never checked.
+        # Coverage: finish work in progress (items waiting for a check result), then never-checked items
+        # (rotation-fair), then the least recently checked. Ordering only by publication rotation re-picked
+        # the same items every cycle while others were never checked.
+        pending = sorted((x for x in rest if x['_last'] and x['_pending']), key=lambda x: (x['_last'], str(x['item_id'])))
         fresh = fair_order([x for x in rest if not x['_last']])
-        seen = sorted((x for x in rest if x['_last']), key=lambda x: (x['_last'], str(x['item_id'])))
-        picked = (fair_order(urgent) + fresh + seen)[:limit]
+        seen = sorted((x for x in rest if x['_last'] and not x['_pending']), key=lambda x: (x['_last'], str(x['item_id'])))
+        picked = (fair_order(urgent) + pending + fresh + seen)[:limit]
         for x in picked:
             x.pop('_last', None)
+            x.pop('_pending', None)
         return picked
 
     def _touch_prep(self, c, it, blocked: bool):

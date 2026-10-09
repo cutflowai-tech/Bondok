@@ -577,6 +577,29 @@ class PreparationCoverageAndQuietness(OpsCase):
         self.assertEqual(len(never), 10)
         self.assertTrue(never <= set(second), 'never-checked items must come first')
 
+    def test_items_waiting_for_a_result_come_first(self):
+        self.observe(monday_item('340', fmt='Story', code='LIP12'), monday_item('341', fmt='Story', code='LIP12'),
+                     monday_item('342', fmt='Story', code='LIP12'))
+        self.wf1('prep_source', '340', error='No final video found in the project folder', error_kind='editor')
+        self.clock.advance(60)
+        self.select('341')                               # Story: duration measurement pending -> 'checking'
+        self.assertEqual(self.item('341')['readiness'], 'checking')
+        self.clock.advance(7200)
+        self.assertEqual([x['item_id'] for x in self.ops.work_queue(limit=3)], ['341', '342', '340'])
+
+    def test_topaz_confirmation_is_prepared_on_the_next_cycle(self):
+        for i in range(25):
+            self.observe(monday_item(str(350 + i), fmt='Story', code='LIP12', name=f'Item {i} LIP12'))
+        self.observe(monday_item('380', fmt='Post', code='LIP12'))
+        self.select('380')                                     # Post: blocked on Topaz for this version
+        self.assertEqual(self.item('380')['block_kind'], 'editor')
+        self.clock.advance(60)
+        self.topaz('380')
+        self.assertEqual(self.ops.work_queue(limit=20)[0]['item_id'], '380')
+        self.clock.advance(60)
+        self.select('380')                                     # prepared once; the nudge is consumed
+        self.assertNotIn('380', [x['item_id'] for x in self.ops.work_queue(limit=20)][:1])
+
     def test_same_problem_is_not_reapplied(self):
         self.observe(monday_item('330', fmt='Story', code='LIP12', extra={'source_item': ('9330', '"9330"')}))
         self.wf1('prep_source', '330', error='Folder "x" does not match this item', error_kind='config')
