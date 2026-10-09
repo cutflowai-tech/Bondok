@@ -9,8 +9,8 @@
 from __future__ import annotations
 
 from . import rules
-from .core import Command, Rejected
-from .db import loads
+from .core import NOTICE_SECONDS, Command, Rejected
+from .db import dumps, loads
 
 STALE_HEARTBEAT = {'wf2': 300, 'wf1': 1800, 'wf3': 4200}
 
@@ -97,8 +97,19 @@ class MonitorMixin:
                     applied.append({'item_id': f['item_id'], 'kind': f['kind'], 'state': r['state']})
         with self.store.tx() as c:
             for r in c.execute('SELECT fingerprint FROM ops_findings WHERE resolved IS NULL').fetchall():
-                if r['fingerprint'] not in live:
+                # Findings raised by WF1 (missing on the board) are resolved there, not by this inspection
+                # (audit MS11: resolving them here re-notified the same deleted item after every WF3 run).
+                if r['fingerprint'] not in live and not r['fingerprint'].startswith('missing_on_board:'):
                     self.resolve_finding(c, r['fingerprint'])
+            # Expired 24 h notices are only removed by a projection; nothing else re-projects an unchanged item
+            # (audit MS10: stale Action text stayed on the board).
+            for r in c.execute("SELECT item_id, observed FROM ops_items WHERE observed LIKE '%\"_notice\"%'").fetchall():
+                n = (loads(r['observed'], {}) or {}).get('_notice')
+                if n and self.now() - n.get('at', 0) >= NOTICE_SECONDS:
+                    obs = loads(r['observed'], {})
+                    obs.pop('_notice', None)
+                    c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), r['item_id']))
+                    self.project(c, r['item_id'])
             c.execute('INSERT OR REPLACE INTO ops_heartbeat VALUES(?,?,?)', ('wf3', self.now(), None))
         return {'findings': len(report['findings']), 'new_findings': new, 'repairs': applied}
 

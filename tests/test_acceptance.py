@@ -1408,3 +1408,50 @@ class DisplaySyncGuardCore(OpsCase):
                 c.execute("UPDATE ops_outbox SET state='in_flight', lease_owner='w' WHERE id=?", (job['id'],))
         st = [o for o in self.outbox('monday') if o['id'] == job['id']][0]
         self.assertNotEqual(st['state'], 'escalated')
+
+
+class MondaySyncMedium(OpsCase):
+    """Audit MS9-MS12."""
+
+    def test_expired_notice_cleared_by_wf3(self):                                   # MS10
+        self.make_ready('960', 'Story')
+        with self.ops.store.tx() as c:
+            self.ops.set_notice(c, '960', 'Requested time rejected: x')
+            self.ops.project(c, '960')
+        self.drain_monday()
+        self.assertEqual(json.loads(self.item('960')['projected']).get('action'), 'Requested time rejected: x')
+        self.clock.advance(25 * 3600)
+        self.ops.repair()
+        jobs = [json.loads(o['payload']) for o in self.outbox('monday') if o['state'] == 'pending']
+        self.assertTrue(any(board.COL['action'] in j['columns'] for j in jobs), jobs)
+
+    def test_missing_item_notified_once_and_resolved_when_back(self):               # MS11
+        self.observe(monday_item('961', fmt='Story'), monday_item('962', fmt='Story'))
+        for _ in range(3):
+            self.observe(monday_item('962', fmt='Story'), complete=True)
+            self.ops.repair()
+            self.clock.advance(1200)
+        self.assertEqual(sum('961' in o['payload'] and 'not on the board' in o['payload'] for o in self.outbox('slack')), 1)
+        self.observe(monday_item('961', fmt='Story'), monday_item('962', fmt='Story'), complete=True)
+        with self.ops.store.read() as c:
+            self.assertIsNotNone(c.execute("SELECT resolved FROM ops_findings WHERE fingerprint='missing_on_board:961'")
+                                 .fetchone()[0])
+
+    def test_topaz_label_reset_when_file_changes(self):                             # MS9
+        self.make_ready('963', 'Story')
+        self.drain_monday()
+        with self.ops.store.tx() as c:
+            obs = json.loads(self.ops.item(c, '963')['observed'])
+            obs['topaz'] = 'Topazed'
+            c.execute("UPDATE ops_items SET observed=? WHERE item_id='963'", (json.dumps(obs),))
+        self.select('963', 2)
+        jobs = [json.loads(o['payload']) for o in self.outbox('monday') if o['state'] == 'pending']
+        self.assertTrue(any(j['columns'].get(board.COL['topaz']) == {'label': 'Not yet'} for j in jobs), jobs)
+
+    def test_legacy_posted_item_not_moved_between_groups(self):                    # MS12
+        self.observe(monday_item('964', fmt='Story', status='Posted', group='group_story_custom'))
+        self.drain_monday()
+        b = monday_item('964', fmt='Story', status='Posted', group='group_story_custom', extra={'notes': ('x', None)})
+        self.observe(b)
+        jobs = [json.loads(o['payload']) for o in self.outbox('monday') if o['state'] == 'pending']
+        self.assertFalse(any(j.get('group') for j in jobs), jobs)

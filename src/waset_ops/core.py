@@ -32,6 +32,7 @@ OUTBOX_MAX_ATTEMPTS = 6
 # any system column, but only clears values it wrote itself (tracked as '_ours').
 # Found at cutover: clearing v1 dates, delivery links and metadata destroyed data.
 PROPOSAL_TTL = 30 * 60
+NOTICE_SECONDS = 24 * 3600          # board notices (Action required) expire after a day
 CONFLICT_RETRY_SECONDS = 15 * 60  # WF1 observes every 10 minutes
 STALE_SNAPSHOT_SECONDS = 20 * 60   # longer than a WF1 run (lease 15 min): older snapshots can't predate an ack
 RUN_TTL = {'wf1': 900, 'wf3': 600, 'wf2': 300}
@@ -289,7 +290,7 @@ class CoreMixin:
             elif it.get('requested_at'):
                 action = 'Requested time is not available; choose another slot in Slack'
         notice = (loads(it.get('observed'), {}) or {}).get('_notice')
-        if notice and self.now() - notice.get('at', 0) < 86400 and not action:
+        if notice and self.now() - notice.get('at', 0) < NOTICE_SECONDS and not action:
             action = notice['text']
         system = []
         if it.get('infra_issue'):
@@ -344,6 +345,8 @@ class CoreMixin:
         else:
             group = it['format']
         d['_group'] = board.GROUPS.get(group)
+        if it['legacy_posted'] and not last:
+            d['_group'] = None    # posted outside v2: people placed it; never moved by unrelated edits (audit MS12)
         return d
 
     @staticmethod

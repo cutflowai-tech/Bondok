@@ -147,6 +147,10 @@ class ItemsMixin:
         if not seen:
             return missing        # an empty snapshot is never treated as "everything deleted"
         with self.store.tx() as c:
+            for r in c.execute("SELECT fingerprint, item_id FROM ops_findings WHERE resolved IS NULL AND "
+                               "kind='missing_on_board'").fetchall():
+                if r['item_id'] in seen:
+                    self.resolve_finding(c, r['fingerprint'])        # it is back on the board
             for r in c.execute("SELECT item_id FROM ops_items WHERE publication!='published'").fetchall():
                 if r['item_id'] not in seen:
                     missing.append(r['item_id'])
@@ -808,6 +812,11 @@ class ItemsMixin:
             self.release(c, it, 'source file changed', keep_request=True)
             obs = loads(self.item(c, it['item_id'])['observed'], {}) or {}
             obs['_file_changed_at'] = self.now()       # Slack Topaz confirmations near a change need approval
+            if obs.get('topaz') == 'Topazed' and it['topaz_asset'] != asset:
+                # The confirmation belonged to the previous file: show that on the board, so the editor's next
+                # "Topazed" for this version is a visible change (audit MS9).
+                self.write_human(c, self.item(c, it['item_id']), {'topaz': 'Not yet'})
+                obs = {**(loads(self.item(c, it['item_id'])['observed'], {}) or {}), '_file_changed_at': self.now()}
             c.execute('UPDATE ops_items SET content_rev=content_rev+1, observed=? WHERE item_id=?',
                       (dumps(obs), it['item_id']))
             it = self.update_item(c, it['item_id'], cmd.actor, 'source file changed', asset_key=asset, file_id=f['id'],
