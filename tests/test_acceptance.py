@@ -1414,7 +1414,8 @@ class MondaySyncMedium(OpsCase):
     """Audit MS9-MS12."""
 
     def test_expired_notice_cleared_by_wf3(self):                                   # MS10
-        self.make_ready('960', 'Story')
+        self.observe(monday_item('960', fmt='Story'))           # not scheduled: nothing else re-projects it
+        self.drain_monday()
         with self.ops.store.tx() as c:
             self.ops.set_notice(c, '960', 'Requested time rejected: x')
             self.ops.project(c, '960')
