@@ -1257,10 +1257,10 @@ class OutboxRecovery(OpsCase):
         self.ops.submit(owner_cmd('p', 'pause', '601'))            # newer job: Paused
         for j in first:
             self.ops.outbox_ack(j['id'], 'wf2-a', False, 'timeout')
-        self.clock.advance(400)
-        for _ in range(3):
-            self.drain_monday()
-            self.clock.advance(400)
+        self.clock.advance(30)
+        self.drain_monday()                                       # the newer Paused job lands first
+        self.clock.advance(200)
+        self.drain_monday()                                       # then the failed older job would be retried
         proj = json.loads(self.item('601')['projected'])
         self.assertEqual(proj.get('status'), board.LABELS['paused'])
         self.assertIsNone(proj.get('publish_at'))
