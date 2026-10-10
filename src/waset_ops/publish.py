@@ -319,7 +319,8 @@ class PublishMixin:
             a = self._attempt(c, attempt_id, None, None, ('committed', 'outcome_unknown'), lease=False)
             if media_id:
                 return self._published(c, a, worker, {'media_id': str(media_id), 'source': 'media_publish response'})
-            if definitive and http_status and 400 <= int(http_status) < 500 and _media_not_ready(error):
+            if a['stage'] == 'committed' and definitive and http_status and 400 <= int(http_status) < 500 and \
+                    _media_not_ready(error):
                 # Refused because the container was not ready: nothing was published and the slot is still valid.
                 # The next run claims again; MAX_ATTEMPTS_PER_SLOT bounds the retries (round 4, end-to-end test).
                 c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",

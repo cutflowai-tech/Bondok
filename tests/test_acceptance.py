@@ -1940,6 +1940,17 @@ class MediaNotReadyAtPublish(OpsCase):
         notes = [json.loads(o['payload'])['text'] for o in self.outbox('slack')]
         self.assertFalse(any('Instagram rejected' in n for n in notes), notes)
 
+    def test_late_not_ready_for_an_unknown_outcome_is_not_a_silent_retry(self):
+        """A 9007 answer arriving after the attempt became unknown follows the definitive-rejection path (the item
+        never stays 'outcome_unknown' without an attempt behind it)."""
+        self.make_ready('982', 'Story')
+        cl = self.attempt('982', 0)
+        self.ops.result(cl['attempt_id'], 'w', error='ETIMEDOUT', http_status=None)
+        self.assertEqual(self.item('982')['publication'], 'outcome_unknown')
+        r = self.ops.result(cl['attempt_id'], 'w', error=self.NOT_READY, http_status=400, definitive=True)
+        self.assertEqual(r['stage'], 'failed', r)
+        self.assertEqual(self.item('982')['publication'], 'failed')
+
     def test_not_ready_is_bounded_per_slot(self):
         self.make_ready('981', 'Story')
         for minute in range(3):
