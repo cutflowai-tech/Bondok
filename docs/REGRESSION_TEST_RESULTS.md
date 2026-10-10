@@ -5,11 +5,11 @@ Branch `bondok/deep-audit`. Command: `cd tests && python3 -m unittest test_accep
 ## Unit / integration suite
 | Module | Tests | Result |
 |---|---|---|
-| test_acceptance (scenarios, audit regressions, owner journey) | 138 | pass |
+| test_acceptance (scenarios, audit regressions, owner journey) | 140 | pass |
 | test_workflows (graph contracts, generated n8n code incl. WF2 guard, Dropbox classification) | 34 | pass |
 | test_helper_cli (real helper subprocess, real FFmpeg Story trimming, storage failure) | 11 | pass |
 | test_bondok (Slack service: intent, approvals, model failures, watchdog) | 35 | pass |
-| **Total** | **218** | **all pass** (124 before the audit; 209 after round 3) |
+| **Total** | **220** | **all pass** (124 before the audit; 209 after round 3) |
 
 Python 3.14 run; all source parses as Python 3.12 (`ast.parse(feature_version=(3,12))`). Stdlib only in `src/`.
 
@@ -44,6 +44,8 @@ delivery, clock jumps up to 3 days; invariants after every step and board conver
 | round-2 `71d8d01` | 150 / 60 k (display campaign) | 0 | 74 seeds |
 | after `be00eed` | 150 / 60 k | 0 | 8 seeds |
 | **final `efb72d0`** | **450 / 300 k** | **0** | **0** |
+| round 4 `78d9af1` (BV-74 only suppressed) | 300 / 240 k | 0 | 0 |
+| **round 4 final `6d92fa0`+, with Instagram 9007 answers** | **300 / 240 k** | **0** | **0** |
 
 Safety invariants: never two publications per item; no claim/commit for paused, skipped, held, not-ready,
 unreserved or unknown-outcome items; commit refused after caption/media/format/source/revision change; one
@@ -54,8 +56,9 @@ design.)
 ## Round 4 (2026-10-10): production re-check, current-state replay, end-to-end publishing
 
 New regression tests (each fails on `45b6418`, the base of the branch, and passes on the branch):
-`LegacyDateLoopIncident` (3), `MissingPreparedFileAtSlot`, `LowDiskAlert`, `MediaNotReadyAtPublish` (2),
-test_bondok `OwnerPublishWordsResume` (2). The production loop tests also fail on every audit commit before
+`LegacyDateLoopIncident` (3), `MissingPreparedFileAtSlot`, `LowDiskAlert`, `MediaNotReadyAtPublish` (3; the third
+fails on `78d9af1`, found by self-review), test_bondok `OwnerPublishWordsResume` (2); plus one guard without a bug
+(`ReconciledPublicationShownOnBoard`). The production loop tests also fail on every audit commit before
 `8a1457d`.
 
 ### Replay of the audit branch on today's production state
@@ -89,13 +92,16 @@ items (expected for the old code). Rollback keeps the database (documented rule)
 | Publish HTTP 500 once / always | outcome unknown, never republished, owner asked | same |
 | Publish succeeded, answer lost | reconciled from container status PUBLISHED (+6 min), no duplicate | same |
 | Same, permalink failing | reconciled, no duplicate | same |
-| Publish 400 "media not ready" (9007) | **marked failed, slot lost** | before `78d9af1`: same; now retried in the same slot, 1 publication |
+| Publish 400 "media not ready" (9007) | **marked failed, slot lost** | before `78d9af1`: same; now retried in the same slot (2 containers), 1 publication |
 | Board Paused before the slot | not published | not published |
 | Board "Posted" before the slot | **published again** (BV-04) | held, Slack note |
 | Post link typed before the slot | **published again** (BV-04) | held, Slack note |
 | Dropbox file replaced after scheduling | refused at commit (1 container), no publication | same |
 
-No scenario published an item twice on the audit branch. Harness notes: the mock refuses any Instagram call other
+No scenario published an item twice on the audit branch (final rerun on the final code: every WF2 run succeeded,
+at most one publication per video). Board after a direct publication: status Posted, post link, Posted group;
+after a reconciled one (answer lost): Posted and Posted group on the next sync, no post link (BV-60), publication
+time = time of confirmation. Harness notes: the mock refuses any Instagram call other
 than container create/status, media_publish and permalink; prepared files are local placeholders (verification
 checks existence); a stale mock from an earlier replay and a shared n8n task-runner port each invalidated one run
 before they were detected — the harness now refuses to start against a foreign mock, gives every replay its own

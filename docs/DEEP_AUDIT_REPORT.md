@@ -19,7 +19,7 @@ the slot **publishes the Story again** (BV-04) and a container error creates **a
 minute** (BV-08); the branch holds the item / stops after 3 containers. A board Pause works on both.
 
 **Round 4 fixes (branch, not deployed):** BV-79 (`2ea6bb4`), BV-80 (`2187315`), BV-81 (`8646598`), BV-82
-(`78d9af1`); tests for the production loops (`325f46e`, `b2c4951`). Rollback rehearsal: the deployed code runs
+(`78d9af1`, `6d92fa0`); tests for the production loops (`325f46e`, `b2c4951`) and a reconciliation guard (`90d605a`). Rollback rehearsal: the deployed code runs
 cleanly on a database the branch has used.
 
 **Until the release is deployed (containment):** never post a scheduled Story by hand or mark it "Posted"/type
