@@ -65,19 +65,27 @@ def _value(cell):
     return v
 
 
+_EDGE = ' \t\r\n\u00a0\ufeff\u200b\u200e\u200f'
+
+
+def clean(text) -> str:
+    """Trim like the WF2 JavaScript guard (String.trim also removes U+FEFF; R5 LOW-04) plus zero-width marks."""
+    return str(text).strip(_EDGE)
+
+
 def norm(item: dict, key: str):
     """Comparable string form of one column (None when empty)."""
     cell = _raw(item, key)
     if cell is None:
         return None
     kind = KIND.get(key, 'text')
-    text = (cell.get('text') or '').strip()
+    text = clean(cell.get('text') or '')
     v = _value(cell)
     if kind == 'status':
         return text or None
     if kind == 'long':
         if isinstance(v, dict) and isinstance(v.get('text'), str):
-            return v['text'].strip() or None
+            return clean(v['text']) or None
         return text or None
     if kind == 'link':
         return (v or {}).get('url') or None if isinstance(v, dict) else (text or None)
@@ -164,5 +172,5 @@ def compare_value(key, value):
         try:
             return rules.iso(rules.instant(value))
         except (ValueError, TypeError, rules.RuleError):
-            return str(value).strip()          # date without a time: compared as read (audit R5 A3)
-    return str(value).strip()
+            return clean(value)                # date without a time: compared as read (audit R5 A3)
+    return clean(value) or None

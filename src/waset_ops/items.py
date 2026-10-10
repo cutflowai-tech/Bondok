@@ -226,6 +226,16 @@ class ItemsMixin:
         pending = loads(it['pending_projection'], {}) or {}
         edits = []
         floor = self.now() - FRESH_READ_SECONDS if floor is None else floor
+        # Which file version could the person have seen when they changed Topazed (R5 B4)? What the previous read
+        # showed, every version v2 displayed since that read, and what this read shows. One value: bound to it.
+        prev_seen = observed.get('_asset_seen')
+        writes = confirmed.get('_asset_writes') or []
+        # The click happened after the previous read and after v2's own last Topazed write (it replaced it).
+        start = max((prev_seen or {}).get('at', 0), (confirmed.get('_hwrite_at') or {}).get('topaz', 0))
+        before = [w for w in writes if w.get('at', 0) <= start]
+        at_start = before[-1]['v'] if before else (prev_seen['v'] if prev_seen else snap.get('asset'))
+        shown = {at_start, snap.get('asset')} | {w['v'] for w in writes if w.get('at', 0) > start}
+        observed['_asset_seen'] = {'v': snap.get('asset'), 'at': floor}
         recent = {k: x['v'] for k, x in (confirmed.get('_prev') or {}).items()
                   if x.get('at', 0) > floor and self.now() - x.get('at', 0) < STALE_SNAPSHOT_SECONDS}
         for k in board.HUMAN:
@@ -239,7 +249,8 @@ class ItemsMixin:
                     observed[k] = new          # our authorized write landed
                     continue
             edits.append({'key': k, 'old': observed.get(k), 'new': new, 'human': True,
-                          'asset_shown': snap.get('asset')})
+                          'asset_shown': next(iter(shown)) if len(shown) == 1 else None,
+                          'asset_candidates': sorted(str(x) for x in shown if x)})
         for k in board.SYSTEM:
             new = snap.get(k)
             if k not in confirmed and k not in pending:
@@ -259,30 +270,43 @@ class ItemsMixin:
                     continue                   # the legacy pair names the recorded request: not a new edit
             edits.append({'key': k, 'old': pending.get(k, confirmed.get(k)), 'new': new, 'human': False,
                           'snap': {x: snap.get(x) for x in ('publish_at', 'post_date', 'post_time')}})
+        times = [e for e in edits if e['key'] in TIME_KEYS]
+        if len(times) > 1:
+            # One logical date/time change is one scheduling decision (R5 M2); Publish at leads when it changed.
+            lead = next((e for e in times if e['key'] == 'publish_at'), times[0])
+            lead['also'] = [e['key'] for e in times if e is not lead]
+            edits = [e for e in edits if e is lead or e['key'] not in TIME_KEYS]
         c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(observed), it['item_id']))
         return edits
 
     def _apply_edit(self, iid, e) -> dict:
-        """Map one observed board edit to a command (actor: unattributed board user)."""
+        """Map one observed board edit to a command. A change by anyone but the automation is the owner's decision
+        (contract §1). The idempotency key includes a per-column edit counter, so a repeated value after another
+        value (A -> X -> A) is a new decision, while a retried observation of the same edit is not (R5 M3)."""
         with self.store.read() as c:
-            v = c.execute('SELECT version FROM ops_items WHERE item_id=?', (iid,)).fetchone()['version']
-        cid = f"monday:{iid}:{e['key']}:{v}:{_h(e['new'])}"
+            row = c.execute('SELECT version, observed FROM ops_items WHERE item_id=?', (iid,)).fetchone()
+        v, n = row['version'], ((loads(row['observed'], {}) or {}).get('_n') or {}).get(e['key'], 0)
+        cid = f"monday:{iid}:{e['key']}:{v}:{n}:{_h(e['new'])}"
         k, new = e['key'], e['new']
 
         def run(op, args=None):
             return self.submit(Command(cid, op, 'monday', MONDAY, iid, args or {}))
 
+        with self.store.read() as c:
+            before_id = c.execute('SELECT COALESCE(MAX(id), 0) FROM ops_outbox').fetchone()[0]
         if e['human']:
             if k == 'format':
-                r = run('propose', {'kind': 'change_format', 'format': new})
+                # The owner's Format change is the authorization for that exact conversion (contract §3, R5 A6).
+                r = run('change_format', {'format': new})
                 if r.get('state') == 'rejected':
                     with self.store.tx() as c:            # write-back survives the rejection (audit MS8)
                         self.write_human(c, self.item(c, iid), {'format': self.item(c, iid)['format']}, guarded=False)
             elif k == 'caption':
                 r = run('update_caption', {'text': new or ''})
             elif k == 'topaz':
-                # Bound to the file version the person could see when toggling.
-                r = run('confirm_topaz', {'confirmed': new == 'Topazed', 'asset_key': e.get('asset_shown')})
+                # Bound to the file version the person could see when toggling (R5 B4).
+                r = run('confirm_topaz', {'confirmed': new == 'Topazed', 'asset_key': e.get('asset_shown'),
+                                          'candidates': e.get('asset_candidates') or []})
             elif k == 'collab':
                 r = run('set_collab', {'value': new or ''})
             elif k == 'variety':
@@ -293,7 +317,7 @@ class ItemsMixin:
                 r = run('set_notes', {'value': new or ''})
             else:  # owner/people: informational only
                 r = {'state': 'completed', 'note': 'no operational effect'}
-            self._mark_observed(iid, k, new, r)
+            self._mark_observed(iid, k, new, r, before_id)
             return r
         r = self._system_edit(iid, e, run)
         # The board value was handled (applied or refused): it is what the board shows now, so it is not an
@@ -303,9 +327,14 @@ class ItemsMixin:
         with self.store.tx() as c:
             cur = self.item(c, iid)
             proj = loads(cur['projected'], {}) or {}
-            proj[k] = board.compare_value(k, new) if new is not None else None
             pend = loads(cur['pending_projection'], {}) or {}
-            pend.pop(k, None)       # what the board shows now is known; an older in-flight belief must not mask it
+            for key in [k, *e.get('also', [])]:
+                val = new if key == k else (e.get('snap') or {}).get(key)
+                proj[key] = board.compare_value(key, val) if val is not None else None
+                pend.pop(key, None)  # what the board shows now is known; an older in-flight belief must not mask it
+            obs = loads(cur['observed'], {}) or {}
+            obs.setdefault('_n', {})[k] = obs.get('_n', {}).get(k, 0) + 1
+            c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), iid))
             c.execute('UPDATE ops_items SET projected=?, pending_projection=? WHERE item_id=?',
                       (dumps(proj), dumps(pend) if pend else None, iid))
             col = board.COL.get(k)
@@ -367,28 +396,39 @@ class ItemsMixin:
         if k in ('post_link', 'ig_media') and new:
             return run('report_published', {'source': 'board ' + ('post link' if k == 'post_link' else 'media id'),
                                             'value': new})
-        return self._revert(iid, k, 'This column is managed by the system')
+        with self.store.read() as c:
+            it = self.item(c, iid)
+            mine = self.desired_display(c, it).get(k)
+            ours = k in set((loads(it['projected'], {}) or {}).get('_ours') or [])
+        if mine is None and not ours:
+            # v2 shows nothing in this column for the item: the text is kept as written, without a false claim
+            # that it was reverted, and without a loop (R5 LOW-14).
+            return {'state': 'completed', 'note': 'text kept (no system value for this column)'}
+        return self._revert(iid, k, 'This column is managed by the system; the system value was restored')
 
-    def _mark_observed(self, iid, key, value, result):
+    def _mark_observed(self, iid, key, value, result, before_id=None):
         with self.store.tx() as c:
             it = self.item(c, iid)
             observed = loads(it['observed'], {}) or {}
             observed[key] = value
+            observed.setdefault('_n', {})[key] = observed.get('_n', {}).get(key, 0) + 1   # next edit = new event
             c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(observed), iid))
             # A person's edit wins over our unsent write of the same column (round-2 review #5) - except our
             # write-back of a refused edit, which is meant to overwrite it.
             for j in [] if result.get('state') == 'rejected' else c.execute("SELECT id, payload FROM ops_outbox WHERE kind='monday' AND item_id=? AND "
                                "dedupe_key LIKE 'monday-h:%' AND state IN ('pending','failed')", (iid,)).fetchall():
+                if before_id is not None and j['id'] > before_id:
+                    continue        # queued by the command for this very edit (e.g. a Topazed write-back): kept
                 if 'h:' + key in (loads(j['payload'], {}).get('compare') or {}):
                     c.execute("UPDATE ops_outbox SET state='superseded', updated=? WHERE id=?", (self.now(), j['id']))
             pend = loads(self.item(c, iid)['pending_projection'], {}) or {}
             if result.get('state') != 'rejected' and pend.pop('h:' + key, None) is not None:
                 c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?', (dumps(pend) or None, iid))
-            if result.get('state') == 'rejected' and key in ('caption', 'topaz', 'collab', 'code'):
-                self.release(c, self.item(c, iid), 'rejected board edit')     # a held item keeps no slot (fuzz F8)
-                self.update_item(c, iid, 'monday', 'rejected board edit',
-                                 hold=dumps({'kind': 'rejected_edit', 'reason': f'Board change to {key} was not accepted: '
-                                             + result.get('reason', '')}))
+            if result.get('state') == 'rejected':
+                # Visible and repairable by correcting the same column; never a separate hold that outlives the
+                # corrected value (R5 A7).
+                self.set_notice(c, iid, f'Board change to {key} not applied: ' + str(result.get('reason', ''))[:300])
+                self.project(c, iid)
 
     def _revert(self, iid, key, why):
         keys = tuple(key) if isinstance(key, (tuple, list)) else (key,)
@@ -398,7 +438,7 @@ class ItemsMixin:
             audit(c, iid, 'revert_system_column', 'monday', {'key': keys, 'why': why})
         return {'state': 'rejected', 'reason': why, 'reverted': key}
 
-    def write_human(self, c, it, values: dict, guarded=True):
+    def write_human(self, c, it, values: dict, guarded=True, expect: dict | None = None):
         """Apply an authorized change to a human column (e.g. owner-approved
         caption or format). Recorded as pending so the old board value is not
         mistaken for a new human edit while the write is in flight."""
@@ -422,12 +462,19 @@ class ItemsMixin:
             compare['h:' + k] = board.compare_value(k, v)
             # Skip the write if a person typed something else meanwhile (WF2 compare-before-write).
             if guarded:
-                guard[board.COL[k]] = {'kind': board.KIND.get(k, 'text'), 'was': [observed.get(k), *landing.get(k, [])],
-                                       'new': compare['h:' + k]}
+                was = [expect[k]] if expect and k in expect else [observed.get(k), *landing.get(k, [])]
+                guard[board.COL[k]] = {'kind': board.KIND.get(k, 'text'), 'was': was, 'new': compare['h:' + k]}
         payload = {'item_id': it['item_id'], 'columns': cols, 'compare': compare, 'group': None}
         if guard:
             payload['guard'] = guard
-        self.enqueue(c, 'monday', 'monday-h:' + it['item_id'] + ':' + fingerprint(payload)[:16], payload, it['item_id'])
+        key = 'monday-h:' + it['item_id'] + ':' + fingerprint(payload)[:16]
+        if c.execute("SELECT 1 FROM ops_outbox WHERE dedupe_key=? AND state IN ('done','superseded','escalated')",
+                     (key,)).fetchone():
+            # The same values were written before (e.g. a second rejected Format edit): a new write is needed, not a
+            # duplicate of the old job, which INSERT OR IGNORE would silently drop (R5 M3).
+            from .db import next_counter
+            key += ':' + str(next_counter(c, 'outbox:monday-h'))
+        self.enqueue(c, 'monday', key, payload, it['item_id'])
         c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?',
                   (dumps({**pending, **compare}), it['item_id']))
 
@@ -548,7 +595,9 @@ class ItemsMixin:
                                            'arrives or you resume it.'}
 
     def explicit_owner(self, cmd: Command) -> bool:
-        return cmd.actor_kind == OWNER and (cmd.auth.get('explicit') is True or bool(cmd.auth.get('proposal')))
+        # A board edit of the column itself is the owner's explicit decision (contract §1/§3).
+        return cmd.actor_kind == MONDAY or \
+            (cmd.actor_kind == OWNER and (cmd.auth.get('explicit') is True or bool(cmd.auth.get('proposal'))))
 
     def op_change_format(self, c, cmd: Command):
         if not self.explicit_owner(cmd):
@@ -580,7 +629,8 @@ class ItemsMixin:
                               verification_id=None, readiness='checking', block_kind=None, block_reason=None,
                               block_key=None, caption_state=caption_state if new == 'Post' else None, hold=None,
                               requested_at=None, waiting_since=self.now())
-        self.write_human(c, it, {'format': new})
+        if cmd.actor_kind != MONDAY:
+            self.write_human(c, it, {'format': new})
         self.request_check(c, it['item_id'], cmd.actor, 'format_change')
         return {'format': new, 'changed': True, 'message': f'Format changed to {new}; the same item will be '
                 'rechecked under {new} rules before scheduling.'.format(new=new)}
@@ -659,6 +709,18 @@ class ItemsMixin:
             return {'unchanged': True}
         self._guard_mutable(c, it, allow_paused=True)
         bad = rules.validate_caption(text)
+        if bad and cmd.actor_kind == MONDAY:
+            # The board shows the owner's text; it is not silently replaced by the previous caption and it is
+            # not published: the item waits until the caption is corrected on the board (R5 A7, M3).
+            c.execute('UPDATE ops_items SET content_rev=content_rev+1 WHERE item_id=?', (it['item_id'],))
+            self.update_item(c, it['item_id'], cmd.actor, 'caption not valid', caption=text or None,
+                             caption_state='invalid', caption_origin='human')
+            self.set_notice(c, it['item_id'], f'Caption not accepted: {bad}. Correct it on the board.')
+            self.notify(c, f"caption-invalid:{it['item_id']}:{_h(text)}", f"{it['name']} ({it['item_id']}): the caption "
+                        f'on the board was not accepted ({bad}). It will not be published until the caption is corrected.',
+                        it['item_id'])
+            return {'caption_updated': False, 'invalid': bad, **self.reauthorize(c, it['item_id'], cmd.actor,
+                                                                                  'caption not valid')}
         if bad:
             raise Rejected(bad, 'invalid_caption')
         c.execute('UPDATE ops_items SET content_rev=content_rev+1 WHERE item_id=?', (it['item_id'],))
@@ -672,25 +734,47 @@ class ItemsMixin:
         return {'caption_updated': True, **out}
 
     def op_confirm_topaz(self, c, cmd: Command):
+        """Topaz is the owner's fact about one exact file version (contract §6). A board toggle is bound to the
+        version shown when it was set; if that cannot be told (the selection changed meanwhile, or no file was
+        selected yet) it is not applied and shown as 'Not yet', so a deliberate re-confirmation is visible (R5 B4)."""
         it = self.item(c, cmd.item_id)
         confirmed = cmd.args.get('confirmed') is True
         asset = cmd.args.get('asset_key') if cmd.actor_kind == MONDAY else (cmd.args.get('asset_key') or it['asset_key'])
-        if confirmed:
-            if cmd.actor_kind == OWNER and not cmd.auth.get('explicit'):
-                raise Rejected('Topaz confirmation must come from an explicit owner statement', 'needs_owner')
-            if not it['asset_key']:
-                raise Rejected('No source file is selected yet; Topaz confirmation cannot be bound', 'no_asset')
-            if asset != it['asset_key']:
-                raise Rejected('Topaz confirmation refers to a different file version than the selected one', 'stale')
-            self.update_item(c, it['item_id'], cmd.actor, 'topaz confirmed', topaz_asset=it['asset_key'])
-            obs = loads(self.item(c, it['item_id'])['observed'], {}) or {}
-            obs['_nudge'] = self.now()             # a person acted: prepare it on the next cycle
-            c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
-            if cmd.actor_kind != MONDAY:
-                self.write_human(c, self.item(c, it['item_id']), {'topaz': 'Topazed'})
-        else:
+        if not confirmed:
             self.update_item(c, it['item_id'], cmd.actor, 'topaz cleared', topaz_asset=None)
-        return {'topaz_asset': it['asset_key'] if confirmed else None, **self.evaluate(c, it['item_id'], cmd.actor)}
+            return {'topaz_asset': None, **self.evaluate(c, it['item_id'], cmd.actor)}
+        if cmd.actor_kind == OWNER and not cmd.auth.get('explicit'):
+            raise Rejected('Topaz confirmation must come from an explicit owner statement', 'needs_owner')
+        if cmd.actor_kind == MONDAY and (not asset or not it['asset_key']):
+            why = ('no file was selected yet' if not it['asset_key'] else
+                   'the selected file changed while Topazed was being set')
+            self.write_human(c, it, {'topaz': 'Not yet'}, expect={'topaz': 'Topazed'})
+            self.set_notice(c, it['item_id'], f'Topazed was not applied: {why}. Set Topazed again when the file shown '
+                            'in Source asset version is the Topazed one.')
+            self.notify(c, f"topaz-ambiguous:{it['item_id']}:{it['version']}", f"{it['name']} ({it['item_id']}): "
+                        f'Topazed was not applied because {why}. Set Topazed again for the file shown on the board '
+                        f"({it.get('file_name') or 'not selected yet'}) once Topaz was applied to it.", it['item_id'])
+            return {'topaz_asset': it['topaz_asset'], 'ambiguous': True}
+        if not it['asset_key']:
+            raise Rejected('No source file is selected yet; Topaz confirmation cannot be bound', 'no_asset')
+        if asset != it['asset_key']:
+            if cmd.actor_kind != MONDAY:
+                raise Rejected('Topaz confirmation refers to a different file version than the selected one', 'stale')
+            # Confirmed for the version that was shown, which is no longer the selected one: recorded for that
+            # version only; the board shows that the new file still needs it.
+            self.update_item(c, it['item_id'], cmd.actor, 'topaz confirmed for an earlier version', topaz_asset=asset)
+            self.write_human(c, self.item(c, it['item_id']), {'topaz': 'Not yet'}, expect={'topaz': 'Topazed'})
+            self.notify(c, f"topaz-older:{it['item_id']}:{asset}", f"{it['name']} ({it['item_id']}): Topazed was set "
+                        'for the previous file version; the selected file has changed since. Set Topazed again once '
+                        'Topaz was applied to the new file.', it['item_id'])
+            return {'topaz_asset': asset, 'superseded': True, **self.evaluate(c, it['item_id'], cmd.actor)}
+        self.update_item(c, it['item_id'], cmd.actor, 'topaz confirmed', topaz_asset=it['asset_key'])
+        obs = loads(self.item(c, it['item_id'])['observed'], {}) or {}
+        obs['_nudge'] = self.now()             # a person acted: prepare it on the next cycle
+        c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
+        if cmd.actor_kind != MONDAY:
+            self.write_human(c, self.item(c, it['item_id']), {'topaz': 'Topazed'})
+        return {'topaz_asset': it['asset_key'], **self.evaluate(c, it['item_id'], cmd.actor)}
 
     def op_set_notes(self, c, cmd: Command):
         self.update_item(c, cmd.item_id, cmd.actor, 'notes', notes=cmd.args.get('value') or None)
@@ -701,13 +785,16 @@ class ItemsMixin:
         return {'stored': True, 'reprocessing': False}
 
     def op_set_code(self, c, cmd: Command):
+        """The board's Code is the record: an invalid code is stored and shown as a block, and correcting it on the
+        board clears that block (R5 M12)."""
         value = (cmd.args.get('value') or '').strip()
-        try:
-            rules.style(value)
-        except rules.RuleError as e:
-            raise Rejected(str(e), 'invalid_code')
-        self.update_item(c, cmd.item_id, cmd.actor, 'code', code=value)
-        return {'stored': True}
+        if cmd.actor_kind != MONDAY:
+            try:
+                rules.style(value)
+            except rules.RuleError as e:
+                raise Rejected(str(e), 'invalid_code')
+        self.update_item(c, cmd.item_id, cmd.actor, 'code', code=value or None)
+        return {'stored': True, **self.evaluate(c, cmd.item_id, cmd.actor)}
 
     def op_set_collab(self, c, cmd: Command):
         value = (cmd.args.get('value') or '').strip() or None

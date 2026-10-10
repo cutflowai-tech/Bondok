@@ -109,6 +109,7 @@ class MonitorMixin:
                 if not r.get('duplicate'):
                     applied.append({'item_id': f['item_id'], 'kind': f['kind'], 'state': r['state']})
         applied += self.reconcile_schedule(run_id)
+        self.sweep_proposals()
         with self.store.tx() as c:
             for r in c.execute('SELECT fingerprint FROM ops_findings WHERE resolved IS NULL').fetchall():
                 # Findings raised by WF1 (missing on the board) are resolved there, not by this inspection
@@ -148,6 +149,31 @@ class MonitorMixin:
 
     def op_repair_reauthorize(self, c, cmd: Command):
         return self.reauthorize(c, cmd.item_id, cmd.actor, 'supervisor')
+
+    def sweep_proposals(self) -> int:
+        """Interaction lifecycle (R5 LOW-17): expired proposals reach a terminal state and their holds end; a caption
+        approval whose draft is no longer pending becomes stale. The content decisions themselves are kept."""
+        now, n = self.now(), 0
+        with self.store.tx() as c:
+            for p in c.execute("SELECT * FROM ops_proposals WHERE state='pending'").fetchall():
+                state = None
+                if p['kind'] in ('approve_caption', 'approve_captions'):
+                    if p['kind'] == 'approve_caption' and not c.execute(
+                            "SELECT 1 FROM ops_caption_drafts WHERE proposal_id=? AND state='pending_approval'",
+                            (p['id'],)).fetchone():
+                        state = 'stale'
+                elif p['expires'] < now:
+                    state = 'expired'
+                if not state:
+                    continue
+                c.execute('UPDATE ops_proposals SET state=?, result=?, updated=? WHERE id=?',
+                          (state, 'closed by the supervisor', now, p['id']))
+                for b in loads(p['bindings'], []):
+                    it = self.item(c, b['item_id'], required=False)
+                    if it and (loads(it['hold'], {}) or {}).get('kind') in ('format_change', 'resume'):
+                        self.update_item(c, it['item_id'], 'service:wf3', 'proposal closed', hold=None)
+                n += 1
+        return n
 
     # ------------------------------------------------------------------ missed slots and reconciliation
     def missed_cause(self, c, item_id, slot) -> str:

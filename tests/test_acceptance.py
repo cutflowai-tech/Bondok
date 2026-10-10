@@ -249,11 +249,14 @@ class Scenario06StaleApproval(OpsCase):
         target = self.res('50')['slot']
         p = self.ops.submit(owner_cmd('p', 'request_reschedule', '51', at=target))
         self.assertEqual(p['state'], 'awaiting_approval')
-        self.ops.submit(owner_cmd('n', 'update_caption', '50', text='New hook, DM us. ⚡️\n\n#reel'))
+        # R5.2 contract §7 (expectation changed, R5 M1): an unrelated change (caption) does not stale the swap; a
+        # change to what it acts on (item 50's slot) does.
+        moved = rules.iso(rules.instant(target) + timedelta(days=7))
+        self.ops.submit(owner_cmd('n', 'request_reschedule', '50', at=moved))
         r = self.ops.submit(owner_cmd('a', 'approve_proposal', None, proposal_id=p['proposal_id']))
         self.assertEqual(r['state'], 'rejected')
         self.assertEqual(r['code'], 'stale')
-        self.assertEqual(self.res('50')['slot'], target)
+        self.assertEqual(self.res('50')['slot'], moved)
         with self.ops.store.read() as c:
             self.assertEqual(c.execute('SELECT state FROM ops_proposals WHERE id=?',
                                        (p['proposal_id'],)).fetchone()[0], 'stale')
@@ -262,7 +265,8 @@ class Scenario06StaleApproval(OpsCase):
         self.make_ready('52', 'Post', code='LIP1')
         self.make_ready('53', 'Post', code='KE2')
         p = self.ops.submit(owner_cmd('p', 'request_reschedule', '53', at=self.res('52')['slot']))
-        self.clock.advance(31 * 60)
+        # R5.2 contract §7 (expectation changed, R5 L3/M1): the interaction expires after 24 h, not 30 min.
+        self.clock.advance(25 * 3600)
         r = self.ops.submit(owner_cmd('a', 'approve_proposal', None, proposal_id=p['proposal_id']))
         self.assertEqual(r['code'], 'expired')
 

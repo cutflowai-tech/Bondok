@@ -235,7 +235,12 @@ class PublishMixin:
             res = self.reservation(c, item_id)
             if source_status == 'Canceled':
                 # Same outcome WF1 records later; releasing now stops WF2 re-reading Monday every minute and WF3
-                # moving the item to the next slot (audit, publishing LOW).
+                # moving the item to the next slot (audit, publishing LOW). A pre-commit attempt is ended too: nothing
+                # was published (R5 LOW-11).
+                att = self.active_attempt(c, item_id)
+                if att and att['stage'] in PRE_COMMIT:
+                    c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
+                              (dumps({'abandoned': 'source project canceled', 'class': 'canceled'}), now, att['id']))
                 if not self.active_attempt(c, item_id):
                     self.release(c, it, 'source canceled', keep_request=False)
                     self.update_item(c, it['item_id'], worker, 'source canceled', owner_state='skipped',
@@ -642,11 +647,13 @@ class PublishMixin:
 
     def _published(self, c, a, worker, evidence):
         now = self.now()
-        ev = {**(loads(a['evidence'], {}) or {}), **evidence, 'published_at': self.iso_ts(now)}
+        # 'published_at' only when Instagram's answer dates it (media_publish response); otherwise the moment the
+        # evidence was recorded is kept as such, never shown as the publication time (R5 LOW-10).
+        ev = {**(loads(a['evidence'], {}) or {}), **evidence, 'recorded_at': self.iso_ts(now)}
         c.execute("UPDATE ops_attempts SET stage='published', media_id=COALESCE(?,media_id), evidence=?, updated=? "
                   'WHERE id=?', (evidence.get('media_id'), dumps(ev), now, a['id']))
         self._legacy_receipt(c, a, 'published', {'publishedMediaId': evidence.get('media_id'),
-                                                 'publishedAt': ev['published_at']})
+                                                 'publishedAt': ev.get('published_at') or ev['recorded_at']})
         it = self.update_item(c, a['item_id'], worker, 'published', publication='published')
         if it['source_item_id']:
             self.enqueue(c, 'source_monday', f"source-posted:{it['item_id']}",

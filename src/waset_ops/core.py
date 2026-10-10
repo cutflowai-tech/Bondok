@@ -31,7 +31,7 @@ OUTBOX_MAX_ATTEMPTS = 6
 # Board values may have been written by v1 or by people. The projection may set
 # any system column, but only clears values it wrote itself (tracked as '_ours').
 # Found at cutover: clearing v1 dates, delivery links and metadata destroyed data.
-PROPOSAL_TTL = 30 * 60
+PROPOSAL_TTL = 24 * 3600           # interaction expiry; validity comes from the proposal's dependencies (R5 M1, L3)
 NOTICE_SECONDS = 24 * 3600          # board notices (Action required) expire after a day
 CONFLICT_RETRY_SECONDS = 15 * 60  # WF1 observes every 10 minutes
 STALE_SNAPSHOT_SECONDS = 20 * 60   # longer than a WF1 run (lease 15 min): older snapshots can't predate an ack
@@ -188,7 +188,7 @@ class CoreMixin:
         'skip': {OWNER, MONDAY},
         'resume': {OWNER, MONDAY},          # a board label change away from Paused/Skipped (contract §3)
         'report_published': {OWNER, MONDAY},  # board Posted / typed post link, Slack "I posted it"
-        'change_format': {OWNER},
+        'change_format': {OWNER, MONDAY},   # a board Format edit is the owner's authorization (R5 A6)
         'replace_source': {OWNER, MONDAY},
         'update_caption': {OWNER, MONDAY},
         'confirm_topaz': {OWNER, MONDAY},
@@ -358,9 +358,15 @@ class CoreMixin:
             'style': self.safe_style(it.get('code')),
         }
         if last:
+            ev = loads(last['evidence'], {}) or {}
             d['ig_media'] = last['media_id']
-            d['published_at'] = rules.iso(rules.instant(loads(last['evidence'], {}).get('published_at')
-                                                         or self.iso_ts(last['updated'])))
+            d['published_at'] = rules.iso(rules.instant(ev['published_at'])) if ev.get('published_at') else None
+            if not ev.get('published_at'):
+                rec = ev.get('recorded_at') or self.iso_ts(last['updated'])
+                d['system'] = '\n'.join(x for x in (d['system'], 'Publication confirmed by '
+                                                     + str(ev.get('source') or 'reconciliation') + '; recorded at '
+                                                     + rules.display(rules.instant(rec)) + ' (Instagram did not report '
+                                                     'the exact publication time)') if x)
             d['post_link'] = [last['permalink'], 'Instagram ' + ('Reel' if it['format'] == 'Post' else 'Story')] \
                 if last['permalink'] else None
         if it['legacy_posted'] or it['publication'] == 'published':
@@ -597,6 +603,13 @@ class CoreMixin:
                             if was != v:
                                 before[k] = {'v': was, 'at': now}
                         confirmed['_prev'] = {k: x for k, x in before.items() if now - x['at'] < STALE_SNAPSHOT_SECONDS}
+                        # When v2's own values reached the board (R5 B4: which file version a Topazed click saw).
+                        if 'asset' in compare:
+                            confirmed['_asset_writes'] = (prev.get('_asset_writes') or [])[-5:] + \
+                                [{'v': compare['asset'], 'at': now}]
+                        hw = {k[2:]: now for k in compare if k.startswith('h:')}
+                        if hw:
+                            confirmed['_hwrite_at'] = {**(prev.get('_hwrite_at') or {}), **hw}
                         pending = {k: v for k, v in (loads(it['pending_projection'], {}) or {}).items()
                                    if not (k.startswith('h:') and k[2:] in human and v == human[k[2:]])}
                         if human:
@@ -677,13 +690,37 @@ class CoreMixin:
             return {'ok': False, 'retry_at': now + min(3600, 60 * 2 ** attempts)}
 
     # ------------------------------------------------------------ proposals
+    def proposal_deps(self, c, kind, iid, payload) -> str:
+        """Fingerprint of the facts a proposal depends on (R5 M1): unrelated changes (Notes, readiness re-checks,
+        retry timestamps) do not stale it; a change to what it acts on does."""
+        it = self.item(c, iid)
+        res = self.reservation(c, iid)
+        op = payload.get('op') if kind == 'command' else kind
+        deps = {'publication': it['publication'], 'slot': res['slot'] if res else None}
+        if op == 'change_format':
+            deps.update(format=it['format'], content_rev=it['content_rev'])
+        elif op in ('resume', 'skip'):
+            deps.update(owner_state=it['owner_state'], hold=(loads(it['hold'], {}) or {}).get('kind'))
+        elif op == 'confirm_topaz':
+            deps.update(asset_key=it['asset_key'])
+        elif op == 'update_caption':
+            deps.update(caption=it['caption'], caption_state=it['caption_state'], format=it['format'])
+        elif op == 'resolve_outcome':
+            a = c.execute('SELECT id, stage FROM ops_attempts WHERE item_id=? ORDER BY updated DESC LIMIT 1',
+                          (str(iid),)).fetchone()
+            deps.update(attempt=dict(a) if a else None)
+        elif op == 'swap_slot':
+            deps.update(format=it['format'], owner_state=it['owner_state'])
+        return fingerprint(deps)
+
     def create_proposal(self, c, kind, bindings: list[str], payload: dict, summary: str, created_by: str,
                         thread=None, notify=True) -> dict:
         items = []
         for iid in bindings:
             it = self.item(c, iid)
             res = self.reservation(c, iid)
-            items.append({'item_id': str(iid), 'version': it['version'], 'slot': res['slot'] if res else None})
+            items.append({'item_id': str(iid), 'version': it['version'], 'slot': res['slot'] if res else None,
+                          'deps': self.proposal_deps(c, kind, iid, payload)})
         pid = 'B-' + secrets.token_hex(4).upper()
         now = self.now()
         c.execute('INSERT INTO ops_proposals(id,kind,bindings,payload,payload_hash,summary,created_by,thread,state,'
@@ -706,10 +743,15 @@ class CoreMixin:
             # Bound to the exact draft and text instead (checked in execute_approve_caption): system
             # updates such as readiness or media changes bump the item version but do not touch the caption.
             return
+        payload = loads(p['payload'], {})
         for b in loads(p['bindings'], []):
             it = self.item(c, b['item_id'])
             res = self.reservation(c, b['item_id'])
-            if it['version'] != b['version'] or (res['slot'] if res else None) != b['slot']:
+            if 'deps' in b:
+                changed = self.proposal_deps(c, p['kind'], b['item_id'], payload) != b['deps']
+            else:                       # proposals made before dependency binding keep the version rule
+                changed = it['version'] != b['version'] or (res['slot'] if res else None) != b['slot']
+            if changed:
                 raise Rejected(f"Item {b['item_id']} changed after the proposal; it was not executed", 'stale')
 
     def op_approve_proposal(self, c, cmd: Command):
