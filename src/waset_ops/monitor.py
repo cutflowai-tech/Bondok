@@ -73,17 +73,49 @@ class MonitorMixin:
                     findings.append({'fingerprint': f"heartbeat:{name}", 'item_id': None, 'kind': 'heartbeat',
                                      'action': 'notify', 'notify': True,
                                      'detail': f"{name} has not reported for {int((now - hb['at']) / 60)} minutes."})
-            free = shutil.disk_usage(self.store.path.resolve().parent).free
-            if free < rules.MEDIA_MIN_FREE_BYTES:
-                # One alert while preparation is blocked (production 2026-10-10: only per-item board notes).
-                waiting = c.execute('SELECT COUNT(*) FROM ops_items WHERE infra_issue IS NOT NULL').fetchone()[0]
+            disk = self.disk_state(c)
+            if disk['level']:
                 findings.append({'fingerprint': 'low_disk', 'item_id': None, 'kind': 'low_disk', 'action': 'notify',
-                                 'notify': True,
-                                 'detail': f'Media preparation is paused: the server has {free / 1e9:.1f} GB of free '
-                                           f'disk space and needs {rules.MEDIA_MIN_FREE_BYTES / 1e9:.0f} GB. {waiting} '
-                                           'item(s) are waiting. Free disk space; preparation resumes automatically. '
-                                           'Do not delete the prepared media folder: it holds the scheduled videos.'})
+                                 'notify': False, 'detail': disk['detail']})   # notified by disk_alert transitions
         return {'findings': findings, 'checked_at': self.iso_ts(now), 'read_only': True}
+
+    DISK_RECOVER_BYTES = rules.MEDIA_MIN_FREE_BYTES + 1_000_000_000      # hysteresis: back to normal above 7 GB
+
+    def disk_state(self, c) -> dict:
+        """Fresh free space, items waiting for media preparation, and the alert level (R5 M14)."""
+        free = shutil.disk_usage(self.store.path.resolve().parent).free
+        waiting = c.execute("SELECT COUNT(*) FROM ops_items WHERE infra_issue IS NOT NULL OR (readiness IN "
+                            "('unchecked','checking') AND owner_state='active' AND publication='not_started' AND "
+                            "format IN ('Post','Story'))").fetchone()[0]
+        level = 'critical' if free < rules.MEDIA_RESERVE_BYTES else 'low' if free < rules.MEDIA_MIN_FREE_BYTES else None
+        detail = (f'The server has {free / 1e9:.1f} GB of free disk space; media preparation needs '
+                  f'{rules.MEDIA_MIN_FREE_BYTES / 1e9:.0f} GB. {waiting} item(s) are waiting for preparation. Free '
+                  'disk space; preparation resumes automatically. Do not delete the prepared media folder: it holds '
+                  'the scheduled videos.')
+        return {'free': free, 'waiting': waiting, 'level': level, 'detail': detail}
+
+    def disk_alert(self) -> dict:
+        """One alert when space gets low, one escalation when critical, one recovery notice above the hysteresis
+        threshold; flapping around 6 GB stays quiet. Fresh numbers in every message (R5 M14, BV-81)."""
+        with self.store.tx() as c:
+            d = self.disk_state(c)
+            r = c.execute("SELECT value FROM ops_meta WHERE key='disk_alert'").fetchone()
+            prev = (loads(r['value'], {}) or {}).get('level') if r else None
+            level = d['level']
+            if prev and not level and d['free'] < self.DISK_RECOVER_BYTES:
+                level = 'low' if prev == 'low' else 'low'          # not recovered until above the threshold
+            rank = {None: 0, 'low': 1, 'critical': 2}
+            if rank[level] > rank[prev]:
+                head = '⚠️ Disk space is critically low' if level == 'critical' else '⚠️ Disk space is low'
+                self.notify(c, f'disk:{level}:{int(self.now())}', f"{head}: {d['detail']}")
+            elif prev and not level:
+                self.notify(c, f'disk:recovered:{int(self.now())}', f"✅ Disk space recovered: {d['free'] / 1e9:.1f} GB "
+                            'free; media preparation continues.')
+            if level != prev or (level and rank[level] < rank[prev]):
+                c.execute("INSERT OR REPLACE INTO ops_meta VALUES('disk_alert',?)",
+                          (dumps({'level': level if rank[level] >= rank.get(prev, 0) or not level else prev,
+                                  'at': self.now()}),))
+            return {**d, 'alert_level': level}
 
     @staticmethod
     def _f(kind, r, action, detail, notify=True):
@@ -110,6 +142,7 @@ class MonitorMixin:
                     applied.append({'item_id': f['item_id'], 'kind': f['kind'], 'state': r['state']})
         applied += self.reconcile_schedule(run_id)
         self.sweep_proposals()
+        self.disk_alert()
         with self.store.tx() as c:
             for r in c.execute('SELECT fingerprint FROM ops_findings WHERE resolved IS NULL').fetchall():
                 # Findings raised by WF1 (missing on the board) are resolved there, not by this inspection

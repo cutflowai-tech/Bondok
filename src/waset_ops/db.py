@@ -168,25 +168,27 @@ def loads(s, default=None):
 class Store:
     """Connection factory. Each call site opens a short-lived connection."""
 
-    def __init__(self, path: str | os.PathLike, *, create: bool = True):
+    def __init__(self, path: str | os.PathLike, *, create: bool = True, busy_ms: int = 30000):
         self.path = Path(path)
         self.create = create
+        self.busy_ms = busy_ms
 
-    def connect(self) -> sqlite3.Connection:
+    def connect(self, busy_ms: int | None = None) -> sqlite3.Connection:
         if not self.create and not self.path.is_file():
             raise FileNotFoundError(f'Operational database not found: {self.path}')
         if self.create:
             self.path.parent.mkdir(parents=True, exist_ok=True)
-        c = sqlite3.connect(self.path, timeout=30, isolation_level=None)
+        ms = self.busy_ms if busy_ms is None else busy_ms
+        c = sqlite3.connect(self.path, timeout=ms / 1000, isolation_level=None)
         c.row_factory = sqlite3.Row
-        c.execute('PRAGMA busy_timeout=30000')
+        c.execute(f'PRAGMA busy_timeout={int(ms)}')
         c.execute('PRAGMA foreign_keys=ON')
         return c
 
     @contextlib.contextmanager
-    def tx(self):
+    def tx(self, busy_ms: int | None = None):
         """BEGIN IMMEDIATE ... COMMIT. Serialises writers; keep it short."""
-        c = self.connect()
+        c = self.connect(busy_ms)
         try:
             c.execute('BEGIN IMMEDIATE')
             yield c

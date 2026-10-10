@@ -28,6 +28,7 @@ ACTIVE_ATTEMPT = ('claimed', 'container_created', 'committed', 'outcome_unknown'
 PRE_COMMIT = ('claimed', 'container_created')
 
 OUTBOX_MAX_ATTEMPTS = 6
+JOB_SECONDS = 150                   # worst case per display job: read-before-write + write (60 s timeouts) + ack
 # Board values may have been written by v1 or by people. The projection may set
 # any system column, but only clears values it wrote itself (tracked as '_ours').
 # Found at cutover: clearing v1 dates, delivery links and metadata destroyed data.
@@ -124,7 +125,9 @@ class CoreMixin:
 
         * Same id + same payload -> recorded result returned (``duplicate``).
         * Same id + different payload -> rejected.
-        * Rejections are durable outcomes; unexpected errors record ``failed``.
+        * Rejections are durable outcomes; handler errors record ``failed``.
+        * Storage errors (locked/full/unreadable store): nothing is applied; one short attempt records ``failed``
+          and the result says whether that record exists (``recorded``). A later retry with the same id runs once.
         """
         h = cmd.payload_hash()
         try:
@@ -174,13 +177,16 @@ class CoreMixin:
                 audit(c, cmd.item_id, 'command', cmd.actor, {'id': cmd.id, 'op': cmd.op, 'state': state})
                 return {**result, 'state': state, 'command_id': cmd.id}
         except sqlite3.Error as e:
+            recorded = False
             try:
-                with self.store.tx() as c:
-                    c.execute('UPDATE ops_commands SET state=?, result=?, updated=? WHERE id=? AND state=?',
-                              ('failed', dumps({'reason': 'storage error'}), self.now(), cmd.id, 'received'))
+                with self.store.tx(busy_ms=1000) as c:     # bounded: never a second full busy wait (R5 LOW-03)
+                    recorded = c.execute('UPDATE ops_commands SET state=?, result=?, updated=? WHERE id=? AND state=?',
+                                         ('failed', dumps({'reason': 'storage error'}), self.now(), cmd.id,
+                                          'received')).rowcount == 1
             except sqlite3.Error:
                 pass
-            return {'state': 'failed', 'code': 'storage', 'reason': 'Operational store unavailable: ' + str(e)[:200]}
+            return {'state': 'failed', 'code': 'storage', 'recorded': recorded,
+                    'reason': 'Operational store unavailable: ' + str(e)[:200]}
 
     # Which actor kinds may run which operation. Enforced in code, never in prompts.
     PERMISSIONS = {
@@ -551,9 +557,11 @@ class CoreMixin:
         with self.store.tx() as c:
             # Escalated display/editor jobs keep being retried hourly so the board recovers after an outage
             # (audit I1); a lease that expired means the worker died: that counts as a failed attempt (audit I7).
+            # Escalated jobs of every kind, Slack notices included, keep being retried hourly: a long Slack outage
+            # delays a notice but never loses it (R5 M19).
             rows = c.execute(f"SELECT * FROM ops_outbox WHERE kind IN ({','.join('?'*len(kinds))}) AND "
                              "((state IN ('pending','failed') AND next_at<=?) OR (state='in_flight' AND lease_until<?) "
-                             "OR (state='escalated' AND kind!='slack' AND next_at<=?)) "
+                             "OR (state='escalated' AND next_at<=?)) "
                              'ORDER BY id LIMIT ?', (*kinds, now, now, now, limit)).fetchall()
             out = []
             for r in rows:
@@ -566,8 +574,11 @@ class CoreMixin:
                         self.notify(c, f"escalate:{r['id']}", f"Display/sync job keeps stopping its worker "
                                     f"({r['kind']}, item {r['item_id']}); it will be retried hourly.", r['item_id'])
                     continue
+                # A worker applies its batch one job after another: the n-th job's lease covers the jobs before
+                # it, so a slow batch is not taken again by the next run (R5 M28).
                 c.execute("UPDATE ops_outbox SET state='in_flight', lease_owner=?, lease_until=?, updated=?, "
-                          'attempts=attempts+? WHERE id=?', (worker, now + lease, now, 1 if crashed else 0, r['id']))
+                          'attempts=attempts+? WHERE id=?', (worker, now + lease + JOB_SECONDS * len(out), now,
+                                                            1 if crashed else 0, r['id']))
                 out.append({'id': r['id'], 'kind': r['kind'], 'item_id': r['item_id'], 'payload': loads(r['payload'])})
             return out
 
