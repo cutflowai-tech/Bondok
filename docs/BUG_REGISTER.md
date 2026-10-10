@@ -108,6 +108,8 @@ publication, published reverted, unknown outcome claimed) failed in any fuzz run
 | BV-71 | MEDIUM | (fuzz F3) two owner-approved writes of the same column before a sync: second conflicted forever (board caption A, publish caption B) | `be00eed` | `FuzzFindings` |
 | BV-72 | LOW–MED | (fuzz F7) caption typed while the item was a Story became approved, unvalidated, on conversion to Post | `be00eed` | `FuzzFindings` |
 | BV-73 | LOW | (fuzz F8) rejected board edit's hold kept the reservation | `be00eed` | `FuzzFindings` |
+| BV-75 | MEDIUM | (fuzz round 3) an owner-approved write taken by WF2 before a person edited the same column retried forever after its conflict | `efb72d0` | `FuzzRoundThree` |
+| BV-76 | MEDIUM | (fuzz round 3) a consumed board value (person's "Posted") masked by an older pending value: corrective status write never queued | `efb72d0` | `FuzzRoundThree` |
 | BV-74 | LOW (by design) | (fuzz F9) published / unknown items keep their past reservation row (table growth only) | open | — |
 
 ## OPEN (not fixed; see POST_RELEASE_IMPROVEMENTS.md)

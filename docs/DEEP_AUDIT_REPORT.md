@@ -7,18 +7,20 @@
   versions, legacy receipts. No restart, deploy, workflow change, database write, Monday change or publish.
 * Round 1: six parallel read-only audits (scheduling, publishing, media/WF1, Bondok AI/Slack, Monday sync,
   infrastructure). Every candidate was reproduced against the real code before it was accepted.
-* Round 2: an independent review of all round-1 fixes, and a seeded randomized sequence tester (~1 M steps,
+* Round 2/3: an independent review of all round-1 fixes, and a seeded randomized sequence tester (~1.3 M steps,
   3–6 items, owner/board/WF1/WF2/WF3/outbox/clock events interleaved, crashes and stale snapshots, invariants
   checked after every step, board convergence checked at the end of every seed).
 * Each fix: reproduction → root cause → regression test that fails on the pre-fix code (run in a separate git
   worktree) → smallest fix → full suite → replay where the change touched workflows or the sync path.
 
 ## Results
-* **74 register entries**; **64 fixed and verified**, 10 open (1 owner decision, 9 low). See `BUG_REGISTER.md`.
+* **76 register entries**; **66 fixed and verified**, 10 open (1 owner decision, 9 low). See `BUG_REGISTER.md`.
   * CRITICAL 5 — all fixed.
-  * HIGH 25 — all fixed (incl. 2 regressions introduced and then fixed in round 2).
-  * MEDIUM 26 — 25 fixed, 1 open (owner decision BV-56).
+  * HIGH 25 — all fixed (incl. 2 regressions introduced by round-1 fixes and fixed in round 2).
+  * MEDIUM 28 — 27 fixed, 1 open (owner decision BV-56).
   * LOW 18 — 9 fixed, 9 open.
+* Final randomized campaigns on the fixed code: **0 invariant failures in 450 seeds / 300,000 steps** (display
+  convergence included), down from failures in 74 of 150 seeds of the same campaign on the round-1 code.
 * No publication-safety invariant failed in the randomized testing: never two publications of an item, never a
   commit after content/caption/format/source changed, never a claim for paused/skipped/held/unknown items, never
   a published item reverted.
