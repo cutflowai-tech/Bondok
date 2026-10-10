@@ -1843,6 +1843,22 @@ class LegacyDateLoopIncident(OpsCase):
         self.assertEqual(json.loads(self.item('1401')['hold'])['kind'], 'unscheduled')
 
 
+    def test_foreign_system_text_is_handled_once(self):
+        """Production 2026-10-10: text in the System column that v2 never wrote was 'reverted' every cycle (an audit
+        row each time) without any write, because v2 never clears a value it does not own."""
+        self.observe(monday_item('1402', fmt='Post', code='LIP1'))
+        self.drain_monday()
+        for i in range(4):
+            self.clock.advance(600)
+            self.ops.run_start('wf1', f'sys-{i}')
+            b = board_from_projection(self.ops, '1402', fmt='Post', topaz='Not yet')
+            set_cell(b, 'system', 'note typed by a person', {'text': 'note typed by a person'})
+            self.observe(b)
+            self.drain_monday()
+        with self.ops.store.read() as c:
+            n = c.execute("SELECT COUNT(*) FROM ops_audit WHERE kind='revert_system_column'").fetchone()[0]
+        self.assertLessEqual(n, 1)
+
 class MissingPreparedFileAtSlot(OpsCase):
     """Round 4: a prepared file removed from storage (e.g. to free disk space) made the item miss its slot silently:
     the claim refused, the reservation was released and nobody was told."""
