@@ -1,3 +1,4 @@
+import json
 """Round 5 release-critical traces (docs/AUDIT_ROUND5_2026-10-10.md), one class per register entry.
 
 Each test reproduces the original counterexample against the handler and asserts the owner-visible outcome
@@ -273,6 +274,38 @@ class R5_B1_CrossItemDuplicateGuard(OpsCase):
         self.ops.submit(owner_cmd(self.rid(), 'report_published', '64', source='slack'))
         self.make_ready('65', content='hash')
         self.assertIsNone(self.res('65'))
+
+
+class R5_B1_RefusedAttemptDoesNotBlockItsOldFileForever(OpsCase):
+    """Campaign finding (seed 125): a refused attempt journalled file v1; the item later published file v3; another
+    item holding v1 (never published) was blocked as "same video as a published item" for ever."""
+
+    def test_only_what_may_have_been_published_blocks(self):
+        self.make_ready('80', 'Story', content='k80-')
+        self.clock.set(rules.instant(self.res('80')['slot']) + timedelta(seconds=30))
+        cl = self.ops.claim('80', 'w')
+        self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C80')
+        self.assertTrue(self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['committed'])
+        self.ops.result(cl['attempt_id'], 'w', error=json.dumps({'error': {'code': 9, 'error_subcode': 2207042,
+                                                                            'message': 'limit'}}),
+                        http_status=400, definitive=True)
+        self.assertNotEqual(self.item('80')['publication'], 'published')
+        # Item 80 gets another file (v3) and publishes it.
+        self.ops.submit(owner_cmd(self.rid(), 'resolve_outcome', '80', explicit=True, outcome='not_published'))
+        self.select('80', 3, 'k80-')
+        self.duration('80', 30.0, 3, 'k80-')
+        self.topaz('80', 3)
+        self.select('80', 3, 'k80-')
+        mid = self.add_media('80', 'Story', 3)
+        self.wf1('prep_media', '80', result={'ready': True, 'mediaId': mid})
+        self.ops.submit(owner_cmd(self.rid(), 'report_published', '80', source='slack'))
+        self.assertEqual(self.item('80')['publication'], 'published')
+        # Item 81 holds file v1 of the same video, which never went out: it is not a duplicate.
+        self.make_ready('81', 'Story', content='k80-')
+        self.assertEqual(self.item('81')['readiness'], 'ready', self.item('81')['block_reason'])
+        # File v3, which did go out, is still blocked on another item.
+        self.make_ready('82', 'Story', content='k80-', n=3)
+        self.assertEqual(self.item('82')['readiness'], 'blocked')
 
 
 if __name__ == '__main__':

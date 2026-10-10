@@ -566,6 +566,31 @@ class PublishMixin:
         for identity in ids:
             c.execute('INSERT OR IGNORE INTO assets VALUES(?,?)', (identity, it['item_id']))
 
+    def unjournal(self, c, a):
+        """An attempt that definitively did not publish stops blocking its content (campaign seed 125): its journal
+        rows are removed unless another attempt of the item that may have published, or an owner report about the
+        same content, still backs them. The source identity is recomputed only while the item still has the attempt's
+        content revision (otherwise only the delivered-file identity is known for certain; the rest stays)."""
+        it = self.item(c, a['item_id'], required=False)
+        if it is None:
+            return
+        if it['publication'] == 'published' and a['content_rev'] == it['content_rev']:
+            return                                  # this very content is recorded as published (e.g. owner report)
+        info = loads(a['payload'], {}) or {}
+        ids = {f"{rules.ACCOUNT}|{info.get('format')}|{info['video_sha256']}"} if info.get('video_sha256') else set()
+        if a['content_rev'] == it['content_rev']:
+            ids |= self.content_identities(c, it)
+        keep = set()
+        for o in c.execute("SELECT payload, content_rev FROM ops_attempts WHERE item_id=? AND id!=? AND stage IN "
+                           "('committed','outcome_unknown','owner_unpublished','published')", (a['item_id'], a['id'])):
+            oi = loads(o['payload'], {}) or {}
+            if oi.get('video_sha256'):
+                keep.add(f"{rules.ACCOUNT}|{oi.get('format')}|{oi['video_sha256']}")
+            if o['content_rev'] == it['content_rev']:
+                keep |= self.content_identities(c, it)
+        for ident in ids - keep:
+            c.execute('DELETE FROM assets WHERE identity=? AND item=?', (ident, a['item_id']))
+
     # ------------------------------------------------------------------ outcomes
     def result(self, attempt_id, worker, *, media_id=None, error=None, http_status=None, definitive=False) -> dict:
         """Record the provider response for a committed attempt.
@@ -589,6 +614,7 @@ class PublishMixin:
                           (dumps({'abandoned': 'Instagram: media not ready for publishing (9007)', 'class': cls,
                                   'http_status': http_status, 'error': str(error)[:300]}), self.now(), attempt_id))
                 c.execute('DELETE FROM publications WHERE item=? AND owner=?', (a['item_id'], 'ops:' + attempt_id))
+                self.unjournal(c, a)
                 audit(c, a['item_id'], 'attempt_abandoned', worker, {'attempt': attempt_id, 'why': 'media not ready (9007)'})
                 self.project(c, a['item_id'])
                 return {'stage': 'abandoned', 'retry': 'same slot'}
@@ -607,6 +633,7 @@ class PublishMixin:
         """Documented refusal of media_publish: nothing was published. A late refusal also resolves an attempt
         that had become unknown (R5 A18); the owner is told what actually happens next."""
         text = summary(error)
+        self.unjournal(c, a)
         c.execute("UPDATE ops_attempts SET stage='failed', evidence=?, updated=? WHERE id=?",
                   (dumps({**(loads(a['evidence'], {}) or {}), 'http_status': http_status, 'error': str(error)[:800],
                           'class': cls, 'transient': cls in ('throttle', 'daily_limit', 'container_gone',
@@ -722,6 +749,7 @@ class PublishMixin:
                           (checks, dumps({**ev, 'outcome': 'not_published (container ' + container_status + ')'}),
                            self.now(), attempt_id))
                 c.execute('DELETE FROM publications WHERE item=? AND owner=?', (a['item_id'], 'ops:' + attempt_id))
+                self.unjournal(c, a)
                 it = self.item(c, a['item_id'])
                 if a['stage'] == 'outcome_unknown' and it['publication'] == 'outcome_unknown':
                     it = self.update_item(c, it['item_id'], 'service:wf2', 'container never published',
@@ -838,6 +866,7 @@ class PublishMixin:
         else:
             c.execute("UPDATE ops_attempts SET stage='failed', evidence=?, updated=? WHERE id=?",
                       (dumps(ev), self.now(), a['id']))
+            self.unjournal(c, a)
         c.execute('DELETE FROM publications WHERE item=? AND owner=?', (it['item_id'], 'ops:' + a['id']))
         self.release(c, it, 'resolved not published')
         self.update_item(c, it['item_id'], cmd.actor, 'resolved not published', publication='not_started')

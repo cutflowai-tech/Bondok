@@ -1,0 +1,33 @@
+{
+ "_comment": "Template for deploy.py --config. Copy to a private, root-only path on the server and fill in. Never commit the filled copy (it names paths, containers, the n8n project and credential ids).",
+ "state_dir": "/root/bondok-deploy/state",
+ "backup_root": "/root/bondok-deploy/backups",
+ "lock_file": "/root/bondok-deploy/deploy.lock",
+ "host_python": "/usr/bin/python3",
+ "helper": {
+  "data_dir": "<host path of the n8n data volume folder holding state.sqlite and helper.py>",
+  "runner": ["docker", "exec", "<n8n container>", "python3"],
+  "runner_data_dir": "<the same folder as seen inside the n8n container>",
+  "runner_env": {"WASET_SOCIAL_DATA_DIR": "<the same folder as seen inside the n8n container>"}
+ },
+ "bondok": {
+  "code_dir": "<Bondok code directory>",
+  "python": "<Bondok venv python>",
+  "db": "<Bondok sqlite file>",
+  "unit_files": ["/etc/systemd/system/bondok.service"],
+  "stop": [["systemctl", "stop", "bondok"]],
+  "start": [["systemctl", "start", "bondok"]],
+  "health": {"command": ["systemctl", "is-active", "bondok"], "expect_stdout": "active"}
+ },
+ "drain": {"timeout_seconds": 900, "poll_seconds": 5},
+ "contain_commands": [],
+ "n8n": {
+  "export": ["docker", "exec", "<n8n container>", "n8n", "export:workflow", "--id={id}", "--output={file}"],
+  "import": ["docker", "exec", "<n8n container>", "n8n", "import:workflow", "--input={file}", "--projectId={project}"],
+  "project": "<n8n project id>",
+  "workflow_ids": ["<WF1 id>", "<WF2 id>", "<WF3 id>"],
+  "file_dir": "<host folder visible to the n8n container>",
+  "runner_file_dir": "<the same folder as seen inside the n8n container>",
+  "credentials": {"<credential type>:<credential name>": "<credential id>"}
+ }
+}
