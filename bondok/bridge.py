@@ -62,7 +62,10 @@ def _statement(text: str, tokens) -> bool:
     """A plain affirmative statement/instruction: no question, no negation anywhere."""
     if '?' in text or '؟' in text or (tokens and tokens[0] in _QUESTION_START):
         return False
-    if any(t in _NEGATION or (t.startswith('م') and t.endswith('ش') and len(t) >= 4) for t in tokens):
+    # "بس مش اكتر" ("nothing more") limits an instruction; it does not negate it (production 2026-10-10).
+    limiter = {i + 1 for i, (a, b) in enumerate(zip(tokens, tokens[1:])) if a == 'مش' and b in ('اكثر', 'اكتر')}
+    if any((t in _NEGATION and i not in limiter and not (t == 'مش' and i + 1 in limiter)) or
+           (t.startswith('م') and t.endswith('ش') and len(t) >= 4) for i, t in enumerate(tokens)):
         return False
     # "ما اتنشرش" (negation split over two words); a plain "ما" ("زي ما قلتلك") is not a negation.
     return not any(a == 'ما' and b.endswith('ش') for a, b in zip(tokens, tokens[1:]))
@@ -76,6 +79,7 @@ _DONE = ('خلص', 'خلاص', 'اتعمل', 'تم', 'اتم', 'جاهز', 'done
          'topazed')
 _RESUME = ('كمل', 'استانف', 'رجع', 'شغل', 'resume', 'unpause', 'continue')
 _PAUSE = ('وقف', 'ايقاف', 'pause', 'paused', 'hold')
+_PUBLISH = ('انشر', 'تنشر', 'ينشر', 'publish')
 _SKIP = ('تخطي', 'اتخطي', 'تخطا', 'اتخطا', 'سكيب', 'skip', 'الغي', 'cancel')
 _PUBLISHED = ('اتنشر', 'منشور', 'published', 'posted', 'live')
 _PUBLISHED_EXACT = {'نزلت', 'نزلتي', 'اتنزل', 'اتنزلت'}
@@ -98,7 +102,8 @@ def explicit(op: str, args: dict, text: str) -> bool:
     if op == 'confirm_topaz':
         return _has(toks, _TOPAZ) and _has(toks, _DONE, _PREFIX_VERB)
     if op == 'resume':
-        return _has(toks, _RESUME, _PREFIX_VERB)
+        # "Publish them" names the outcome the owner wants for a paused/skipped item; never together with a pause word.
+        return _has(toks, _RESUME, _PREFIX_VERB) or (_has(toks, _PUBLISH, _PREFIX_VERB) and not _has(toks, _PAUSE))
     if op == 'skip':
         return _has(toks, _SKIP, _PREFIX_VERB) and not _has(toks, _PAUSE + _RESUME)
     if op == 'resolve_outcome':

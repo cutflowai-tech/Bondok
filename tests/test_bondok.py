@@ -318,6 +318,22 @@ class ExplicitIntentFailsClosed(unittest.TestCase):
             self.assertTrue(explicit(op, args, text), (op, text))
 
 
+
+class OwnerPublishWordsResume(unittest.TestCase):
+    """Production 2026-10-10: Bondok paused five Stories on an ambiguous "stop"; the owner's "publish them tomorrow at
+    their times, nothing more" was not an explicit resume, so it became approval requests that expired. Plain publish
+    wording now resumes; pause words, questions and real negations still fail closed."""
+
+    def test_publish_wording_resumes(self):
+        for text in ('انا عاوزك تنشرهم في موعدهم بكرا بس مش اكثر', 'انشرهم بكرا في مواعيدهم', 'انشر الستوري دي',
+                     'publish them tomorrow at their times'):
+            self.assertTrue(explicit('resume', {}, text), text)
+
+    def test_publish_wording_still_fails_closed(self):
+        for text in ('وقف نشر الخمس ستوري', 'هتنشرهم امتى؟', 'متنشرهمش', 'مش عاوزك تنشرهم', 'مش هتنشرهم اكتر',
+                     'do not publish them', 'stop publishing them', 'pause publishing LIP12', 'hold, publish later'):
+            self.assertFalse(explicit('resume', {}, text), text)
+
 class UncertainOutcomeNeedsApproval(BondokCase):
     def test_not_published_is_always_a_proposal(self):
         self.make_ready('350', 'Story')
