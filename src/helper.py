@@ -1,8 +1,12 @@
 """Waset social helper (v2): command-line dispatcher into waset_ops.
 
 Invocation (unchanged pattern): python3 helper.py <base64 JSON {path, body}>
-Large bodies: {path, bodyFile: "inbox/<name>.json"} written by n8n beside this file.
-This is not an HTTP service; base64 is transport encoding, not authentication.
+Large bodies (R5 A12): {path, bodyFile: "inbox/<name>.json"}. n8n writes the JSON body with its Read/Write Files
+node into the data directory's inbox/ (the only directory it may write there); the helper validates the name
+(plain file, no path, no link), refuses bodies over MAX_BODY_FILE_BYTES (UTF-8 bytes), reads it once and deletes
+it. Files left behind by an execution that never reached the helper are swept after INBOX_STALE_SECONDS.
+The command line itself is always the fixed helper path plus one base64 argument (no payload text reaches the
+shell). This is not an HTTP service; base64 is transport encoding, not authentication.
 Trust boundary: whoever can execute commands on the n8n host.
 
 Output contract:
@@ -11,10 +15,16 @@ Output contract:
   diagnostic (exit 1 used to discard stdout). Exit 1 only if no JSON could be written.
 * Every failure is also appended to errors.log (JSON lines), which does not
   depend on SQLite, so a database outage stays observable.
+
+Deployment fence: while ``deploy-fence.json`` exists in the data directory (written by deploy/deploy.py) new work
+is not started (runs and the supervisor are deferred, queues answer empty, claims are refused); a run that
+started before the fence, and attempts already claimed, may finish and report results.
 """
 import base64
+import fcntl
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -25,17 +35,133 @@ sys.path.insert(0, str(HERE))
 
 from waset_ops import Command, Ops, Rejected, __version__  # noqa: E402
 from waset_ops import media  # noqa: E402
+from waset_ops.db import SCHEMA_VERSION  # noqa: E402
 
 ROOT = media.ROOT
 SERVICE = {'wf1': 'service:wf1', 'wf2': 'service:wf2', 'wf3': 'service:wf3'}
+MAX_BODY_FILE_BYTES = 8_000_000           # serialized UTF-8 bytes; the n8n Input nodes use the same bound
+INBOX_STALE_SECONDS = 3600
+BODY_FILE = re.compile(r'inbox/[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.json')
+FENCE_FILE = 'deploy-fence.json'
+# Results of work already in flight, and read-only routes: allowed while the deployment fence is up.
+FENCE_ALLOWED = {'/v2/health', '/v2/monitor/inspect', '/v2/deploy/drain', '/v2/run/finish', '/v2/run/fail',
+                 '/v2/publish/container', '/v2/publish/renew', '/v2/publish/commit', '/v2/publish/result',
+                 '/v2/publish/evidence', '/v2/publish/reconcile', '/v2/publish/abandon', '/v2/outbox/ack',
+                 '/v2/import/record'}
+# New work: answered as "nothing to do now" so the workflows end cleanly instead of failing every cycle.
+FENCE_IDLE = {
+    '/v2/run/start': {'acquired': False, 'deferred': True, 'reason': 'deployment in progress; this cycle is deferred'},
+    '/v2/monitor/run': {'acquired': False, 'deferred': True, 'reason': 'deployment in progress; supervision deferred'},
+    '/v2/publish/due': {'work': []},
+    '/v2/outbox/take': {'jobs': []},
+    '/v2/prep/queue': {'work': []},
+}
 
 
 def ops():
     o = Ops(ROOT / 'state.sqlite')
-    if o.store.schema_version() < 1:     # read-only check first; DDL only when needed
+    v = o.store.schema_version()         # read-only check first; DDL only when needed
+    if v > SCHEMA_VERSION:
+        # R5 LOW-02: a database migrated by newer code is never written by older code (rollback safety).
+        raise Rejected(f'Database schema {v} is newer than this helper ({SCHEMA_VERSION}); refusing to run',
+                       'schema_newer')
+    if v < SCHEMA_VERSION:
         o.store.migrate()
     o.apply_data_fixes()                 # cheap once applied: one indexed read per call
     return o
+
+
+def release_info():
+    """Identity of the code that is running (RELEASE.json is written by deploy/build_release.py)."""
+    try:
+        return json.loads((HERE / 'RELEASE.json').read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def deploy_fence():
+    p = ROOT / FENCE_FILE
+    if not p.exists():
+        return None
+    try:
+        fence = json.loads(p.read_text())
+        return fence if isinstance(fence, dict) else {'unreadable': True, 'since': 0}
+    except (OSError, ValueError):
+        return {'unreadable': True, 'since': 0}       # fail closed: an unreadable fence is still a fence
+
+
+def run_context(b):
+    """(kind, run id, fence) of a run-scoped request, if it carries one."""
+    r = b.get('run')
+    if isinstance(r, dict) and r.get('id') is not None:
+        return str(r.get('kind') or 'wf1'), str(r['id']), r.get('fence')
+    if b.get('runId') is not None and b.get('fence') is not None:
+        return 'wf1', str(b['runId']), b.get('fence')
+    return None
+
+
+def in_flight_run(o, ctx, fence) -> bool:
+    """The request belongs to the run that held the lease when the fence went up (it may finish)."""
+    if not ctx:
+        return False
+    kind, run_id, run_fence = ctx
+    with o.store.read() as c:
+        r = c.execute('SELECT * FROM ops_runs WHERE kind=?', (kind,)).fetchone()
+    return bool(r and r['run_id'] == run_id and (run_fence is None or r['fence'] == int(run_fence)) and
+                (r['lease_until'] or 0) > time.time() and (r['started'] or 0) < float(fence.get('since') or 0))
+
+
+def media_jobs_running() -> int:
+    """Detached media jobs hold one capacity lock each; probe without waiting."""
+    n = 0
+    for slot in range(getattr(media, 'CAPACITY', 2)):
+        p = ROOT / f'media-capacity-{slot}.lock'
+        try:
+            fd = os.open(p, os.O_RDONLY)
+        except OSError:
+            continue
+        try:
+            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except BlockingIOError:
+            n += 1
+        finally:
+            os.close(fd)
+    return n
+
+
+def drain_status(o) -> dict:
+    """Read-only: is any writer still working? Used by deploy/deploy.py before it switches code."""
+    now = time.time()
+    with o.store.read() as c:
+        runs = [dict(r) for r in c.execute('SELECT kind, run_id, fence, lease_until, started FROM ops_runs '
+                                           'WHERE lease_until > ?', (now,))]
+        attempts = [dict(r) for r in c.execute("SELECT id, item_id, stage, lease_until FROM ops_attempts WHERE stage "
+                                               "IN ('claimed','container_created','committed')")]
+        outbox = c.execute("SELECT COUNT(*) FROM ops_outbox WHERE state='in_flight' AND lease_until > ?",
+                           (now,)).fetchone()[0]
+    live = [a for a in attempts if (a['lease_until'] or 0) > now]
+    jobs = media_jobs_running()
+    return {'fenced': deploy_fence() is not None, 'fence': deploy_fence(),
+            'drained': not runs and not live and not outbox and not jobs,
+            'blocking': {'runs': runs, 'attempts': live, 'outbox_in_flight': outbox, 'media_jobs': jobs},
+            # Leases already expired: the worker is gone; the new code reconciles them (never "canceled").
+            'unresolved_attempts': [a for a in attempts if (a['lease_until'] or 0) <= now], 'as_of': now}
+
+
+def sweep_inbox():
+    d = ROOT / 'inbox'
+    try:
+        d.mkdir(mode=0o700, exist_ok=True)
+        cutoff = time.time() - INBOX_STALE_SECONDS
+        for p in d.iterdir():
+            try:
+                if p.name.endswith('.json') and p.lstat().st_mtime < cutoff:
+                    p.unlink()
+            except OSError:
+                pass
+    except OSError:
+        pass
 
 
 ERRORS_LOG_MAX = 5_000_000
@@ -55,15 +181,32 @@ def log_error(path, error, kind):
 
 def read_body(payload):
     if 'bodyFile' not in payload:
-        return payload.get('body') or {}
-    inbox = (ROOT / 'inbox').resolve()
-    p = (ROOT / payload['bodyFile']).resolve()
-    if p.parent != inbox or not p.name.endswith('.json'):
-        raise ValueError('bodyFile must be inbox/<name>.json')
-    try:
-        return json.loads(p.read_text())
-    finally:
-        p.unlink(missing_ok=True)
+        body = payload.get('body')
+    else:
+        ref = payload['bodyFile']
+        if not isinstance(ref, str) or not BODY_FILE.fullmatch(ref):
+            raise Rejected('bodyFile must be inbox/<name>.json', 'bad_payload')
+        inbox = ROOT / 'inbox'
+        p = inbox / ref.split('/', 1)[1]
+        if p.is_symlink() or not p.is_file() or p.resolve().parent != inbox.resolve():
+            raise Rejected('bodyFile must be a regular file in inbox/', 'bad_payload')
+        try:
+            size = p.stat().st_size
+            if size > MAX_BODY_FILE_BYTES:
+                raise Rejected(f'Request body is {size} bytes; the limit is {MAX_BODY_FILE_BYTES}', 'payload_too_large')
+            with p.open('rb') as f:
+                raw = f.read(MAX_BODY_FILE_BYTES + 1)
+            try:
+                body = json.loads(raw.decode('utf-8'))
+            except ValueError as e:
+                raise Rejected(f'bodyFile is not UTF-8 JSON ({e})', 'bad_payload') from None
+        finally:
+            p.unlink(missing_ok=True)
+    if body is None:
+        return {}
+    if not isinstance(body, dict):
+        raise Rejected('Request body must be a JSON object', 'bad_payload')
+    return body
 
 
 def cmd(o, b, op, item, args, kind):
@@ -102,16 +245,39 @@ def prep_step(o, b):
     return r
 
 
+def gate(o, path, b):
+    """Deployment fence and run fencing, before any route acts. Returns a response to send instead, or None."""
+    fence = deploy_fence()
+    ctx = run_context(b)
+    if fence is not None and path not in FENCE_ALLOWED:
+        if path in FENCE_IDLE:              # also for a run already in flight: it finishes without new work
+            return {**FENCE_IDLE[path], 'maintenance': True}
+        if not in_flight_run(o, ctx, fence):
+            raise Rejected('A deployment is in progress; new work is not started until it ends', 'maintenance',
+                           release=fence.get('release'))
+    if isinstance(b.get('run'), dict) and ctx:
+        o.run_progress(ctx[0], ctx[1], ctx[2], step=path)   # superseded runs are refused here (fenced)
+    return None
+
+
 def action(path, b):
     o = ops()
+    early = gate(o, path, b)
+    if early is not None:
+        return early
     if path == '/v2/run/start':
         return o.run_start(b['kind'], str(b['runId']))
     if path == '/v2/run/finish':
-        return o.run_finish(b['kind'], str(b['runId']), b.get('result'))
+        return o.run_finish(b['kind'], str(b['runId']), b.get('result'), fence=b.get('fence'))
+    if path == '/v2/run/fail':
+        return o.run_fail(b['kind'], str(b['runId']), b.get('reason') or 'reported by the workflow',
+                          step=b.get('step'), fence=b.get('fence'))
+    if path == '/v2/deploy/drain':
+        return drain_status(o)
     if path == '/v2/import/plan':
         return o.import_plan(b['sources'], b['social'])
     if path == '/v2/import/record':
-        return o.import_record(b['pairs'])
+        return o.import_record(b.get('pairs') or [], failed=b.get('failed'), uncertain=b.get('uncertain'))
     if path == '/v2/board/observe':
         return o.observe(b['items'], sources=b.get('sources'), complete=bool(b.get('complete')),
                          actor=SERVICE.get(b.get('caller'), 'monday-poll'), limit=int(b.get('limit', 20)))
@@ -136,7 +302,17 @@ def action(path, b):
     if path == '/v2/outbox/take':
         return {'jobs': o.outbox_take(b['kinds'], b['worker'], int(b.get('limit', 10)))}
     if path == '/v2/outbox/ack':
-        return o.outbox_ack(int(b['id']), b['worker'], bool(b['ok']), b.get('error'), b.get('result'))
+        out = o.outbox_ack(int(b['id']), b['worker'], bool(b['ok']), b.get('error'), b.get('result'))
+        # R5 LOW-02: a failed delivery, and an acknowledgment the handler refused, reach errors.log (watchdog).
+        # A compare-before-write conflict is the owner's newer edit, not a failure: kept in the outbox row only.
+        if not b['ok'] and not out.get('conflict') and not str(b.get('error') or '').startswith('conflict'):
+            log_error(path, f"job {b['id']} failed ({b['worker']}): {b.get('error')} -> "
+                            f"{'escalated' if out.get('escalated') else 'superseded' if out.get('superseded') else 'retry'}",
+                      'outbox_failed')
+        elif out.get('ok') is False and (out.get('reason') or out.get('stale_lease')):
+            log_error(path, f"job {b['id']} ({b['worker']}): {out.get('reason') or 'lease held by another worker'}",
+                      'outbox_ack_refused')
+        return out
     if path == '/v2/publish/due':
         return o.due(b['worker'], int(b.get('limit', 5)))
     if path == '/v2/publish/claim':
@@ -158,17 +334,24 @@ def action(path, b):
     if path == '/v2/publish/reconcile':
         return o.reconcile(b['attemptId'], b.get('containerStatus'), b.get('error'))
     if path == '/v2/monitor/run':
-        lease = o.run_start('wf3', str(b['runId']))
+        rid = str(b['runId'])
+        lease = o.run_start('wf3', rid)
         if not lease['acquired']:
             return {'deferred': True, **lease}
         try:
-            return {**o.repair(str(b['runId']), lease['fence']), 'deferred': False}
-        finally:
-            o.run_finish('wf3', str(b['runId']))
+            out = {**o.repair(rid, lease['fence']), 'deferred': False}
+        except Exception as e:
+            # R5 A13: a supervisor run that raised is a failed run, never a completed one.
+            o.run_fail('wf3', rid, f'{type(e).__name__}: {str(e)[:300]}', step='repair', fence=lease['fence'])
+            raise
+        o.run_finish('wf3', rid, {'findings': out.get('findings'), 'repairs': len(out.get('repairs') or [])},
+                     fence=lease['fence'])
+        return out
     if path == '/v2/monitor/inspect':
         return o.inspect()
     if path == '/v2/health':
-        return o.health()
+        return {**o.health(), 'helper': {'version': __version__, 'schema_supported': SCHEMA_VERSION,
+                                         'release': release_info()}, 'deploy_fence': deploy_fence()}
     if path.startswith('/v1/'):
         raise Rejected('Legacy route retired by the v2 cutover; refusing to bypass the command handler', 'retired')
     raise Rejected('Unknown route', 'unknown_route')
@@ -177,6 +360,8 @@ def action(path, b):
 def main(argv):
     try:
         payload = json.loads(base64.b64decode(argv[1], validate=True))
+        if not isinstance(payload, dict) or not isinstance(payload.get('path', '?'), str):
+            raise ValueError('payload must be a JSON object with a string path')     # R5 LOW-02
     except Exception as error:
         log_error('?', error, 'bad_payload')
         print(json.dumps({'ok': False, 'kind': 'bad_payload', 'error': str(error)[:300]}), flush=True)
@@ -187,6 +372,7 @@ def main(argv):
         if path == '/internal/job':
             media.run_job(payload)
             return 0
+        sweep_inbox()
         out = action(path, read_body(payload))
         if isinstance(out, dict) and out.get('state') == 'failed' and out.get('code') == 'storage':
             # A storage failure inside a command (read-only database, locked, disk full) is a failure, not a
@@ -199,7 +385,8 @@ def main(argv):
                          ensure_ascii=False), flush=True)
         return 0
     except Rejected as e:
-        log_error(path, e.reason, e.code)
+        if e.code != 'maintenance':          # announced by the deployment itself; the JSON below is the record
+            log_error(path, e.reason, e.code)
         print(json.dumps({'ok': False, 'kind': e.code, 'error': e.reason, **e.extra}, ensure_ascii=False), flush=True)
         return 0
     except Exception as error:

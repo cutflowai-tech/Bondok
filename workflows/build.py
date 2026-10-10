@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -21,9 +22,16 @@ from waset_ops import board  # noqa: E402
 
 ORIG = HERE / 'original'
 DIST = HERE / 'dist'
-HELPER = 'python3 /home/node/.n8n-files/waset-social/helper.py '
-MAX_COMMAND = 120_000          # Linux MAX_ARG_STRLEN is 131072 bytes per argument
+HELPER_DIR = '/home/node/.n8n-files/waset-social'
+HELPER = f'python3 {HELPER_DIR}/helper.py '
+MAX_COMMAND = 120_000          # bytes; Linux MAX_ARG_STRLEN is 131072 bytes per argument (base64 is ASCII)
+MAX_BODY_FILE = 8_000_000      # serialized UTF-8 bytes of a body file; equals helper.MAX_BODY_FILE_BYTES
+CHUNK_BYTES = 60_000           # UTF-8 bytes of one observation chunk: base64 of it stays far below MAX_COMMAND
 SOCIAL_COLS = json.dumps(board.SNAPSHOT_COLUMNS)
+RUN_CTX = "run:{kind:'wf1',id:$('Configuration').first().json.runId,fence:$('Run Start').first().json.fence}"
+# R5 LOW-20: WF2 runs every minute; its successful executions are not stored (the publication journal, outbox and
+# Monday updates keep the evidence; failed and manual executions are still saved in full).
+SETTINGS_POLICY = {'pUIshuf16zIYoYRz': {'saveDataSuccessExecution': 'none', 'saveManualExecutions': True}}
 
 
 def load(name):
@@ -99,27 +107,68 @@ class Flow:
         return next(n['credentials'] for n in self.orig.values()
                     if n.get('credentials', {}).get('mondayComApi'))
 
-    def helper(self, name, route, body_js, *, each=False, fail=True, on_error=None):
-        """Input (Code) -> Local n8n (Execute Command) -> parse (Code).
+    # Parse node prologue. n8n's Execute Command fails the node itself on a non-zero exit (the exitCode check that
+    # used to follow it never ran, R5 LOW-07); with onError=continueRegularOutput the failure arrives here as
+    # {error:"Command failed: <command>\n<stderr>"} and becomes a typed outcome without repeating the payload.
+    PARSE = r"""let r;
+if($json.error!==undefined&&$json.stdout===undefined){
+  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\n');
+  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));
+  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\s*\n\s*/).join(' | ').slice(-700);
+  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};
+}else{
+  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}
+  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',
+    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};
+}
+"""
 
-        Handled helper failures arrive as {ok:false,...} on stdout (exit 0), so
-        the diagnostic is preserved in the execution; parse throws with it.
+    def helper(self, name, route, body_js, *, each=False, fail=True, on_error=None, transport='argv', run=False):
+        """Input (Code) -> [Body File (Read/Write Files)] -> Local n8n (Execute Command) -> parse (Code).
+
+        transport='argv': the request is one base64 argument (bounded by MAX_COMMAND bytes).
+        transport='file': for requests that grow with the board (R5 A12). The JSON body is written to
+          inbox/<unique>.json by n8n's own file node and the argument only names it; the helper validates,
+          reads and deletes it (stale files are swept). Bounded by MAX_BODY_FILE serialized UTF-8 bytes.
+        run=True: the body carries the WF1 run identity, so a superseded run is refused and progress is recorded.
+        Handled helper failures arrive as {ok:false,...} on stdout (exit 0), so the diagnostic is preserved in the
+        execution; parse throws with it (fail=True) or passes the typed outcome on (fail=False).
         """
-        ret = 'return {json:{command}};' if each else 'return [{json:{command}}];'
-        js = (f'const body={body_js};\n'
-              f'const payload=Buffer.from(JSON.stringify({{path:"{route}",body}})).toString("base64");\n'
-              f"const command='{HELPER}'+payload;\n"
-              f"if(command.length>{MAX_COMMAND})throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\n"
-              + ret)
+        body = '{...(' + body_js + '),' + RUN_CTX + '}' if run else body_js
+        ret = 'return {json:out' if each else 'return [{json:out'
+        if transport == 'file':
+            slug = re.sub(r'[^a-z0-9]+', '-', name.lower()).strip('-')
+            js = (f'const body={body};\n'
+                  "const text=JSON.stringify(body),bytes=Buffer.byteLength(text,'utf8');\n"
+                  f"if(bytes>{MAX_BODY_FILE})throw new Error('Helper payload too large ('+bytes+' UTF-8 bytes; body-file bound {MAX_BODY_FILE}); refusing to truncate');\n"
+                  f"const bodyFile='inbox/'+String($execution.id).replace(/[^A-Za-z0-9]/g,'')+'-{slug}-'+Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,10)+'.json';\n"
+                  f'const command=\'{HELPER}\'+Buffer.from(JSON.stringify({{path:"{route}",bodyFile}}),\'utf8\').toString("base64");\n'
+                  f"if(Buffer.byteLength(command)>{MAX_COMMAND})throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\n"
+                  f"const out={{command,bodyPath:'{HELPER_DIR}/'+bodyFile,bodyBytes:bytes}};\n"
+                  + ret + ",binary:{body:{data:Buffer.from(text,'utf8').toString('base64'),mimeType:'application/json',"
+                          "fileName:bodyFile.slice(6)}}}" + (';' if each else '];'))
+        else:
+            js = (f'const body={body};\n'
+                  f'const payload=Buffer.from(JSON.stringify({{path:"{route}",body}}),\'utf8\').toString("base64");\n'
+                  f"const command='{HELPER}'+payload;\n"
+                  f"if(Buffer.byteLength(command)>{MAX_COMMAND})throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\n"
+                  'const out={command};\n' + ret + ('};' if each else '}];'))
         a = self.code(name + ' — Input', js, each=each)
+        prev = a
+        if transport == 'file':
+            w = self._add({'name': name + ' — Body File', 'type': 'n8n-nodes-base.readWriteFile', 'typeVersion': 1.1,
+                           'parameters': {'operation': 'write', 'fileName': '={{ $json.bodyPath }}',
+                                          'dataPropertyName': 'body', 'options': {}}})
+            self.link(a, w)
+            prev = w
+        cmd = '={{ $json.command }}' if transport == 'argv' else "={{ $('" + name + " — Input').item.json.command }}"
         b = self._add({'name': name + ' — Local n8n', 'type': 'n8n-nodes-base.executeCommand', 'typeVersion': 1,
-                       'parameters': {'executeOnce': False, 'command': '={{ $json.command }}'}})
-        check = ("if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\n"
-                 "const r=JSON.parse($json.stdout||'{}');\n"
-                 + ("if(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\n" if fail else ''))
+                       'parameters': {'executeOnce': False, 'command': cmd}, 'onError': 'continueRegularOutput'})
+        check = self.PARSE + ("if(r.ok===false)throw new Error(r.kind==='helper_process_failed'?r.error:"
+                              "'Handler '+(r.kind||'error')+': '+r.error);\n" if fail else '')
         c = self.code(name, check + ('return {json:r};' if each else 'return [{json:r}];'), each=each,
                       on_error=on_error)
-        self.link(a, b)
+        self.link(prev, b)
         self.link(b, c)
         return a, c
 
@@ -139,7 +188,10 @@ class Flow:
 
     def export(self, settings_overrides=None):
         w = {k: copy.deepcopy(self.meta[k]) for k in ('id', 'name', 'settings') if k in self.meta}
+        w['settings'].update(SETTINGS_POLICY.get(w.get('id'), {}))
         w['settings'].update(settings_overrides or {})
+        # Failures are always kept as evidence (R5 LOW-20 may only lower the retention of successes).
+        w['settings']['saveDataErrorExecution'] = 'all'
         w['nodes'] = list(self.nodes.values())
         w['connections'] = self.conns
         w['active'] = False      # activation is a cutover step, never part of import
@@ -419,6 +471,8 @@ def build_wf1():
     s_start, s_snap = social_snapshot(f, 'Social')
     f.link('Source Snapshot', s_start)
 
+    # The full-board import request grows with the boards: body file, not an argument (R5 A12). Owners keep
+    # their kind (a team sent as a person is refused by Monday, R5 A11).
     plan_in, plan = f.helper('Import Plan', '/v2/import/plan', r"""(()=>{
 const txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();
 const val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};
@@ -427,9 +481,10 @@ const all=$('Source Snapshot').first().json.items,counts={};
 for(const s of all){const c=norm(txt(s,'text_mm066x8y'));if(c)counts[c]=(counts[c]||0)+1}
 const sources=all.filter(s=>['Post','Story'].includes(txt(s,'color_mm1ryfcb'))).map(s=>({id:s.id,name:s.name,
  code:norm(txt(s,'text_mm066x8y')),format:txt(s,'color_mm1ryfcb'),duplicate:counts[norm(txt(s,'text_mm066x8y'))]>1,
- link:val(s,'link_mm06bswn')?.url||null,owner_ids:(val(s,'project_owner')?.personsAndTeams||[]).map(p=>p.id)}));
+ link:val(s,'link_mm06bswn')?.url||null,
+ owners:(val(s,'project_owner')?.personsAndTeams||[]).map(p=>({id:p.id,kind:p.kind==='team'?'team':'person'}))}));
 const social=$json.items.map(i=>({id:i.id,source_item:txt(i,'text_mm7y4h4a'),code:txt(i,'text_mm7xqn4e'),format:txt(i,'color_mm7xm9b6')}));
-return {sources,social};})()""")
+return {sources,social};})()""", transport='file', run=True)
     f.link(s_snap, plan_in)
     has_creates = f.cond('Items To Create?', '($json.creates||[]).length>0')
     build = f.code('Build Create Mutations', r"""
@@ -437,35 +492,65 @@ const cs=$json.creates,out=[];
 for(let x=0;x<cs.length;x+=20){const b=cs.slice(x,x+20),vars={b:'5105608159'},defs=['$b:ID!'],parts=[];
  b.forEach((a,j)=>{vars['v'+j]=JSON.stringify(a.columns);vars['n'+j]=a.name;vars['g'+j]=a.group;defs.push('$v'+j+':JSON!','$n'+j+':String!','$g'+j+':String!');
  parts.push('s'+a.key+':create_item(board_id:$b,group_id:$g'+j+',item_name:$n'+j+',column_values:$v'+j+'){id}')});
- out.push({json:{gql:{query:'mutation('+defs.join(',')+'){'+parts.join(' ')+'}',variables:vars}}})}
+ out.push({json:{keys:b.map(a=>String(a.key)),names:Object.fromEntries(b.map(a=>[String(a.key),a.name])),
+  gql:{query:'mutation('+defs.join(',')+'){'+parts.join(' ')+'}',variables:vars}}})}
 return out;""")
     apply_ = f.reuse('Apply Source Sync', 'Create Social Items', onError='continueRegularOutput')
+    # R5 A11: per-item outcome instead of one throw for the whole run. Created -> pairs; Monday answered without
+    # creating it (field error on its alias, whole request refused) -> failed; no usable answer (timeout, 5xx,
+    # alias missing) -> uncertain: not re-created until a complete snapshot could show it.
     rec_in, rec = f.helper('Record Created Items', '/v2/import/record', r"""(()=>{
-if($json.errors||$json.error)throw new Error('Item creation failed: '+JSON.stringify($json.errors||$json.error).slice(0,400));
-return {pairs:Object.entries($json.data||{}).filter(([k,v])=>v&&v.id).map(([k,v])=>({source:k.slice(1),social:v.id}))};})()""",
-                             each=True)
+const b=$('Build Create Mutations').item.json,keys=b.keys||[],names=b.names||{};
+const data=$json.data&&typeof $json.data==='object'?$json.data:null;
+const errs=Array.isArray($json.errors)?$json.errors:($json.errors?[$json.errors]:[]);
+const msg=e=>String((e&&typeof e==='object'?(e.message||e.description||JSON.stringify(e)):e)||'').slice(0,300);
+let reqFail=null,reqUnsure=null;
+if(!data){
+  if($json.error!==undefined){const e=typeof $json.error==='object'&&$json.error?$json.error:{message:$json.error};
+    const code=String(e.httpCode||e.statusCode||e.status||(e.response&&e.response.status)||(String(e.message||'').match(/^\s*([45]\d\d)\b/)||[])[1]||'');
+    if(/^4\d\d$/.test(code)&&code!=='408')reqFail='Monday refused the request ('+code+'): '+msg(e);
+    else reqUnsure=(code?'HTTP '+code+': ':'')+msg(e);
+  }else if(errs.length)reqFail='Monday refused the request: '+errs.map(msg).join('; ').slice(0,300);
+  else reqUnsure='empty response';
+}
+const pairs=[],failed=[],uncertain=[];
+for(const sid of keys){const alias='s'+sid,v=data?data[alias]:undefined,name=names[sid]||null;
+  if(v&&v.id){pairs.push({source:sid,social:String(v.id)});continue}
+  if(reqFail){failed.push({source:sid,name,error:reqFail,scope:'request'});continue}
+  if(reqUnsure||v===undefined){uncertain.push({source:sid,name,error:reqUnsure||'no result for this item in the response'});continue}
+  const own=errs.find(e=>Array.isArray(e&&e.path)&&e.path[0]===alias);
+  failed.push({source:sid,name,error:own?msg(own):(errs.length?msg(errs[0]):'Monday returned no item'),scope:own?'item':'request'});
+}
+return {pairs,failed,uncertain};})()""", each=True, fail=False, run=True)
     f.link(plan, has_creates)
     f.link(has_creates, build, 0)
     f.chain(build, apply_, rec_in)
 
     # observe the board in chunks (human edits -> validated commands)
+    # R5 LOW-01: chunk sizes are serialized UTF-8 bytes (the argument bound counts bytes, Arabic text is 2 bytes
+    # per UTF-16 unit). R5 M8: every chunk carries the Canceled source projects of its own items.
     chunks = f.code('Board Chunks', COMPACT + r"""
 const txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();
+const bytes=x=>Buffer.byteLength(JSON.stringify(x),'utf8');
 const items=$('Social Snapshot').first().json.items.map(compact);
-const canceled=$('Source Snapshot').first().json.items.filter(s=>txt(s,'color_mm1ryfcb')==='Canceled').map(s=>({id:s.id,format:'Canceled'}));
-const out=[];let cur=[],size=0;
-for(const i of items){const n=JSON.stringify(i).length;if(cur.length&&size+n>60000){out.push(cur);cur=[];size=0}cur.push(i);size+=n}
-if(cur.length)out.push(cur);
-return out.map((c,k)=>({json:{items:c,sources:k===0?canceled:[]}}));""")
+const canceled={};
+for(const s of $('Source Snapshot').first().json.items)if(txt(s,'color_mm1ryfcb')==='Canceled')canceled[String(s.id)]={id:String(s.id),format:'Canceled'};
+const out=[];let cur=[],src={},size=0;
+for(const i of items){const sid=txt(i,'text_mm7y4h4a'),c=canceled[sid]||null,n=bytes(i)+1+(c?bytes(c)+1:0);
+  if(cur.length&&size+n>""" + str(CHUNK_BYTES) + r"""){out.push({items:cur,sources:Object.values(src)});cur=[];src={};size=0}
+  cur.push(i);size+=n;if(c)src[sid]=c}
+if(cur.length)out.push({items:cur,sources:Object.values(src)});
+return out.map(c=>({json:c}));""")
     obs_in, obs = f.helper('Observe Board', '/v2/board/observe',
-                           "{items:$json.items,sources:$json.sources,caller:'wf1'}", each=True)
+                           "{items:$json.items,sources:$json.sources,caller:'wf1'}", each=True, run=True)
     f.link(has_creates, chunks, 1)
     f.link(rec, chunks)
     f.chain(chunks, obs_in)
     one = f.code('Observation Done', 'return [{json:{edits:$input.all().reduce((n,x)=>n+(x.json.edits||[]).length,0)}}];')
     f.link(obs, one)
-    miss_in, miss = f.helper('Board Missing Check', '/v2/board/missing', "{ids:$('Social Snapshot').first().json.items.map(i=>i.id)}")
-    q_in, q = f.helper('Preparation Queue', '/v2/prep/queue', "{limit:$('Configuration').first().json.limit}")
+    miss_in, miss = f.helper('Board Missing Check', '/v2/board/missing',
+                             "{ids:$('Social Snapshot').first().json.items.map(i=>i.id)}", transport='file', run=True)
+    q_in, q = f.helper('Preparation Queue', '/v2/prep/queue', "{limit:$('Configuration').first().json.limit}", run=True)
     f.chain(one, miss_in)
     f.link(miss, q_in)
     queue = f.code('Queue Items', "const w=$json.work||[];return w.length?w.map(x=>({json:x})):[{json:{empty:true}}];")
@@ -629,7 +714,8 @@ mediaId:$('Preparation Step').item.json.mediaId,url:$json.url}""", on_error='con
     f.link(dl, finished)
 
     # editor tasks: durable (item, issue) identity; only material changes
-    e_take_in, e_take = f.helper('Editor Tasks — Take', '/v2/outbox/take', "{kinds:['editor'],worker:$('Configuration').first().json.runId,limit:10}")
+    e_take_in, e_take = f.helper('Editor Tasks — Take', '/v2/outbox/take', "{kinds:['editor'],worker:$('Configuration').first().json.runId,limit:10}",
+                                 run=True)
     f.link(loop, e_take_in, 0)
     e_items = f.code('Editor Jobs', "const j=$json.jobs||[];return j.length?j.map(x=>({json:x})):[{json:{empty:true}}];")
     e_loop = f._add({'name': 'Each Editor Job', 'type': 'n8n-nodes-base.splitInBatches', 'typeVersion': 3,
@@ -648,7 +734,11 @@ if($json.errors)throw new Error(JSON.stringify($json.errors));
 const p=$('Each Editor Job').item.json.payload;
 const subs=$json.data?.items?.[0]?.subitems||[];
 const prefix='Social '+p.item_id+' — ';
-const existing=p.task_id||(subs.find(s=>String(s.name||'').startsWith(prefix))||{}).id||null;
+// R5 M11: the stored task id is used only while that subitem still exists (renamed is fine; a person may have
+// deleted it). Otherwise this item's existing subitem (same name prefix) is reused; only then one is created.
+const stored=p.task_id&&subs.some(s=>String(s.id)===String(p.task_id))?String(p.task_id):null;
+const staleTaskId=p.task_id&&!stored?String(p.task_id):undefined;
+const existing=stored||(subs.find(s=>String(s.name||'').startsWith(prefix))||{}).id||null;
 // Already told (v1 or v2): an update on this subitem names the same file version for the same kind of
 // issue, or carries the same text. Record the task without posting again or touching its status.
 const ups=((existing&&subs.find(s=>String(s.id)===String(existing)))||{}).updates||[];
@@ -658,9 +748,9 @@ const norm=t=>String(t||'').replace(/\s+/g,' ').trim();
 const reason=t=>(String(t||'').match(/(?:reason|Issue):\s*([^\n]*)/)||[])[1]||'';
 const sameKind=t=>kind==='topaz'?/topaz/i.test(reason(t)):kind==='story_duration'?(!/topaz/i.test(reason(t))&&/مدة الستوري|duration|ثانية|seconds/i.test(reason(t))):false;
 const already=!!existing&&ups.some(u=>norm(u.text_body)===norm(p.body)||(asset&&String(u.text_body||'').includes(asset)&&sameKind(u.text_body)));
-if(already)return [{json:{taskId:String(existing),already:true,data:{alreadyNotified:true}}}];
-if(existing)return [{json:{taskId:String(existing),gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:"status",value:$v){id}}',variables:{b:'5091137380',i:String(existing),v:JSON.stringify({label:'Working on it'})}}}}];
-return [{json:{taskId:null,gql:{query:'mutation($p:ID!,$n:String!,$v:JSON!){create_subitem(parent_item_id:$p,item_name:$n,column_values:$v){id}}',variables:{p:String(p.source_item_id),n:p.task_name,v:JSON.stringify({status:{label:'Working on it'}})}}}}];""",
+if(already)return [{json:{taskId:String(existing),already:true,staleTaskId,data:{alreadyNotified:true}}}];
+if(existing)return [{json:{taskId:String(existing),staleTaskId,gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:"status",value:$v){id}}',variables:{b:'5091137380',i:String(existing),v:JSON.stringify({label:'Working on it'})}}}}];
+return [{json:{taskId:null,staleTaskId,gql:{query:'mutation($p:ID!,$n:String!,$v:JSON!){create_subitem(parent_item_id:$p,item_name:$n,column_values:$v){id}}',variables:{p:String(p.source_item_id),n:p.task_name,v:JSON.stringify({status:{label:'Working on it'}})}}}}];""",
                    on_error='continueErrorOutput')
     e_told = f.cond('Editor Already Notified?', '$json.already===true')
     e_apply = f.monday('Apply Editor Task', 'JSON.stringify($json.gql)')
@@ -701,7 +791,9 @@ worker:$('Configuration').first().json.runId,ok:true,error:null,result:{task_id:
     f.link(e_next, e_loop)
 
     m_in, m = f.helper('Retain Published Files', '/v2/maintenance', '{}', fail=False)
-    fin_in, fin = f.helper('Run Finish', '/v2/run/finish', "{kind:'wf1',runId:$('Configuration').first().json.runId}")
+    # Completion is recorded only for the run that still holds the lease (fence): R5 A13.
+    fin_in, fin = f.helper('Run Finish', '/v2/run/finish', "{kind:'wf1',runId:$('Configuration').first().json.runId,"
+                                                            "fence:$('Run Start').first().json.fence}")
     f.link(e_loop, m_in, 0)
     f.link(m, fin_in)
     return f.export()
