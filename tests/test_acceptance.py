@@ -1796,3 +1796,47 @@ class FuzzRoundThree(OpsCase):
         self.observe(b)
         jobs = [json.loads(o['payload']) for o in self.outbox('monday') if o['state'] == 'pending']
         self.assertTrue(any(board.COL['status'] in j['columns'] for j in jobs), jobs)
+
+
+class LegacyDateLoopIncident(OpsCase):
+    """Production 2026-10-10: Stories imported with a legacy Post Date/Time whose pair was later changed or
+    cleared on the board (no reservation) were re-submitted on every WF1 cycle: two request_reschedule commands
+    and two version bumps per item per cycle, indefinitely (28 Stories, ~330 commands per hour)."""
+
+    LEGACY = {'post_date': ('2026-10-17', {'date': '2026-10-17'}), 'post_time': ('10:00 PM', {'hour': 22, 'minute': 0})}
+
+    def cycles(self, iid, pair, n=6):
+        """WF1 every 10 minutes; the board keeps the person's pair; WF2 delivers every display write."""
+        seen = []
+        for i in range(n):
+            self.clock.advance(600)
+            self.ops.run_start('wf1', f'loop-{i}')
+            b = board_from_projection(self.ops, iid, topaz='Not yet')
+            b['column_values'] = [x for x in b['column_values']
+                                  if x['id'] not in (board.COL['post_date'], board.COL['post_time'])]
+            if pair:
+                h, m = pair[1].split(':')
+                set_cell(b, 'post_date', pair[0], {'date': pair[0]})
+                set_cell(b, 'post_time', pair[1], {'hour': int(h), 'minute': int(m)})
+            self.observe(b)
+            self.drain_monday()
+            with self.ops.store.read() as c:
+                n_cmd = c.execute("SELECT count(*) FROM ops_commands WHERE op='request_reschedule'").fetchone()[0]
+            seen.append((self.item(iid)['version'], n_cmd))
+        return seen
+
+    def test_changed_legacy_pair_is_recorded_once(self):
+        self.observe(monday_item('1400', extra=self.LEGACY))
+        self.drain_monday()
+        seen = self.cycles('1400', ('2026-10-16', '11:00'))
+        self.assertEqual(len(set(seen)), 1, seen)                 # handled in the first cycle, then quiet
+        self.assertLessEqual(seen[-1][1], 2, seen)
+        self.assertEqual(self.item('1400')['requested_at'], '2026-10-16T08:00:00Z')
+
+    def test_cleared_legacy_pair_unschedules_once(self):
+        self.observe(monday_item('1401', extra=self.LEGACY))
+        self.drain_monday()
+        seen = self.cycles('1401', None)
+        self.assertEqual(len(set(seen)), 1, seen)
+        self.assertLessEqual(seen[-1][1], 2, seen)
+        self.assertEqual(json.loads(self.item('1401')['hold'])['kind'], 'unscheduled')
