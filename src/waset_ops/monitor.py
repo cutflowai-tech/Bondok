@@ -73,6 +73,7 @@ class MonitorMixin:
                     findings.append({'fingerprint': f"heartbeat:{name}", 'item_id': None, 'kind': 'heartbeat',
                                      'action': 'notify', 'notify': True,
                                      'detail': f"{name} has not reported for {int((now - hb['at']) / 60)} minutes."})
+            findings += self.run_health_findings(c, now)
             disk = self.disk_state(c)
             if disk['level']:
                 findings.append({'fingerprint': 'low_disk', 'item_id': None, 'kind': 'low_disk', 'action': 'notify',
@@ -116,6 +117,51 @@ class MonitorMixin:
                           (dumps({'level': level if rank[level] >= rank.get(prev, 0) or not level else prev,
                                   'at': self.now()}),))
             return {**d, 'alert_level': level}
+
+    RUN_STALE_SECONDS = {'wf1': 1200, 'wf3': 900}          # no progress although the run has not ended
+    RUN_COMPLETION_SECONDS = {'wf1': 3600, 'wf3': 4200}     # no completed run for this long (WF1 every 10 min)
+
+    def run_health_findings(self, c, now) -> list[dict]:
+        """Run lifecycle (R5 A13): a start without a completion is not health.
+
+        Read-only. One open finding per kind and condition, so an episode of repeated failures alerts once;
+        conditions clear (and WF3 resolves the finding) when a run completes. Also carries forward the import
+        diagnostics WF1 raised (``import:*``, R5 A11/M15): they stay open until WF1 sees them cleared, instead of
+        being resolved by this inspection and re-notified by the next WF1 run.
+        """
+        out = []
+        for kind in ('wf1', 'wf3'):
+            rec = self.run_records(c, kind)
+            st, done, failed = rec.get('started'), rec.get('completed') or {}, rec.get('failed') or {}
+            if not st:
+                continue                       # no lifecycle evidence yet (first run after the upgrade)
+            name = kind.upper()
+            ended = st['run'] in (done.get('run'), failed.get('run'))
+            prog = rec.get('progress') if (rec.get('progress') or {}).get('run') == st['run'] else st
+            if not ended and now - prog['at'] > self.RUN_STALE_SECONDS[kind]:
+                out.append({'fingerprint': f'run_stalled:{kind}', 'item_id': None, 'kind': 'run_stalled',
+                            'action': 'notify', 'notify': False,
+                            'detail': f"{name} run {st['run']} has made no progress for {int((now - prog['at']) / 60)} "
+                                      f"minutes (last step: {prog.get('step') or 'start'}); it has not completed."})
+            if failed and (not done or failed['at'] > done['at']):
+                out.append({'fingerprint': f'run_failed:{kind}', 'item_id': None, 'kind': 'run_failed',
+                            'action': 'notify', 'notify': True,
+                            'detail': f"⚠️ {name} run {failed.get('run')} stopped without completing "
+                                      f"(last step: {failed.get('step') or 'unknown'}; {failed.get('reason')}). "
+                                      'Check its n8n execution; later runs will retry.'})
+            since = st.get('since', st['at'])
+            if not (done.get('run') == st['run']) and now - since > self.RUN_COMPLETION_SECONDS[kind]:
+                last = (f"last completed {int((now - done['at']) / 60)} minutes ago" if done else
+                        'no completed run recorded')
+                out.append({'fingerprint': f'run_not_completed:{kind}', 'item_id': None, 'kind': 'run_not_completed',
+                            'action': 'notify', 'notify': True,
+                            'detail': f"⚠️ {name} has not completed a run for {int((now - since) / 60)} minutes ({last}); "
+                                      f"runs start but stop before the end. Latest run {st['run']}, last step "
+                                      f"{(prog or {}).get('step') or 'start'}."})
+        for r in c.execute("SELECT * FROM ops_findings WHERE resolved IS NULL AND fingerprint LIKE 'import:%'"):
+            out.append({'fingerprint': r['fingerprint'], 'item_id': r['item_id'], 'kind': r['kind'],
+                        'action': 'notify', 'notify': False, 'detail': r['detail']})
+        return out
 
     @staticmethod
     def _f(kind, r, action, detail, notify=True):

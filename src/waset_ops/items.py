@@ -41,48 +41,86 @@ def dropbox_url(url: str) -> str:
 
 class ItemsMixin:
     # ------------------------------------------------------------------ import
+    IMPORT_RETRY_SECONDS = 3600        # Monday refused a create: retry hourly (owner told once)
+    IMPORT_UNCERTAIN_SECONDS = 1800    # no answer to a create: wait for the board to show it before re-creating
+    IMPORT_FINDINGS = ('ambiguous_source_code', 'invalid_code', 'ambiguous_social_items', 'mapped_social_item_missing')
+
+    @staticmethod
+    def _owner_value(s) -> dict | None:
+        """Monday people column value; teams stay teams (R5 A11: teams were sent as people and refused)."""
+        owners = s.get('owners')
+        if owners is None:                                        # older callers sent bare ids (people)
+            owners = [{'id': x, 'kind': 'person'} for x in s.get('owner_ids') or []]
+        out = []
+        for o in owners:
+            try:
+                out.append({'id': int(o['id']), 'kind': 'team' if o.get('kind') == 'team' else 'person'})
+            except (KeyError, TypeError, ValueError):
+                continue                                          # an unreadable owner is left out, not guessed
+        return {'personsAndTeams': out} if out else None
+
     def import_plan(self, sources: list[dict], social: list[dict]) -> dict:
         """Decide which eligible source projects need a social item.
 
         Durable source->social identity prevents duplicates; a mapped item that
         disappeared from the board is reported, never recreated blindly.
-        sources: [{id,name,code,format,link,owner_ids}] social: [{id,source_item,code,format}]
+        sources: [{id,name,code,format,link,owners:[{id,kind}]}] social: [{id,source_item,code,format}]
+        Every reason a project is not imported is kept as an open finding (notified once, resolved when the
+        cause is gone, R5 M15). A create Monday refused or never answered is not repeated blindly (R5 A11).
         """
         norm = lambda x: re.sub(r'\s+', '', str(x or '')).upper()
-        counts = {}
+        counts, names = {}, {}
         for s in sources:
             if norm(s.get('code')):
                 counts[norm(s['code'])] = counts.get(norm(s['code']), 0) + 1
+                names.setdefault(norm(s['code']), []).append(f"{s.get('name') or s['id']} ({s['id']})")
         creates, findings, record = [], [], []
         social_ids = {str(i['id']) for i in social}
+        now = self.now()
         with self.store.read() as c:
             mapped = {r['source_item_id']: dict(r) for r in c.execute('SELECT * FROM ops_source_map')}
+            known = {r['item_id'] for r in c.execute('SELECT item_id FROM ops_items')}
         for s in sources:
             sid, code, fmt = str(s['id']), norm(s.get('code')), s.get('format')
+            label = f"{s.get('name') or code or sid} ({code or 'no code'}, project {sid})"
             if not code or fmt not in ('Post', 'Story'):
                 continue
             if counts.get(code) != 1 or s.get('duplicate'):
-                findings.append({'kind': 'ambiguous_source_code', 'source': sid, 'code': code})
+                findings.append({'kind': 'ambiguous_source_code', 'source': sid, 'code': code, 'fp': code,
+                                 'notify': True,
+                                 'detail': f'Code {code} is used by more than one project on Customer Projects '
+                                           f"({', '.join(names.get(code, [label]))}); no social item is created for "
+                                           'it until the code is unique.'})
                 continue
             m = mapped.get(sid)
-            if m:
-                if m['social_item_id'] not in social_ids:
-                    findings.append({'kind': 'mapped_social_item_missing', 'source': sid,
-                                     'social': m['social_item_id']})
-                continue
             same = [i for i in social if str(i.get('source_item') or '') == sid or
                     (not i.get('source_item') and norm(i.get('code')) == code)]
+            if m and m['state'] == 'active':
+                if m['social_item_id'] not in social_ids:
+                    findings.append({'kind': 'mapped_social_item_missing', 'source': sid, 'fp': sid,
+                                     'social': m['social_item_id'], 'notify': m['social_item_id'] not in known,
+                                     'detail': f"The social item {m['social_item_id']} of {label} is no longer on the "
+                                               'social board; it is not recreated automatically.'})
+                continue
             if len(same) == 1:
                 record.append({'source': sid, 'social': str(same[0]['id'])})
                 continue
             if len(same) > 1:
-                findings.append({'kind': 'ambiguous_social_items', 'source': sid,
-                                 'social': [str(i['id']) for i in same]})
+                findings.append({'kind': 'ambiguous_social_items', 'source': sid, 'fp': sid, 'notify': True,
+                                 'social': [str(i['id']) for i in same],
+                                 'detail': f"{label} matches {len(same)} social items "
+                                           f"({', '.join(str(i['id']) for i in same)}); none is linked until only one "
+                                           'remains.'})
                 continue
+            if m and m['state'] == 'create_failed' and now - (m['created'] or 0) < self.IMPORT_RETRY_SECONDS:
+                continue                       # Monday refused it recently; the owner was told; retried hourly
+            if m and m['state'] == 'create_uncertain' and now - (m['created'] or 0) < self.IMPORT_UNCERTAIN_SECONDS:
+                continue                       # may exist already: wait until a complete snapshot can show it
             try:
                 st = rules.style(code)
-            except rules.RuleError:
-                findings.append({'kind': 'invalid_code', 'source': sid, 'code': code})
+            except rules.RuleError as e:
+                findings.append({'kind': 'invalid_code', 'source': sid, 'code': code, 'fp': sid, 'notify': True,
+                                 'detail': f'{label}: the code is not valid ({e}); no social item is created.'})
                 continue
             cv = {board.COL['source_item']: sid, board.COL['style']: st, board.COL['code']: code,
                   board.COL['format']: {'label': fmt}, 'status': {'label': board.LABELS['checking']},
@@ -92,21 +130,70 @@ class ItemsMixin:
                 cv[board.COL['dropbox']] = {'url': link, 'text': 'Source'}
                 if '/scl/fo/' in link:
                     cv[board.COL['folder']] = {'url': link, 'text': 'Project folder'}
-            if s.get('owner_ids'):
-                cv[board.COL['owner']] = {'personsAndTeams': [{'id': int(x), 'kind': 'person'} for x in s['owner_ids']]}
+            owner = self._owner_value(s)
+            if owner:
+                cv[board.COL['owner']] = owner
             creates.append({'key': sid, 'name': s.get('name') or code, 'group': board.GROUPS[fmt], 'columns': cv})
+        with self.store.tx() as c:
+            raised = set()
+            for f in findings:
+                fp = f"import:{f['kind']}:{f.pop('fp')}"
+                raised.add(fp)
+                self.finding(c, fp, None, 'import_' + f['kind'], f['detail'], notify=f.pop('notify'))
+            for r in c.execute("SELECT fingerprint FROM ops_findings WHERE resolved IS NULL AND fingerprint LIKE 'import:%'"):
+                kind = r['fingerprint'].split(':')[1]
+                if kind in self.IMPORT_FINDINGS and r['fingerprint'] not in raised:
+                    self.resolve_finding(c, r['fingerprint'])          # the cause is gone (complete source list)
         if record:
             self.import_record(record)
         return {'creates': creates, 'findings': findings, 'recorded': len(record)}
 
-    def import_record(self, pairs: list[dict]) -> dict:
+    def import_record(self, pairs: list[dict], failed: list[dict] | None = None,
+                      uncertain: list[dict] | None = None) -> dict:
+        """Per-item outcome of the social-item creates (R5 A11).
+
+        pairs: created (or found on the board) -> durable mapping. failed: Monday answered and did not create
+        it (retried after IMPORT_RETRY_SECONDS; an item-specific refusal is told to the owner once). uncertain: no
+        usable answer (timeout, 5xx) -> not re-created until a complete snapshot had the chance to show it.
+        """
         n = 0
+        now = self.now()
         with self.store.tx() as c:
             for p in pairs:
-                cur = c.execute("INSERT OR IGNORE INTO ops_source_map VALUES(?,?, 'active', ?)",
-                                (str(p['source']), str(p['social']), self.now()))
-                n += cur.rowcount
-        return {'recorded': n}
+                sid, social = str(p['source']), str(p['social'])
+                if c.execute('SELECT 1 FROM ops_source_map WHERE social_item_id=? AND source_item_id!=?',
+                             (social, sid)).fetchone():
+                    continue                                  # that social item belongs to another project
+                row = c.execute('SELECT state FROM ops_source_map WHERE source_item_id=?', (sid,)).fetchone()
+                if row is None:
+                    c.execute("INSERT INTO ops_source_map VALUES(?,?, 'active', ?)", (sid, social, now))
+                    n += 1
+                elif row['state'] != 'active':
+                    c.execute("UPDATE ops_source_map SET social_item_id=?, state='active', created=? "
+                              'WHERE source_item_id=?', (social, now, sid))
+                    n += 1
+                for kind in ('create_failed', 'create_uncertain'):
+                    self.resolve_finding(c, f'import:{kind}:{sid}')
+            for kind, rows in (('create_failed', failed or []), ('create_uncertain', uncertain or [])):
+                for f in rows:
+                    sid = str(f['source'])
+                    cur = c.execute("INSERT INTO ops_source_map VALUES(?, NULL, ?, ?) ON CONFLICT(source_item_id) DO "
+                                    "UPDATE SET state=excluded.state, created=excluded.created "
+                                    "WHERE ops_source_map.state!='active'", (sid, kind, now))
+                    if not cur.rowcount:
+                        continue                                  # already linked to a social item
+                    what = f"{f.get('name') or 'project'} (project {sid})"
+                    err = str(f.get('error') or 'no answer')[:300]
+                    if kind == 'create_failed':
+                        detail = (f'Monday refused to create the social item for {what}: {err}. Other projects '
+                                  'continue; it is retried hourly.')
+                        notify = f.get('scope') == 'item'
+                    else:
+                        detail = (f'Creating the social item for {what} got no usable answer ({err}); it is not '
+                                  'created again until the board shows whether it exists.')
+                        notify = False
+                    self.finding(c, f'import:{kind}:{sid}', None, 'import_' + kind, detail, notify=notify)
+        return {'recorded': n, 'failed': len(failed or []), 'uncertain': len(uncertain or [])}
 
     # ------------------------------------------------------------------ observation
     def observe(self, items: list[dict], *, sources: list[dict] | None = None, complete=False,

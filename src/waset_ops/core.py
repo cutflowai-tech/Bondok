@@ -235,7 +235,22 @@ class CoreMixin:
         if cmd.item_id is not None and cmd.op not in ('approve_proposal', 'reject_proposal', 'propose'):
             self.item(c, cmd.item_id)  # membership: only registered social-board items
 
-    # ------------------------------------------------------------ worker runs (fencing)
+    # ------------------------------------------------------------ worker runs (fencing + lifecycle, R5 A13)
+    # Lifecycle records live in ops_heartbeat (no schema change), one row per stage and kind:
+    #   run:<kind>:started   {run, fence, since}   since = start of the current stretch without a completed run
+    #   run:<kind>:progress  {run, fence, step}    refreshed by every fenced call of the run
+    #   run:<kind>:completed {run, fence, started, result}
+    #   run:<kind>:failed    {run, fence, reason, step, detected_by}
+    # The plain <kind> row keeps its old meaning (last sign of life) for existing readers.
+    def run_records(self, c, kind: str) -> dict:
+        out = {}
+        for r in c.execute('SELECT name, at, detail FROM ops_heartbeat WHERE name LIKE ?', (f'run:{kind}:%',)):
+            out[r['name'].rsplit(':', 1)[1]] = {**(loads(r['detail'], {}) or {}), 'at': r['at']}
+        return out
+
+    def _run_mark(self, c, kind, stage, detail):
+        c.execute('INSERT OR REPLACE INTO ops_heartbeat VALUES(?,?,?)', (f'run:{kind}:{stage}', self.now(), dumps(detail)))
+
     def run_start(self, kind: str, run_id: str) -> dict:
         ttl = RUN_TTL.get(kind, 600)
         with self.store.tx() as c:
@@ -244,15 +259,32 @@ class CoreMixin:
             if r and r['run_id'] != run_id and (r['lease_until'] or 0) > now:
                 return {'acquired': False, 'deferred': True, 'holder': r['run_id'],
                         'reason': f'{kind} already running; this cycle is deferred, not completed'}
+            rec = self.run_records(c, kind)
+            prev = r['run_id'] if r else None
+            ended = prev is not None and prev in ((rec.get('completed') or {}).get('run'),
+                                                   (rec.get('failed') or {}).get('run'))
+            if prev and prev != run_id and not ended and (r['lease_until'] or 0) > 0:
+                # The previous run neither completed nor reported a failure before its lease expired: it died
+                # (n8n error, crash, timeout). Recorded now so the supervisor can alert (R5 A13).
+                prog = rec.get('progress') or {}
+                self._run_mark(c, kind, 'failed', {
+                    'run': prev, 'fence': r['fence'], 'started': r['started'], 'last_progress': r['heartbeat'],
+                    'step': prog.get('step') if prog.get('run') == prev else None, 'detected_by': 'run_start',
+                    'reason': f'did not complete before its lease expired (superseded by {run_id})'})
+            started = rec.get('started') or {}
+            completed_prev = started.get('run') is not None and (rec.get('completed') or {}).get('run') == started.get('run')
+            since = now if (not started or completed_prev) else started.get('since', started.get('at', now))
             fence = next_counter(c, 'fence:' + kind)
             c.execute('INSERT OR REPLACE INTO ops_runs(kind,run_id,fence,lease_until,started,heartbeat,last_result) '
                       'VALUES(?,?,?,?,?,?,?)', (kind, run_id, fence, now + ttl, now, now,
                                                r['last_result'] if r else None))
             c.execute('INSERT OR REPLACE INTO ops_heartbeat VALUES(?,?,?)', (kind, now, dumps({'run': run_id})))
+            self._run_mark(c, kind, 'started', {'run': run_id, 'fence': fence, 'since': since})
+            self._run_mark(c, kind, 'progress', {'run': run_id, 'fence': fence, 'step': 'start'})
             return {'acquired': True, 'run_id': run_id, 'fence': fence}
 
-    def run_check(self, c, kind: str, run_id: str | None, fence: int | None):
-        """Fencing: commands from a superseded run are refused."""
+    def run_check(self, c, kind: str, run_id: str | None, fence: int | None, step: str | None = None):
+        """Fencing: commands from a superseded run are refused. A valid call renews the lease and records progress."""
         if run_id is None:
             return
         r = c.execute('SELECT * FROM ops_runs WHERE kind=?', (kind,)).fetchone()
@@ -262,15 +294,36 @@ class CoreMixin:
         c.execute('UPDATE ops_runs SET lease_until=?, heartbeat=? WHERE kind=?',
                   (now + RUN_TTL.get(kind, 600), now, kind))
         c.execute('INSERT OR REPLACE INTO ops_heartbeat VALUES(?,?,?)', (kind, now, dumps({'run': run_id})))
+        self._run_mark(c, kind, 'progress', {'run': run_id, 'fence': r['fence'], 'step': step or 'command'})
 
-    def run_finish(self, kind: str, run_id: str, result=None) -> dict:
+    def run_progress(self, kind: str, run_id: str, fence: int | None, step: str) -> dict:
+        """Run-scoped helper call: refuse a superseded run before it acts on a stale snapshot; record progress."""
+        with self.store.tx() as c:
+            self.run_check(c, kind, str(run_id), None if fence is None else int(fence), step=step)
+        return {'run': run_id, 'step': step}
+
+    def run_finish(self, kind: str, run_id: str, result=None, fence: int | None = None) -> dict:
         with self.store.tx() as c:
             r = c.execute('SELECT * FROM ops_runs WHERE kind=?', (kind,)).fetchone()
-            if r and r['run_id'] == run_id:
+            if r and r['run_id'] == run_id and (fence is None or r['fence'] == int(fence)):
                 c.execute('UPDATE ops_runs SET lease_until=0, last_result=?, heartbeat=? WHERE kind=?',
                           (dumps(result), self.now(), kind))
+                self._run_mark(c, kind, 'completed', {'run': run_id, 'fence': r['fence'], 'started': r['started'],
+                                                      'result': result})
                 return {'released': True}
-            return {'released': False}
+            # A superseded run never records a completion (no false success; its results were fenced off).
+            return {'released': False, 'superseded': bool(r and r['run_id'] != run_id)}
+
+    def run_fail(self, kind: str, run_id: str, reason: str, step: str | None = None, fence: int | None = None) -> dict:
+        """Explicit failure of the current run (e.g. the supervisor's own inspection raised)."""
+        with self.store.tx() as c:
+            r = c.execute('SELECT * FROM ops_runs WHERE kind=?', (kind,)).fetchone()
+            if not r or r['run_id'] != run_id or (fence is not None and r['fence'] != int(fence)):
+                return {'recorded': False, 'superseded': True}
+            c.execute('UPDATE ops_runs SET lease_until=0, heartbeat=? WHERE kind=?', (self.now(), kind))
+            self._run_mark(c, kind, 'failed', {'run': run_id, 'fence': r['fence'], 'started': r['started'],
+                                               'step': step, 'reason': str(reason)[:500], 'detected_by': 'reported'})
+            return {'recorded': True}
 
     # ------------------------------------------------------------ display projection
     def desired_display(self, c, it: dict) -> dict:

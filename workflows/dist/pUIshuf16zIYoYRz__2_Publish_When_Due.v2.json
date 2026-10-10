@@ -6,7 +6,7 @@
   "timezone": "Africa/Cairo",
   "executionTimeout": 1800,
   "saveDataErrorExecution": "all",
-  "saveDataSuccessExecution": "all",
+  "saveDataSuccessExecution": "none",
   "saveManualExecutions": true,
   "availableInMCP": true,
   "binaryMode": "separate",
@@ -53,7 +53,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={kinds:['monday','source_monday'],worker:$('Configuration').first().json.worker,limit:10};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/outbox/take\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={kinds:['monday','source_monday'],worker:$('Configuration').first().json.worker,limit:10};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/outbox/take\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "f3158446-0174-5ed8-89c0-fcaff7104b47",
    "position": [
@@ -69,6 +69,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "587a8f97-f0b8-5aeb-b2a6-ac754c01f9d2",
    "position": [
     720,
@@ -80,7 +81,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nif(r.ok===false)throw new Error(r.kind==='helper_process_failed'?r.error:'Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
    },
    "id": "5b4f2e9c-78a2-5cd4-94ed-8058a588eea4",
    "position": [
@@ -238,7 +239,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body=({id:$json.job,\nworker:$('Configuration').first().json.worker,ok:false,error:$json.conflict||('read before sync failed: '+$json.readError)});\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/outbox/ack\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn {json:{command}};",
+    "jsCode": "const body=({id:$json.job,\nworker:$('Configuration').first().json.worker,ok:false,error:$json.conflict||('read before sync failed: '+$json.readError)});\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/outbox/ack\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn {json:out};",
     "mode": "runOnceForEachItem"
    },
    "id": "2c986d52-f819-5ab7-a9af-6c4da7705a54",
@@ -255,6 +256,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "67233a88-b547-567a-a735-1f098e23bc2f",
    "position": [
     0,
@@ -266,7 +268,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn {json:r};",
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nreturn {json:r};",
     "mode": "runOnceForEachItem"
    },
    "id": "6d276111-317b-54c6-94a7-1c4cf9da655f",
@@ -316,7 +318,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body=(()=>{\nconst job=$('Build Sync Mutation').item.json.job;\nconst err=$json.error?(($json.error.message||JSON.stringify($json.error))):($json.errors?JSON.stringify($json.errors):null);\nreturn {id:job,worker:$('Configuration').first().json.worker,ok:!err&&!!$json.data,error:err?String(err).slice(0,500):null};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/outbox/ack\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn {json:{command}};",
+    "jsCode": "const body=(()=>{\nconst job=$('Build Sync Mutation').item.json.job;\nconst err=$json.error?(($json.error.message||JSON.stringify($json.error))):($json.errors?JSON.stringify($json.errors):null);\nreturn {id:job,worker:$('Configuration').first().json.worker,ok:!err&&!!$json.data,error:err?String(err).slice(0,500):null};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/outbox/ack\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn {json:out};",
     "mode": "runOnceForEachItem"
    },
    "id": "a041b2cb-00d3-52b9-857b-40e21d732241",
@@ -333,6 +335,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "3c055078-53f1-5a3c-8898-c7001736a884",
    "position": [
     960,
@@ -344,7 +347,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn {json:r};",
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nreturn {json:r};",
     "mode": "runOnceForEachItem"
    },
    "id": "16f66a6f-76b5-5056-961c-8cc3a0838e89",
@@ -358,7 +361,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={worker:$('Configuration').first().json.worker,limit:5};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/due\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={worker:$('Configuration').first().json.worker,limit:5};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/due\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "a9a4bf01-3d98-5372-9cbf-e2f3482bbf79",
    "position": [
@@ -374,6 +377,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "69410b88-5f16-5e2f-a438-7ab4bc7253c0",
    "position": [
     1680,
@@ -385,7 +389,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nif(r.ok===false)throw new Error(r.kind==='helper_process_failed'?r.error:'Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
    },
    "id": "b17c8dd3-6be7-525f-8b29-7c13a5798c83",
    "position": [
@@ -458,7 +462,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={ok:!!$json.id&&!$json.error,\nerror:$json.error?JSON.stringify($json.error).slice(0,600):null};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/probe\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={ok:!!$json.id&&!$json.error,\nerror:$json.error?JSON.stringify($json.error).slice(0,600):null};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/probe\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "bfe5f263-37ea-57e9-828f-e136a64eff6b",
    "position": [
@@ -474,6 +478,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "f6b9de59-6931-5f8c-bf84-4ed273003d80",
    "position": [
     0,
@@ -485,7 +490,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nreturn [{json:r}];"
    },
    "id": "eae2348f-1442-5760-9437-934b3b8301ff",
    "position": [
@@ -598,7 +603,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={attemptId:$('Each Due Item').item.json.attempt_id,\ncontainerStatus:$json.status_code||null,error:$json.error?String($json.error.message||'query failed').slice(0,200):null};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/reconcile\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={attemptId:$('Each Due Item').item.json.attempt_id,\ncontainerStatus:$json.status_code||null,error:$json.error?String($json.error.message||'query failed').slice(0,200):null};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/reconcile\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "5d878a11-3dc6-511d-b96b-d8456dc9e213",
    "position": [
@@ -614,6 +619,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "5b2b0044-a4a9-5e84-b163-61c19aa27e45",
    "position": [
     1920,
@@ -625,7 +631,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nreturn [{json:r}];"
    },
    "id": "709c46a8-f571-5dee-8bec-e6118de57c56",
    "position": [
@@ -737,7 +743,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body=(()=>{const c=$('Source Status — Query').item.json;\nconst s=($json.data?.items||[])[0];\nconst status=s?((s.column_values||[]).find(x=>x.id==='color_mm1ryfcb')?.text||null):null;\nconst {group,board,...fresh}=c.fresh;\nreturn {itemId:$('Each Due Item').item.json.item_id,worker:$('Configuration').first().json.worker,\nfreshItem:{...fresh,group},sourceStatus:status};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/claim\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body=(()=>{const c=$('Source Status — Query').item.json;\nconst s=($json.data?.items||[])[0];\nconst status=s?((s.column_values||[]).find(x=>x.id==='color_mm1ryfcb')?.text||null):null;\nconst {group,board,...fresh}=c.fresh;\nreturn {itemId:$('Each Due Item').item.json.item_id,worker:$('Configuration').first().json.worker,\nfreshItem:{...fresh,group},sourceStatus:status};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/claim\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "af289a09-c679-5713-88b0-8072892e8b0a",
    "position": [
@@ -753,6 +759,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "a4ab9774-b415-515f-9c58-3609948484a9",
    "position": [
     720,
@@ -764,7 +771,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nif(r.ok===false)throw new Error(r.kind==='helper_process_failed'?r.error:'Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
    },
    "onError": "continueErrorOutput",
    "id": "f9717995-5f15-5e21-b82b-c55bb745a9e1",
@@ -812,7 +819,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={itemId:$('Each Due Item').item.json.item_id,\nstage:$json.stage,error:$json.error,httpStatus:$json.httpStatus};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/read_failure\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={itemId:$('Each Due Item').item.json.item_id,\nstage:$json.stage,error:$json.error,httpStatus:$json.httpStatus};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/read_failure\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "6242ef69-ebf1-5c2e-9ff2-b4fd968e268e",
    "position": [
@@ -828,6 +835,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "df7b4b0a-85a3-58ee-a44b-3353a898696b",
    "position": [
     1680,
@@ -839,7 +847,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nreturn [{json:r}];"
    },
    "id": "de01820b-0285-5794-b76d-d88bd7e7dd80",
    "position": [
@@ -993,7 +1001,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,containerId:$json.containerId};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/container\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,containerId:$json.containerId};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/container\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "479df78e-8b24-5ea0-b560-952170d01ec8",
    "position": [
@@ -1009,6 +1017,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "1edcd826-1d9d-5f7e-8329-4a31d153b946",
    "position": [
     1440,
@@ -1020,7 +1029,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nif(r.ok===false)throw new Error(r.kind==='helper_process_failed'?r.error:'Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
    },
    "onError": "continueErrorOutput",
    "id": "5cf48501-c5ef-5ba1-90de-64ae2fbaa589",
@@ -1047,7 +1056,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,stage:$json.stage,\nerror:$json.error,httpStatus:$json.httpStatus,statusCode:$json.statusCode||null};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/failure\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,stage:$json.stage,\nerror:$json.error,httpStatus:$json.httpStatus,statusCode:$json.statusCode||null};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/failure\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "f3c852e8-7df5-53de-a437-aa1b13781a27",
    "position": [
@@ -1063,6 +1072,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "11b85d75-b861-57a2-a755-c7f12ee1d8ed",
    "position": [
     2400,
@@ -1074,7 +1084,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nreturn [{json:r}];"
    },
    "id": "54e546a1-5238-5a45-b21b-d2b5b5651b14",
    "position": [
@@ -1152,7 +1162,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/renew\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/renew\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "fbbc3f8d-2c84-5908-b45f-2a2820b3ee68",
    "position": [
@@ -1168,6 +1178,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "a730acb2-a763-561b-9f88-c54b5c849ba0",
    "position": [
     1440,
@@ -1179,7 +1190,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nif(r.ok===false)throw new Error(r.kind==='helper_process_failed'?r.error:'Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
    },
    "onError": "continueErrorOutput",
    "id": "69ac5d99-8275-59d5-817e-319e4e1c7bd6",
@@ -1300,7 +1311,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,stage:'container_status',\nstatusCode:$json.status_code||'unknown',\nerror:String($json.status||('Container status '+($json.status_code||'unknown')+' after '+$json.attempt+' polls (30 s each)')).slice(0,600)};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/failure\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,stage:'container_status',\nstatusCode:$json.status_code||'unknown',\nerror:String($json.status||('Container status '+($json.status_code||'unknown')+' after '+$json.attempt+' polls (30 s each)')).slice(0,600)};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/failure\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "609a4a88-4329-581e-824d-d075ecc0ee49",
    "position": [
@@ -1316,6 +1327,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "d2f217bb-bf1a-5792-9019-895da6443756",
    "position": [
     240,
@@ -1327,7 +1339,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nreturn [{json:r}];"
    },
    "id": "085b522f-6b7f-512f-a14b-9f53683895ee",
    "position": [
@@ -1405,7 +1417,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,\nsourceAsset:($json.id&&$json.rev)?$json.id+'@'+$json.rev:'unverifiable',containerStatus:$('Container Status').item.json.status_code};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/commit\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,\nsourceAsset:($json.id&&$json.rev)?$json.id+'@'+$json.rev:'unverifiable',containerStatus:$('Container Status').item.json.status_code};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/commit\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "95fbede0-1a29-573c-baf0-4dc46b673dc7",
    "position": [
@@ -1421,6 +1433,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "6d25082c-519c-5ce1-9a47-7e72f35af35d",
    "position": [
     1680,
@@ -1432,7 +1445,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nif(r.ok===false)throw new Error(r.kind==='helper_process_failed'?r.error:'Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
    },
    "onError": "continueErrorOutput",
    "id": "f12479d3-8bdc-52ed-8755-e341f4aa9c06",
@@ -1529,7 +1542,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body=(()=>{\nconst st=$json.statusCode,b=$json.body||{};\nconst id=st===200&&b.id?String(b.id):null;\nconst definitive=!id&&st>=400&&st<500&&!!b.error;   // provider rejected the request\nconst err=id?null:(b.error?JSON.stringify(b.error).slice(0,600):($json.error?String($json.error.message||$json.error):'no media id returned'));\nreturn {attemptId:$('Claim Publication').item.json.attempt_id,worker:$('Configuration').first().json.worker,\nmediaId:id,error:err,httpStatus:st||null,definitive};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/result\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body=(()=>{\nconst st=$json.statusCode,b=$json.body||{};\nconst id=st===200&&b.id?String(b.id):null;\nconst definitive=!id&&st>=400&&st<500&&!!b.error;   // provider rejected the request\nconst err=id?null:(b.error?JSON.stringify(b.error).slice(0,600):($json.error?String($json.error.message||$json.error):'no media id returned'));\nreturn {attemptId:$('Claim Publication').item.json.attempt_id,worker:$('Configuration').first().json.worker,\nmediaId:id,error:err,httpStatus:st||null,definitive};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/result\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "edaa0146-ac04-551f-aed1-459ecddba074",
    "position": [
@@ -1545,6 +1558,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "c2747acc-a97f-5fd1-ab18-ba1dd2d89d8b",
    "position": [
     240,
@@ -1556,7 +1570,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nif(r.ok===false)throw new Error('Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nif(r.ok===false)throw new Error(r.kind==='helper_process_failed'?r.error:'Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
    },
    "id": "e2f8528f-bd6d-5c12-adcf-b8b011f78e1f",
    "position": [
@@ -1635,7 +1649,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\npermalink:$json.permalink||null};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/evidence\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\npermalink:$json.permalink||null};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/evidence\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "a625ecdc-1db8-5669-89aa-0e52684eba32",
    "position": [
@@ -1651,6 +1665,7 @@
     "executeOnce": false,
     "command": "={{ $json.command }}"
    },
+   "onError": "continueRegularOutput",
    "id": "16eb0357-d61e-58f3-adc1-99391b4c0741",
    "position": [
     1440,
@@ -1662,7 +1677,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nreturn [{json:r}];"
    },
    "id": "fa49fcfe-53fd-5c92-8a3e-35e25e1358ae",
    "position": [

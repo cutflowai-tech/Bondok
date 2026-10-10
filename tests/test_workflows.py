@@ -200,10 +200,6 @@ class CodeNodeBehaviour(unittest.TestCase):
             self.assertLess(len(cmd), 131072)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 @unittest.skipUnless(NODE, 'node not installed')
 class EditorTaskReuse(unittest.TestCase):
     """Cutover safety: v2 must reuse editor subitems created by v1 (same name prefix)."""
@@ -400,3 +396,48 @@ class DisplaySyncGuard(unittest.TestCase):
         self.assertEqual(c['Guarded Sync?']['main'][0][0]['node'], 'Read Board Before Sync')
         self.assertEqual(c['Guarded Sync?']['main'][1][0]['node'], 'Apply Display Sync')
         self.assertEqual(c['Sync Conflict?']['main'][1][0]['node'], 'Apply Display Sync')
+
+
+class HelperCallContracts(unittest.TestCase):
+    """R5 LOW-07 / A12 (export contract): every helper call is Input -> [Body File] -> Execute Command -> parser,
+    a failed process reaches the parser as a typed outcome, and failures are always kept as evidence."""
+
+    def calls(self):
+        for wid, w in WF.items():
+            nodes = {n['name']: n for n in w['nodes']}
+            for name, n in nodes.items():
+                if (n['type'] == 'n8n-nodes-base.code' and name.endswith(' — Input')
+                        and 'helper.py' in n['parameters']['jsCode']):
+                    yield wid, w, nodes, name[:-len(' — Input')]
+
+    def test_every_helper_call_has_the_same_shape(self):
+        seen = 0
+        for wid, w, nodes, base in self.calls():
+            seen += 1
+            nxt = [c['node'] for c in w['connections'][base + ' — Input']['main'][0]]
+            if nxt == [base + ' — Body File']:
+                body = nodes[base + ' — Body File']
+                self.assertEqual((body['type'], body['parameters']['operation']),
+                                 ('n8n-nodes-base.readWriteFile', 'write'))
+                self.assertEqual(body['parameters']['fileName'], '={{ $json.bodyPath }}')
+                self.assertIn('bodyFile', nodes[base + ' — Input']['parameters']['jsCode'])
+                nxt = [c['node'] for c in w['connections'][base + ' — Body File']['main'][0]]
+            self.assertEqual(nxt, [base + ' — Local n8n'], f'{wid}/{base}')
+            ex = nodes[base + ' — Local n8n']
+            self.assertEqual(ex.get('onError'), 'continueRegularOutput', f'{wid}/{base}')
+            self.assertEqual([c['node'] for c in w['connections'][ex['name']]['main'][0]], [base], f'{wid}/{base}')
+            self.assertIn("kind:'helper_process_failed'", nodes[base]['parameters']['jsCode'])
+            self.assertNotIn('exitCode', nodes[base]['parameters']['jsCode'])
+        self.assertGreaterEqual(seen, 29)          # every helper call of the three workflows
+
+    def test_board_sized_requests_use_body_files(self):
+        nodes = {n['name'] for n in WF['qI1N5VNgpRjnZAKH']['nodes']}
+        self.assertTrue({'Import Plan — Body File', 'Board Missing Check — Body File'} <= nodes)
+
+    def test_failed_executions_are_always_saved(self):
+        for wid, w in WF.items():
+            self.assertEqual(w['settings']['saveDataErrorExecution'], 'all', wid)
+
+
+if __name__ == '__main__':      # at the end: a direct run collects every class above (R5 LOW-16)
+    unittest.main()
