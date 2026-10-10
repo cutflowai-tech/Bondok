@@ -63,7 +63,10 @@ class PublishMixin:
             # Pre-commit attempts whose slot window passed are abandoned (never published).
             for a in c.execute(f"SELECT * FROM ops_attempts WHERE stage IN ('claimed','container_created') "
                                'AND lease_until<?', (now,)).fetchall():
-                if rules.instant(a['slot']) + rules.LATE_WINDOW < now_dt:
+                res = self.reservation(c, a['item_id'])
+                end = self.deadline(c, res) if res and res['slot'] == a['slot'] else \
+                    rules.instant(a['slot']) + rules.LATE_WINDOW
+                if end < now_dt:
                     c.execute("UPDATE ops_attempts SET stage='abandoned', updated=? WHERE id=?", (now, a['id']))
                     audit(c, a['item_id'], 'attempt_abandoned', worker, {'attempt': a['id'], 'why': 'window passed'})
                     self.evaluate(c, a['item_id'], worker)     # a ready item gets its next slot (audit P4)
@@ -71,7 +74,7 @@ class PublishMixin:
             rows = c.execute('SELECT r.*, i.publication, i.owner_state FROM ops_reservations r JOIN ops_items i '
                              'USING(item_id) WHERE r.slot<=? ORDER BY r.slot', (rules.iso(now_dt),)).fetchall()
             for r in rows:
-                if r['publication'] != 'not_started' or rules.instant(r['slot']) + rules.LATE_WINDOW < now_dt:
+                if r['publication'] != 'not_started' or self.deadline(c, r) < now_dt:
                     continue
                 att = self.active_attempt(c, r['item_id'])
                 if att and (att['stage'] not in PRE_COMMIT or (att['lease_until'] or 0) > now):
@@ -141,9 +144,8 @@ class PublishMixin:
                             it['item_id'])
                 return {'claimed': False, 'reason': reason, 'held': True}
             slot = rules.instant(res['slot'])
-            late = (now_dt - slot).total_seconds()
-            if late < 0 or late > rules.LATE_WINDOW.total_seconds():
-                return self._refuse(c, it, 'Outside the allowed publication window', quiet=late < 0)
+            if now_dt < slot or now_dt > self.deadline(c, res):
+                return self._refuse(c, it, 'Outside the allowed publication window', quiet=now_dt < slot)
             att = self.active_attempt(c, item_id)
             why = self.eligible(c, {**it}) if not att else self._eligible_ignoring_attempt(c, it)
             if why:
@@ -272,7 +274,8 @@ class PublishMixin:
             if dup:
                 problems.append(self.duplicate_reason(dup))          # re-checked at the commitment point (R5 B1)
             slot = rules.instant(a['slot'])
-            if not (slot <= now_dt <= slot + rules.LATE_WINDOW):
+            end = self.deadline(c, res) if res and res['slot'] == a['slot'] else slot + rules.LATE_WINDOW
+            if not (slot <= now_dt <= end):
                 problems.append('outside the publication window')
             if problems:
                 c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",

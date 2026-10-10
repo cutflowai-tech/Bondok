@@ -12,7 +12,7 @@ import shutil
 
 from . import rules
 from .core import NOTICE_SECONDS, Command, Rejected
-from .db import dumps, loads
+from .db import audit, dumps, loads
 
 STALE_HEARTBEAT = {'wf2': 300, 'wf1': 1800, 'wf3': 4200}
 
@@ -32,10 +32,11 @@ class MonitorMixin:
                     continue
                 near = slot <= now_dt + rules.NEAR_DUE
                 why = self.eligible(c, it)
-                if slot + rules.LATE_WINDOW < now_dt:
-                    findings.append(self._f('missed', r, 'release',
-                                            f"{it['name']} missed its slot {rules.display(slot)} without a publication "
-                                            'attempt; it will be rescheduled to the next free slot.'))
+                if self.deadline(c, r) < now_dt:
+                    # Closed with its actual cause by repair_missed, which also sends the one truthful notice:
+                    # an owner time gets a question, an automatic slot its new time (R5 A1, LOW-09).
+                    findings.append(self._f('missed', r, 'missed',
+                                            f"{it['name']} missed its slot {rules.display(slot)}.", notify=False))
                 elif why and why != 'a publication attempt is active':
                     findings.append(self._f('ineligible', r, 'release',
                                             f"{it['name']} holds {rules.display(slot)} but is not eligible ({why}); "
@@ -48,12 +49,11 @@ class MonitorMixin:
                     findings.append(self._f('revision', r, 'reauthorize',
                                             f"{it['name']}: content changed; reservation re-validated for the new "
                                             'revision.', notify=False))
-                elif not rules.on_grid(r['format'], slot) and not near:
-                    action = 'notify' if r['owner_pinned'] else 'release'
-                    findings.append(self._f('off_grid', r, action,
-                                            f"{it['name']} is reserved at {rules.display(slot)}, outside the agreed "
-                                            + ('grid; it was chosen by the owner, so it is only reported.'
-                                               if r['owner_pinned'] else 'grid; it will be moved to a valid slot.')))
+                elif not rules.on_grid(r['format'], slot) and not near and not r['owner_pinned']:
+                    # Owner times may be off-grid (contract §5); an automatic slot off the grid is moved.
+                    findings.append(self._f('off_grid', r, 'release',
+                                            f"{it['name']} is reserved at {rules.display(slot)}, outside the usual "
+                                            'schedule; it will be moved to a valid slot.'))
             for a in c.execute("SELECT * FROM ops_attempts WHERE stage='outcome_unknown'").fetchall():
                 findings.append({'fingerprint': f"unknown:{a['id']}", 'item_id': a['item_id'], 'kind': 'outcome_unknown',
                                  'action': 'notify', 'notify': False,  # already notified when it became unknown
@@ -101,12 +101,14 @@ class MonitorMixin:
                     self.run_check(c, 'wf3', run_id, fence)
                 is_new = self.finding(c, f['fingerprint'], f['item_id'], f['kind'], f['detail'], notify=f['notify'])
             new += int(is_new)
-            if f['action'] in ('release', 'reauthorize'):
-                op = 'repair_release' if f['action'] == 'release' else 'repair_reauthorize'
+            if f['action'] in ('release', 'reauthorize', 'missed'):
+                op = {'release': 'repair_release', 'reauthorize': 'repair_reauthorize',
+                      'missed': 'repair_missed'}[f['action']]
                 r = self.submit(Command('wf3:' + f['fingerprint'], op, 'service:wf3', 'service:wf3', f['item_id'],
                                         {'kind': f['kind'], 'detail': f['detail'], 'slot': f.get('slot')}))
                 if not r.get('duplicate'):
                     applied.append({'item_id': f['item_id'], 'kind': f['kind'], 'state': r['state']})
+        applied += self.reconcile_schedule(run_id)
         with self.store.tx() as c:
             for r in c.execute('SELECT fingerprint FROM ops_findings WHERE resolved IS NULL').fetchall():
                 # Findings raised by WF1 (missing on the board) are resolved there, not by this inspection
@@ -147,11 +149,79 @@ class MonitorMixin:
     def op_repair_reauthorize(self, c, cmd: Command):
         return self.reauthorize(c, cmd.item_id, cmd.actor, 'supervisor')
 
+    # ------------------------------------------------------------------ missed slots and reconciliation
+    def missed_cause(self, c, item_id, slot) -> str:
+        rows = c.execute('SELECT stage, evidence FROM ops_attempts WHERE item_id=? AND slot=? ORDER BY updated DESC',
+                         (str(item_id), slot)).fetchall()
+        if not rows:
+            return 'no publication attempt was made at that time'
+        ev = loads(rows[0]['evidence'], {}) or {}
+        why = ev.get('abandoned') or ev.get('refused') or ev.get('error') or ev.get('why') or rows[0]['stage']
+        return f'{len(rows)} publication attempt(s) did not complete: {str(why)[:200]}'
+
+    def op_repair_missed(self, c, cmd: Command):
+        """A reservation whose publication window ended without publication (R5 A1). An owner time is closed with
+        one question (never left 'Scheduled' in the past); an automatic slot is replaced by the next valid one."""
+        it = self.item(c, cmd.item_id)
+        res = self.reservation(c, it['item_id'])
+        if not res or (cmd.args.get('slot') and res['slot'] != cmd.args['slot']):
+            return {'noop': True, 'note': 'reservation changed since inspection'}
+        if self.active_attempt(c, it['item_id']) or it['publication'] != 'not_started':
+            raise Rejected('Protected publication state; repair skipped', 'protected')
+        if self.deadline(c, res) >= self.now_dt():
+            return {'noop': True, 'note': 'publication window still open'}
+        cause = self.missed_cause(c, it['item_id'], res['slot'])
+        self.release(c, it, 'missed slot', keep_request=False)
+        audit(c, it['item_id'], 'missed_slot', cmd.actor, {'slot': res['slot'], 'cause': cause,
+                                                           'pinned': res['owner_pinned']})
+        if res['owner_pinned'] and it['owner_state'] == 'active' and not loads(it['hold'], None):
+            c.execute("UPDATE ops_items SET requested_at=?, requested_by='owner' WHERE item_id=?",
+                      (res['slot'], it['item_id']))
+            out = self._missed_request(c, self.item(c, it['item_id']), cmd.actor, cause)
+            self.project(c, it['item_id'])
+            return {'missed': res['slot'], 'question': True, **out}
+        out = self.evaluate(c, it['item_id'], cmd.actor)
+        nxt = out.get('scheduled')
+        self.notify(c, f"missed-auto:{it['item_id']}:{res['slot']}",
+                    f"{it['name']} ({it['item_id']}) missed its slot {rules.display(rules.instant(res['slot']))} "
+                    f'({cause}). ' + (f'It is now scheduled for {rules.display(rules.instant(nxt))}.' if nxt else
+                                      'It is not scheduled yet: ' + str(out.get('waiting') or out.get('reason') or
+                                                                       out.get('readiness'))), it['item_id'])
+        self.project(c, it['item_id'])
+        return {'missed': res['slot'], **out}
+
+    def op_repair_schedule(self, c, cmd: Command):
+        it = self.item(c, cmd.item_id)
+        if self.reservation(c, it['item_id']) or it['publication'] != 'not_started' or it['owner_state'] != 'active':
+            return {'noop': True}
+        return self.try_schedule(c, it['item_id'], cmd.actor)
+
+    def reconcile_schedule(self, run_id=None, limit=50) -> list:
+        """Every supervisor cycle: try to schedule every eligible unreserved item and close owner times that
+        passed while the item was still preparing (R5 A17, L5). Bounded; deterministic order (requested time
+        first, then longest waiting)."""
+        now = rules.iso(self.now_dt())
+        with self.store.read() as c:
+            rows = c.execute("SELECT item_id FROM ops_items WHERE publication='not_started' AND owner_state='active' "
+                             'AND item_id NOT IN (SELECT item_id FROM ops_reservations) AND '
+                             "(readiness='ready' OR (requested_at IS NOT NULL AND requested_at<=? AND "
+                             "COALESCE(requested_by,'owner')!='legacy-board')) "
+                             "ORDER BY COALESCE(requested_at,'9999'), COALESCE(waiting_since,created) LIMIT ?",
+                             (now, limit)).fetchall()
+        tag = run_id or f't{int(self.now() // 60)}'
+        out = []
+        for r in rows:
+            res = self.submit(Command(f"{tag}:schedule:{r['item_id']}", 'repair_schedule', 'service:wf3',
+                                      'service:wf3', r['item_id'], {}))
+            if res.get('scheduled') or res.get('missed'):
+                out.append({'item_id': r['item_id'], 'kind': 'schedule', 'state': res['state']})
+        return out
+
     # ------------------------------------------------------------------ reads (Bondok)
     def item_status(self, item_id) -> dict:
         with self.store.read() as c:
             it = self.item(c, item_id)
-            res = self.reservation(c, item_id)
+            res = self.reservation(c, item_id) if it['publication'] == 'not_started' else None
             att = c.execute('SELECT id,stage,updated,media_id,permalink FROM ops_attempts WHERE item_id=? '
                             'ORDER BY created DESC LIMIT 1', (str(item_id),)).fetchone()
             pend = c.execute("SELECT id,kind,summary,expires FROM ops_proposals WHERE state='pending' AND bindings LIKE ?",
@@ -175,8 +245,10 @@ class MonitorMixin:
     def schedule(self, days=14) -> list[dict]:
         horizon = rules.iso(self.now_dt() + __import__('datetime').timedelta(days=days))
         with self.store.read() as c:
+            # Pending work only: published items keep their reservation row as history (R5 LOW-08).
             rows = c.execute('SELECT r.slot, r.format, r.owner_pinned, i.item_id, i.name, i.code FROM ops_reservations r '
-                             'JOIN ops_items i USING(item_id) WHERE r.slot<=? ORDER BY r.slot', (horizon,)).fetchall()
+                             "JOIN ops_items i USING(item_id) WHERE r.slot<=? AND r.slot>=? AND i.publication='not_started' "
+                             'ORDER BY r.slot', (horizon, rules.iso(self.now_dt() - rules.LATE_WINDOW))).fetchall()
             return [{**dict(r), 'cairo': rules.display(rules.instant(r['slot']))} for r in rows]
 
     def health(self) -> dict:

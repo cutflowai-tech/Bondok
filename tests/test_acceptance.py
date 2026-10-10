@@ -326,11 +326,12 @@ class Scenario08MondayEdits(OpsCase):
         set_cell(board_item, 'asset', 'id:FILE1@rev1')
         r = self.observe(board_item)
         self.assertEqual(r['edits'], [], r['edits'])
-        # Human types an off-grid time: rejected with alternatives, display reverted.
-        set_cell(board_item, 'publish_at', 'x', rules.monday_publish_at_value(at_cairo(2026, 10, 13, 20, 0)))
+        # R5.2 contract §5 (expectation changed): an owner time may be off-grid; a time in the past is rejected
+        # with alternatives and the display reverted.
+        set_cell(board_item, 'publish_at', 'x', rules.monday_publish_at_value(at_cairo(2026, 10, 9, 20, 0)))
         r = self.observe(board_item)
         self.assertEqual(r['edits'][0]['state'], 'rejected')
-        self.assertIn('outside the agreed', r['edits'][0]['reason'])
+        self.assertIn('already passed', r['edits'][0]['reason'])
         self.assertEqual(self.res('70')['slot'], proj['publish_at'])
         # Same observation again: same idempotency id, no new action.
         r2 = self.observe(board_item)
@@ -663,7 +664,10 @@ class CaptionDraftApproval(OpsCase):
         self.observe(monday_item('200', fmt='Post', code='LIP12'))
         pid = self.draft('200')['proposal_id']
         self.clock.advance(31 * 60)
-        self.assertEqual(self.approve(pid)['code'], 'expired')
+        # R5.2 contract §7 (expectation changed, R5 A8/L3): a content approval does not expire with its interaction;
+        # it stays bound to the exact draft text.
+        self.assertEqual(self.approve(pid)['state'], 'completed')
+        self.assertEqual(self.item('200')['caption_state'], 'approved')
 
 
 class PreparationCoverageAndQuietness(OpsCase):
@@ -833,7 +837,12 @@ class Scenario26TimeContract(OpsCase):
 
     def test_off_grid_rejected_with_alternatives(self):
         self.make_ready('230', 'Story')
+        # R5.2 contract §5 (expectation changed): an off-grid owner time is accepted; a past one is rejected with
+        # alternatives.
         r = self.ops.submit(owner_cmd('o', 'request_reschedule', '230', at=rules.iso(at_cairo(2026, 10, 11, 12, 0))))
+        self.assertEqual(r['state'], 'completed', r)
+        self.assertEqual(self.res('230')['slot'], rules.iso(at_cairo(2026, 10, 11, 12, 0)))
+        r = self.ops.submit(owner_cmd('o2', 'request_reschedule', '230', at=rules.iso(at_cairo(2026, 10, 10, 11, 0))))
         self.assertEqual(r['state'], 'rejected')
         self.assertEqual(len(r['alternatives']), 3)
 
@@ -918,11 +927,11 @@ class LegacyMigrationBehaviour(OpsCase):
         # one caption changes on the board before approval -> that item is skipped
         self.ops.submit(Command('ed', 'update_caption', 'monday', 'monday', '411', {'text': 'Changed by human, DM. ✨\n\n#c'}))
         r = self.ops.submit(owner_cmd('ap', 'approve_proposal', None, proposal_id=p['proposal_id']))
-        self.assertEqual(r['state'], 'rejected')     # bindings changed (item 411 version moved)
-        with self.ops.store.tx() as c:
-            p2 = self.ops.propose_legacy_captions(c, 'U-OWNER')
-        r = self.ops.submit(owner_cmd('ap2', 'approve_proposal', None, proposal_id=p2['proposal_id']))
+        # R5.2 contract §7 (expectation changed, R5 M1): each caption is bound to its own text; the changed one is
+        # skipped instead of voiding the whole batch.
+        self.assertEqual(r['state'], 'completed', r)
         self.assertEqual(r['approved'], ['410'])
+        self.assertEqual(r['skipped_changed'], ['411'])
         self.assertEqual(self.item('410')['caption_state'], 'approved')
 
 
@@ -1213,15 +1222,20 @@ class SchedulingAudit(OpsCase):
         other = self.res('508')['slot']
         self.observe(monday_item('509', fmt='Post', code='LIP1'))       # not ready
         r = self.ops.submit(owner_cmd('s', 'request_reschedule', '509', at=other))
-        self.assertEqual((r['state'], r['code']), ('rejected', 'slot_taken'), r)
+        # R5.2 contract §3/§5 (expectation changed, R5 M4/A5): the owner's time is kept visibly as a request; the
+        # occupied slot is not taken (option B: one proposal once 509 is ready).
+        self.assertEqual(r['state'], 'accepted', r)
+        self.assertEqual(self.item('509')['requested_at'], other)
         self.assertEqual(self.res('508')['slot'], other)
+        self.assertIsNone(self.res('509'))
 
     def test_rejected_board_time_is_reverted_with_notice(self):             # S7
         self.make_ready('510', 'Post')
         self.drain_monday()
         self.clock.advance(25 * 60)
         b = self.board('510')
-        set_cell(b, 'publish_at', 'x', rules.monday_publish_at_value(rules.cairo_local(2026, 10, 13, 20, 0)))
+        # R5.2 contract §5 (expectation changed): off-grid owner times are allowed; a past time is still rejected.
+        set_cell(b, 'publish_at', 'x', rules.monday_publish_at_value(rules.cairo_local(2026, 10, 9, 20, 0)))
         r = self.observe(b)
         self.assertEqual(r['edits'][0]['state'], 'rejected')
         jobs = [json.loads(o['payload']) for o in self.outbox('monday') if o['state'] == 'pending']

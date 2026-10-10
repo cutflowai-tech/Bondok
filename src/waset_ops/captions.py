@@ -92,6 +92,26 @@ class CaptionMixin:
         self.write_human(c, it, {'caption': payload['text']})
         return {'caption_approved': True, **self.reauthorize(c, it['item_id'], cmd.actor, 'caption approved')}
 
+    def op_approve_caption_draft(self, c, cmd: Command):
+        """Owner approves the item's current caption draft directly (no proposal id to copy). The draft does not
+        expire with its interaction; it is bound to its exact text and the caption it was drafted against (R5 A8)."""
+        it = self.item(c, cmd.item_id)
+        d = c.execute("SELECT * FROM ops_caption_drafts WHERE item_id=? AND state='pending_approval' "
+                      'ORDER BY created DESC LIMIT 1', (it['item_id'],)).fetchone()
+        if not d:
+            raise Rejected('There is no caption draft waiting for approval for this item', 'no_draft')
+        shown = cmd.args.get('text')
+        if shown is not None and ' '.join(str(shown).split()) != ' '.join((d['text'] or '').split()):
+            raise Rejected('The draft changed since it was shown; nothing was approved', 'stale')
+        p = c.execute('SELECT * FROM ops_proposals WHERE id=?', (d['proposal_id'],)).fetchone() if d['proposal_id'] else None
+        payload = loads(p['payload'], {}) if p else {'item_id': it['item_id'], 'input_hash': d['input_hash'],
+                                                     'text': d['text']}
+        result = self.execute_approve_caption(c, payload, cmd, d['proposal_id'])
+        if p and p['state'] in ('pending', 'expired', 'stale'):
+            c.execute("UPDATE ops_proposals SET state='executed', decided_by=?, result=?, updated=? WHERE id=?",
+                      (cmd.actor, dumps(result), self.now(), p['id']))
+        return {'approved_draft': d['input_hash'][:12], **result}
+
     def reject_approve_caption(self, c, payload, cmd):
         c.execute("UPDATE ops_caption_drafts SET state='rejected', updated=? WHERE input_hash=?",
                   (self.now(), payload['input_hash']))

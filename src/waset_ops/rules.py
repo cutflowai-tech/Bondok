@@ -153,8 +153,21 @@ def on_grid(fmt: str, d: datetime) -> bool:
     return False
 
 
-def grid(now: datetime, fmt: str, lead: timedelta = RESERVE_LEAD, horizon: int = HORIZON_DAYS):
-    """Yield every valid slot after now+lead in ascending order (UTC)."""
+def in_window(at: datetime, window: dict | None) -> bool:
+    """Owner scheduling constraints carried with an instruction (contract §4): 'not_before' (UTC instant) and
+    'on_date' (a Cairo calendar date, e.g. "tomorrow")."""
+    if not window:
+        return True
+    at = instant(at)
+    if window.get('not_before') and at < instant(window['not_before']):
+        return False
+    if window.get('on_date') and at.astimezone(TZ).date().isoformat() != window['on_date']:
+        return False
+    return True
+
+
+def grid(now: datetime, fmt: str, lead: timedelta = RESERVE_LEAD, horizon: int = HORIZON_DAYS, window=None):
+    """Yield every valid slot after now+lead in ascending order (UTC), inside the owner's window if any."""
     now = instant(now)
     start = now.astimezone(TZ).date()
     for offset in range(horizon):
@@ -168,13 +181,13 @@ def grid(now: datetime, fmt: str, lead: timedelta = RESERVE_LEAD, horizon: int =
                 at = cairo_local(day.year, day.month, day.day, hour, minute)
             except RuleError:
                 continue
-            if at > now + lead:
+            if at > now + lead and in_window(at, window):
                 yield at
 
 
-def alternatives(now, fmt, taken: set[str], limit=3, lead=NEAR_DUE):
+def alternatives(now, fmt, taken: set[str], limit=3, lead=NEAR_DUE, window=None):
     out = []
-    for at in grid(now, fmt, lead):
+    for at in grid(now, fmt, lead, window=window):
         if iso(at) not in taken:
             out.append(at)
             if len(out) >= limit:
@@ -193,6 +206,37 @@ def validate_requested_slot(now, fmt, at) -> datetime:
     if at > instant(now) + timedelta(days=HORIZON_DAYS):
         raise RuleError('Requested time is beyond the 84-day scheduling horizon')
     return at
+
+
+OWNER_MIN_LEAD = timedelta(minutes=1)
+
+
+def validate_owner_time(now, fmt, at) -> datetime:
+    """A time chosen by the owner (board Publish at or Slack): on or off the slot grid (contract §5, postmortem 04).
+    The grid applies to automatic allocation only; readiness, conflicts and the commitment point still apply."""
+    at = instant(at)
+    if fmt not in FORMATS:
+        raise RuleError('Format must be Post or Story')
+    now = instant(now)
+    if at.second:
+        raise RuleError('Publication times are set to the minute')
+    if at <= now:
+        raise RuleError('That time has already passed; choose a future time')
+    if at < now + OWNER_MIN_LEAD:
+        raise RuleError('That time is less than a minute away; choose a later time')
+    if at > now + timedelta(days=HORIZON_DAYS):
+        raise RuleError('Requested time is beyond the 84-day scheduling horizon')
+    return at
+
+
+def late_deadline(slot, next_slot=None) -> datetime:
+    """Latest moment a reserved item may still be published: 2 hours after its slot, and never at or after the
+    next reserved slot of the same format (R5 M29: a 21:00 Story must not land on the 22:00 one)."""
+    slot = instant(slot)
+    end = slot + LATE_WINDOW
+    if next_slot is not None and slot < instant(next_slot) < end:
+        end = instant(next_slot)
+    return end
 
 
 # ---------------------------------------------------------------- codes and variety
@@ -215,7 +259,7 @@ def rotation_key(fmt: str, code: str, name: str, variety: str | None) -> str:
     return prefix
 
 
-def choose_slot(now, fmt, key, occupied: list[tuple[datetime, str]], taken: set[str]):
+def choose_slot(now, fmt, key, occupied: list[tuple[datetime, str]], taken: set[str], window=None):
     """Deterministic variety preference with bounded fallback (no LLM).
 
     Prefers the earliest free slot whose neighbours do not share the same
@@ -224,7 +268,7 @@ def choose_slot(now, fmt, key, occupied: list[tuple[datetime, str]], taken: set[
     """
     events = sorted(occupied, key=lambda e: e[0])
     fallback = None
-    for at in grid(now, fmt):
+    for at in grid(now, fmt, window=window):
         if iso(at) in taken:
             continue
         if fallback is None:

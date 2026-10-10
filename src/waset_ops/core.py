@@ -195,6 +195,11 @@ class CoreMixin:
         'request_reschedule': {OWNER, MONDAY},
         'request_recheck': {OWNER, MONDAY, BONDOK, 'service:wf3'},
         'request_publish': {OWNER},
+        'set_window': {OWNER},
+        'request_rework': {OWNER},
+        'approve_caption_draft': {OWNER},
+        'repair_missed': {'service:wf3'},
+        'repair_schedule': {'service:wf3', 'service:wf1'},
         'resolve_outcome': {OWNER},
         'approve_proposal': {OWNER},
         'reject_proposal': {OWNER},
@@ -685,6 +690,10 @@ class CoreMixin:
         return {'proposal_id': pid, 'expires_in_minutes': PROPOSAL_TTL // 60, 'summary': summary}
 
     def check_bindings(self, c, p) -> None:
+        if p['kind'] in ('approve_caption', 'approve_captions'):
+            # Content approvals are bound to the exact text and do not expire with the interaction (R5 A8, L3);
+            # execute_* re-checks the text/caption they depend on.
+            return
         if p['expires'] < self.now():
             raise Rejected('This proposal expired; ask for an updated one', 'expired')
         if p['kind'] == 'approve_caption':

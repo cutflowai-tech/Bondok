@@ -95,9 +95,77 @@ class SchedMixin:
             return self.duplicate_reason(dup)
         return None
 
-    def taken(self, c, fmt, exclude=None) -> set[str]:
+    # ------------------------------------------------------------------ slots, owner requests and windows
+    def reserved_slots(self, c, fmt, exclude=None) -> set[str]:
         return {r['slot'] for r in c.execute('SELECT slot,item_id FROM ops_reservations WHERE account=? AND format=?',
                                              (rules.ACCOUNT, fmt)) if r['item_id'] != exclude}
+
+    @staticmethod
+    def owner_request(it) -> bool:
+        """An owner/board time request (legacy preferences restored from earlier systems are not)."""
+        return bool(it.get('requested_at')) and it.get('requested_by') != 'legacy-board'
+
+    def requested_slots(self, c, fmt, exclude=None) -> set[str]:
+        """Future owner-requested times of active items still preparing: protected from automatic allocation
+        (R5 A5). Existing reservations still follow option B."""
+        now = rules.iso(self.now_dt())
+        return {r['requested_at'] for r in c.execute(
+            "SELECT item_id, requested_at FROM ops_items WHERE format=? AND requested_at IS NOT NULL AND "
+            "COALESCE(requested_by,'owner')!='legacy-board' AND owner_state='active' AND publication='not_started' "
+            'AND item_id NOT IN (SELECT item_id FROM ops_reservations)', (fmt,))
+            if r['item_id'] != exclude and r['requested_at'] > now}
+
+    def taken(self, c, fmt, exclude=None) -> set[str]:
+        """Slots automatic allocation must not use."""
+        return self.reserved_slots(c, fmt, exclude) | self.requested_slots(c, fmt, exclude)
+
+    def next_reserved_after(self, c, fmt, slot, exclude=None):
+        r = c.execute("SELECT MIN(r.slot) FROM ops_reservations r JOIN ops_items i USING(item_id) WHERE r.account=? "
+                      "AND r.format=? AND r.slot>? AND r.item_id!=? AND i.publication='not_started'",
+                      (rules.ACCOUNT, fmt, slot, str(exclude))).fetchone()
+        return r[0] if r else None
+
+    def deadline(self, c, res):
+        """Latest publication moment for a reservation (R5 M29)."""
+        return rules.late_deadline(res['slot'], self.next_reserved_after(c, res['format'], res['slot'], res['item_id']))
+
+    def window(self, it) -> dict | None:
+        return (loads(it.get('observed'), {}) or {}).get('_window') or None
+
+    def _store_window(self, c, item_id, window, actor):
+        obs = loads(self.item(c, item_id)['observed'], {}) or {}
+        if window:
+            obs['_window'] = {k: v for k, v in window.items() if k in ('not_before', 'on_date') and v}
+            obs['_window'].update(by=actor, at=self.now())
+        else:
+            obs.pop('_window', None)
+        c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), str(item_id)))
+
+    @staticmethod
+    def parse_window(args) -> dict | None:
+        w = {}
+        if args.get('not_before'):
+            try:
+                w['not_before'] = rules.iso(rules.instant(args['not_before']))
+            except (ValueError, TypeError, rules.RuleError):
+                raise Rejected('The "not before" time could not be read', 'invalid_window')
+        if args.get('on_date'):
+            d = str(args['on_date']).strip()
+            try:
+                __import__('datetime').date.fromisoformat(d)
+            except ValueError:
+                raise Rejected('The day could not be read (expected YYYY-MM-DD, Cairo)', 'invalid_window')
+            w['on_date'] = d
+        return w or None
+
+    @staticmethod
+    def window_text(w) -> str:
+        parts = []
+        if w and w.get('on_date'):
+            parts.append('on ' + w['on_date'])
+        if w and w.get('not_before'):
+            parts.append('not before ' + rules.display(rules.instant(w['not_before'])))
+        return ' and '.join(parts)
 
     def occupied(self, c, fmt, exclude=None):
         out = []
@@ -125,56 +193,91 @@ class SchedMixin:
         self.update_item(c, it['item_id'], actor, 'reserved', requested_at=None, requested_by=None)
         return slot
 
+    # ------------------------------------------------------------------ allocation
     def try_schedule(self, c, item_id, actor) -> dict:
-        """Automatic allocation to a free valid slot. Never displaces anyone."""
+        """Reserve the owner's requested time, else an automatic free grid slot inside the owner's window.
+        Never displaces anyone (option B)."""
         it = self.item(c, item_id)
         res = self.reservation(c, item_id)
         if res:
             if res['content_rev'] != it['content_rev']:
                 return self.reauthorize(c, item_id, actor, 'content revision changed')
             return {'scheduled': res['slot']}
+        if self.owner_request(it) and it['requested_at'] <= rules.iso(self.now_dt()) and \
+                it['publication'] == 'not_started' and it['owner_state'] == 'active' and \
+                (loads(it['hold'], {}) or {}).get('kind') in (None, *self.TIME_HOLDS):
+            return self._missed_request(c, it, actor, 'it was not ready to publish at that time')
         why = self.eligible(c, it)
         if why:
             return {'scheduled': None, 'waiting': why}
         now = self.now_dt()
         if it['requested_at']:
-            legacy = it['requested_by'] == 'legacy-board'   # set by earlier schedulers: a preference, not owner intent
+            legacy = not self.owner_request(it)
             try:
-                at = rules.validate_requested_slot(now, it['format'], it['requested_at'])
+                at = (rules.validate_requested_slot if legacy else rules.validate_owner_time)(
+                    now, it['format'], it['requested_at'])
             except rules.RuleError as e:
                 if legacy:
                     audit(c, item_id, 'legacy_request_dropped', actor, {'at': it['requested_at'], 'why': str(e)})
                     self.update_item(c, item_id, actor, 'legacy request invalid', requested_at=None, requested_by=None)
                     return self.try_schedule(c, item_id, actor)
-                self.notify(c, f"req-invalid:{item_id}:{it['requested_at']}",
-                            f"Requested time {rules.display(rules.instant(it['requested_at']))} for {it['name']} "
-                            f"({item_id}) is no longer valid ({e}); it will be scheduled automatically.", item_id)
-                self.update_item(c, item_id, actor, 'requested slot invalid', requested_at=None, requested_by=None)
-                it = self.item(c, item_id)
-            else:
-                if rules.iso(at) in self.taken(c, it['format'], item_id) and legacy:
+                return self._missed_request(c, it, actor, str(e))
+            if rules.iso(at) in self.reserved_slots(c, it['format'], item_id):
+                if legacy:
                     audit(c, item_id, 'legacy_request_dropped', actor, {'at': it['requested_at'], 'why': 'occupied'})
                     self.update_item(c, item_id, actor, 'legacy request occupied', requested_at=None, requested_by=None)
                     return self.try_schedule(c, item_id, actor)
-                if rules.iso(at) in self.taken(c, it['format'], item_id):
-                    self.notify(c, f"req-taken:{item_id}:{rules.iso(at)}",
-                                f"{it['name']} ({item_id}) is ready, but its requested time {rules.display(at)} is "
-                                'taken by another item. Tell Bondok which time to use.', item_id)
-                    return {'scheduled': None, 'waiting': 'requested slot is occupied'}
-                slot = self._reserve(c, it, at, 'legacy' if legacy else 'owner', not legacy, actor)
-                return {'scheduled': slot, 'origin': 'requested'}
+                return self._requested_slot_occupied(c, it, at, actor)
+            slot = self._reserve(c, it, at, 'legacy' if legacy else 'owner', not legacy, actor)
+            return {'scheduled': slot, 'origin': 'requested'}
+        win = self.window(it)
         key = rules.rotation_key(it['format'], it['code'], it['name'], it['variety'])
         at = rules.choose_slot(now, it['format'], key, self.occupied(c, it['format'], item_id),
-                               self.taken(c, it['format'], item_id))
+                               self.taken(c, it['format'], item_id), window=win)
         if at is None:
-            self.notify(c, f"no-slot:{item_id}", f"No free {it['format']} slot in the next 84 days for "
-                        f"{it['name']} ({item_id}).", item_id)
-            return {'scheduled': None, 'waiting': 'no free slot in horizon'}
+            where = (' ' + self.window_text(win)) if win else ' in the next 84 days'
+            self.notify(c, f"no-slot:{item_id}:{self.window_text(win)}", f"No free {it['format']} slot{where} for "
+                        f"{it['name']} ({item_id}). Tell Bondok another day or time.", item_id)
+            return {'scheduled': None, 'waiting': 'no free slot' + where}
         return {'scheduled': self._reserve(c, it, at, 'auto', False, actor), 'origin': 'auto'}
 
+    def _missed_request(self, c, it, actor, why) -> dict:
+        """An owner time that passed (or can no longer be honoured) is closed with its cause and one question;
+        it never stays 'Scheduled' in the past or silently becomes another time (R5 A1, A5)."""
+        past = it['requested_at']
+        obs = loads(it['observed'], {}) or {}
+        obs['_missed'] = (obs.get('_missed') or [])[-4:] + [{'at': past, 'why': why[:200], 'closed': self.now()}]
+        c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
+        when = rules.display(rules.instant(past))
+        reason = (f'The requested time {when} passed without publication ({why}). Choose a new time, or tell Bondok '
+                  'to publish it at the next free time.')
+        self.update_item(c, it['item_id'], actor, 'requested time missed', requested_at=None, requested_by=None,
+                         hold=dumps({'kind': 'missed_time', 'time': past, 'origin': 'system', 'party': 'owner',
+                                     'recover': 'a new time, "publish it", or resume', 'reason': reason}))
+        self.notify(c, f"missed:{it['item_id']}:{past}", f"{it['name']} ({it['item_id']}): {reason}", it['item_id'])
+        return {'scheduled': None, 'waiting': 'requested time passed', 'missed': past}
+
+    def _requested_slot_occupied(self, c, it, at, actor) -> dict:
+        """The owner's requested time is held by another reservation that existed first: one concrete proposal
+        (option B), offered once; nothing moves before approval."""
+        other = c.execute('SELECT * FROM ops_reservations WHERE account=? AND format=? AND slot=?',
+                          (rules.ACCOUNT, it['format'], rules.iso(at))).fetchone()
+        open_p = c.execute("SELECT id FROM ops_proposals WHERE kind='swap_slot' AND state='pending' AND "
+                           "json_extract(payload,'$.item_id')=? AND json_extract(payload,'$.slot')=?",
+                           (it['item_id'], rules.iso(at))).fetchone()
+        if other and not open_p:
+            try:
+                self._propose_swap(c, Command('sched:' + it['item_id'], 'propose', actor, 'service', it['item_id']),
+                                   it, dict(other), at)
+            except Rejected as e:
+                self.notify(c, f"req-taken:{it['item_id']}:{rules.iso(at)}",
+                            f"{it['name']} ({it['item_id']}) is ready, but its requested time {rules.display(at)} is "
+                            f'reserved by another item ({e.reason}). Tell Bondok which time to use.', it['item_id'])
+        return {'scheduled': None, 'waiting': 'requested time is reserved by another item; proposal sent'}
+
     def reauthorize(self, c, item_id, actor, why) -> dict:
-        """Explicitly re-bind an existing reservation to the current content
-        revision, or release it. An obsolete payload never stays authorized."""
+        """Explicitly re-bind an existing reservation to the current content revision, or release it. An obsolete
+        payload never stays authorized; a released item is scheduled again (R5 A17)."""
         it = self.item(c, item_id)
         res = self.reservation(c, item_id)
         if not res:
@@ -185,8 +288,7 @@ class SchedMixin:
         att = self.active_attempt(c, item_id)
         if reason == 'a publication attempt is active' and att and att['stage'] in ('claimed', 'container_created'):
             reason = None   # the pre-commit attempt is refused at commit (payload mismatch) and re-claimed
-        if reason is None and res['format'] == it['format'] and \
-                rules.instant(res['slot']) + rules.LATE_WINDOW > self.now_dt():
+        if reason is None and res['format'] == it['format'] and self.deadline(c, res) > self.now_dt():
             c.execute('UPDATE ops_reservations SET content_rev=?, payload_fp=?, updated=? WHERE item_id=?',
                       (it['content_rev'], self.payload_fp(c, it), self.now(), item_id))
             audit(c, item_id, 'reservation_reauthorized', actor, {'slot': res['slot'], 'why': why,
@@ -195,6 +297,8 @@ class SchedMixin:
             return {'scheduled': res['slot'], 'reauthorized': True}
         self.release(c, it, 'not reauthorized: ' + (reason or 'slot passed'))
         self.project(c, item_id)
+        if reason is None:
+            return {'released': True, **self.try_schedule(c, item_id, actor)}
         return {'scheduled': None, 'released': True, 'waiting': reason}
 
     # ------------------------------------------------------------------ owner/board requests
@@ -204,18 +308,24 @@ class SchedMixin:
         obs['_notice'] = {'text': text, 'at': self.now()}
         c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), str(item_id)))
 
+    TIME_HOLDS = ('unscheduled', 'incomplete_time', 'missed_time')
+
+    def _clear_time_hold(self, c, it, actor):
+        if (loads(it['hold'], {}) or {}).get('kind') in self.TIME_HOLDS:
+            return self.update_item(c, it['item_id'], actor, 'time hold answered', hold=None)
+        return it
+
     def op_request_reschedule(self, c, cmd: Command):
         it = self.item(c, cmd.item_id)
-        self._guard_mutable(c, it)
+        self._guard_mutable(c, it, allow_paused=True)     # a paused item keeps the owner's time as its request
         res = self.reservation(c, it['item_id'])
-        if res and rules.instant(res['slot']) <= self.now_dt() + rules.NEAR_DUE:
-            raise Rejected('The current slot is within 10 minutes of publication; it cannot be moved now', 'near_due')
+        att = self.active_attempt(c, it['item_id'])
         at_raw = cmd.args.get('at')
         if at_raw is None and cmd.args.get('incomplete_date'):
             day = cmd.args['incomplete_date']
             self.release(c, it, 'incomplete requested time', keep_request=False)
             self.update_item(c, it['item_id'], cmd.actor, 'incomplete time', requested_at=None, requested_by=None,
-                             hold=dumps({'kind': 'incomplete_time', 'date': day, 'origin': 'owner',
+                             hold=dumps({'kind': 'incomplete_time', 'date': day, 'origin': 'owner', 'party': 'owner',
                                          'recover': 'a complete time, a cleared Publish at, or a time in Slack',
                                          'reason': f'Publish at has the date {day} but no time. Add the time '
                                                    '(Cairo); it will not be published until then.'}))
@@ -224,63 +334,105 @@ class SchedMixin:
                         'Bondok the time.', it['item_id'])
             return {'incomplete': True, 'date': day}
         if at_raw is None:
+            # Clearing the time cancels the owner's request; it is not recreated automatically (R5 A16).
             self.release(c, it, 'unscheduled by request', keep_request=False)
+            self._store_window(c, it['item_id'], None, cmd.actor)
             self.update_item(c, it['item_id'], cmd.actor, 'unscheduled', requested_at=None, requested_by=None,
-                             hold=dumps({'kind': 'unscheduled', 'reason': 'Publish time was cleared; tell Bondok '
-                                         'when to schedule it'}))
-            return {'unscheduled': True}
+                             hold=dumps({'kind': 'unscheduled', 'origin': 'owner', 'party': 'owner',
+                                         'recover': 'a new time, "publish it", or resume',
+                                         'reason': 'Publish time was cleared; set a new time or tell Bondok to '
+                                                   'publish it'}))
+            self.notify(c, f"unscheduled:{it['item_id']}:{it['version']}", f"{it['name']} ({it['item_id']}) is not "
+                        'scheduled because its Publish at was cleared. Set a new time on the board, or tell Bondok to '
+                        'publish it.', it['item_id'])
+            return {'unscheduled': True,
+                    **({'publication': 'stopped_before_commit'} if att else {})}
+        owner = cmd.actor_kind in (OWNER, MONDAY)
         try:
-            at = rules.validate_requested_slot(self.now_dt(), it['format'], at_raw)
+            at = (rules.validate_owner_time if owner else rules.validate_requested_slot)(self.now_dt(), it['format'],
+                                                                                      at_raw)
         except (rules.RuleError, ValueError) as e:
             alts = rules.alternatives(self.now_dt(), it['format'], self.taken(c, it['format'], it['item_id']))
-            msg = f"{e}. Valid free alternatives: " + ', '.join(rules.display(a) for a in alts)
+            msg = f"{e}. Free times on the usual schedule: " + ', '.join(rules.display(a) for a in alts)
             raise Rejected('Requested time rejected: ' + msg, 'invalid_slot', alternatives=[rules.iso(a) for a in alts])
         slot = rules.iso(at)
         if res and res['slot'] == slot:
+            self._clear_time_hold(c, it, cmd.actor)
             return {'scheduled': slot, 'unchanged': True}
-        if (loads(it['hold'], {}) or {}).get('kind') in ('unscheduled', 'incomplete_time'):
-            # A new time answers "tell Bondok when to schedule it" (audit S1/S4).
-            it = self.update_item(c, it['item_id'], cmd.actor, 'unscheduled hold cleared', hold=None)
+        it = self._clear_time_hold(c, it, cmd.actor)    # a new time answers "when should it be published?"
+        self._store_window(c, it['item_id'], None, cmd.actor)   # an exact time supersedes an earlier window
         other = c.execute('SELECT * FROM ops_reservations WHERE account=? AND format=? AND slot=?',
                           (rules.ACCOUNT, it['format'], slot)).fetchone()
         why = self.eligible(c, it)
+        if why == 'a publication attempt is active':
+            why = None                                   # pre-commit: refused at commit once the reservation moves
         if other and other['item_id'] != it['item_id']:
-            if why is not None:
-                # Moving a scheduled item for one that cannot publish would give its slot away (audit S6).
-                alts = rules.alternatives(self.now_dt(), it['format'], self.taken(c, it['format'], it['item_id']))
-                raise Rejected(f'That time is reserved by another item and this item is not ready ({why}). Free '
-                               'alternatives: ' + ', '.join(rules.display(a) for a in alts), 'slot_taken',
-                               alternatives=[rules.iso(a) for a in alts])
-            return self._propose_swap(c, cmd, it, dict(other), at)
-        if why is not None and not res:
+            if why is None:
+                return self._propose_swap(c, cmd, it, dict(other), at)
+            self.release(c, it, 'owner chose another time', keep_request=False)
             self.update_item(c, it['item_id'], cmd.actor, 'requested time', requested_at=slot,
                              requested_by='owner' if cmd.actor_kind == OWNER else 'board')
             return {'_state': 'accepted', 'requested': slot,
-                    'message': 'Time recorded as requested (not yet reserved): ' + why}
+                    'message': f'Time recorded as requested ({rules.display(at)}); another item holds it, so when this '
+                               'item is ready you will get one proposal to move that item. Not yet reserved: ' + why}
+        if why is not None:
+            self.release(c, it, 'owner chose another time', keep_request=False)
+            self.update_item(c, it['item_id'], cmd.actor, 'requested time', requested_at=slot,
+                             requested_by='owner' if cmd.actor_kind == OWNER else 'board')
+            return {'_state': 'accepted', 'requested': slot,
+                    'message': f'Time recorded as requested ({rules.display(at)}); not yet reserved: ' + why}
         if res:
             c.execute('DELETE FROM ops_reservations WHERE item_id=?', (it['item_id'],))
         self._reserve(c, self.item(c, it['item_id']), at, 'owner', True, cmd.actor)
-        return {'scheduled': slot, 'display': rules.display(at)}
+        out = {'scheduled': slot, 'display': rules.display(at)}
+        if att:
+            out['message'] = ('The publisher had already started on the previous time; that attempt stops before '
+                              'publishing because the time changed.')
+        return out
+
+    def op_set_window(self, c, cmd: Command):
+        """Owner constraint for an item's publication day/earliest time (e.g. "not before tomorrow"). An existing
+        reservation outside the window is released and the item is scheduled inside it."""
+        it = self.item(c, cmd.item_id)
+        self._guard_mutable(c, it, allow_paused=True)
+        win = self.parse_window(cmd.args)
+        self._store_window(c, it['item_id'], win, cmd.actor)
+        res = self.reservation(c, it['item_id'])
+        if it['requested_at'] and win and not rules.in_window(rules.instant(it['requested_at']), win):
+            self.update_item(c, it['item_id'], cmd.actor, 'request outside window', requested_at=None, requested_by=None)
+        if res and win and not rules.in_window(rules.instant(res['slot']), win):
+            self.release(c, self.item(c, it['item_id']), 'outside the owner window', keep_request=False)
+        return {'window': win, **self.try_schedule(c, it['item_id'], cmd.actor)}
 
     def _propose_swap(self, c, cmd, it, other, at):
+        """Option B: one concrete proposal naming every affected item and its resulting time (R5 M5). If the
+        requester already holds a slot this is a true swap; otherwise the other item moves to the earliest free
+        slot on the usual schedule. Pins are stated and kept; nothing moves before approval."""
         o = self.item(c, other['item_id'])
-        exclude = self.taken(c, it['format']) | {rules.iso(at)}
-        new_for_other = None
-        for cand in rules.grid(self.now_dt(), it['format'], rules.NEAR_DUE):
-            if rules.iso(cand) not in exclude:
-                new_for_other = cand
-                break
-        if new_for_other is None:
-            raise Rejected('The requested slot is occupied and no free slot exists to move the other item', 'no_slot')
-        if rules.instant(other['slot']) <= self.now_dt() + rules.NEAR_DUE:
+        now = self.now_dt()
+        if rules.instant(other['slot']) <= now + rules.NEAR_DUE:
             raise Rejected('The requested slot is about to publish another item; choose another time', 'near_due')
-        payload = {'item_id': it['item_id'], 'slot': rules.iso(at), 'other_id': o['item_id'],
-                   'other_slot': rules.iso(new_for_other)}
         cur = self.reservation(c, it['item_id'])
+        if cur and rules.instant(cur['slot']) > now + rules.NEAR_DUE:
+            new_for_other, swap = rules.instant(cur['slot']), True
+        else:
+            exclude = self.taken(c, it['format']) | {rules.iso(at)}
+            new_for_other = next((g for g in rules.grid(now, it['format'], rules.NEAR_DUE)
+                                  if rules.iso(g) not in exclude), None)
+            swap = False
+            if new_for_other is None:
+                raise Rejected('The requested slot is occupied and no free slot exists to move the other item', 'no_slot')
+        pinned = bool(other['owner_pinned'])
+        payload = {'item_id': it['item_id'], 'slot': rules.iso(at), 'other_id': o['item_id'],
+                   'other_slot': rules.iso(new_for_other), 'swap': swap, 'other_pinned': pinned,
+                   'requester_old': cur['slot'] if cur else None, 'other_old': other['slot']}
         summary = (f"Move {it['name']} ({it['item_id']}) "
                    f"{'from ' + rules.display(rules.instant(cur['slot'])) + ' ' if cur else ''}to {rules.display(at)}. "
-                   f"That time is reserved by {o['name']} ({o['item_id']}); it would move to "
-                   f"{rules.display(new_for_other)}. Nothing changes until approved.")
+                   f"That time is reserved by {o['name']} ({o['item_id']}); "
+                   + (f"the two times are swapped, so it moves to {rules.display(new_for_other)}. "
+                      if swap else f"it would move to {rules.display(new_for_other)} (earliest free slot). ")
+                   + ('Its owner pin is kept. ' if pinned else 'It stays an automatic slot. ')
+                   + 'Nothing changes until approved.')
         p = self.create_proposal(c, 'swap_slot', [it['item_id'], o['item_id']], payload, summary, cmd.actor,
                                  cmd.auth.get('thread'))
         if cmd.actor_kind == MONDAY:
@@ -293,41 +445,65 @@ class SchedMixin:
     def execute_swap_slot(self, c, payload, cmd, pid):
         now = self.now_dt()
         it, o = self.item(c, payload['item_id']), self.item(c, payload['other_id'])
-        for x in (it, o):
-            why = self.eligible(c, x)
-            if why:
-                raise Rejected(f"{x['name']} is no longer eligible ({why}); proposal not executed", 'stale')
-        for slot in (payload['slot'], payload['other_slot']):
-            try:
-                rules.validate_requested_slot(now, it['format'], slot)
-            except rules.RuleError as e:
-                raise Rejected(f'A proposed time is no longer valid ({e}); proposal not executed', 'stale')
-        for r in (self.reservation(c, it['item_id']), self.reservation(c, o['item_id'])):
+        why = self.eligible(c, it)
+        if why and why != 'a publication attempt is active':
+            raise Rejected(f"{it['name']} is no longer eligible ({why}); proposal not executed", 'stale')
+        mine, theirs = self.reservation(c, it['item_id']), self.reservation(c, o['item_id'])
+        if (mine['slot'] if mine else None) != payload.get('requester_old', mine['slot'] if mine else None) or \
+                (theirs['slot'] if theirs else None) not in (payload.get('other_old', payload['slot']), None):
+            raise Rejected('A reservation changed after the proposal; it was not executed', 'stale')
+        for r in (mine, theirs):
             if r and rules.instant(r['slot']) <= now + rules.NEAR_DUE:
                 raise Rejected('A current slot is within 10 minutes of publication; proposal not executed', 'near_due')
-        taken = self.taken(c, it['format'], None) - {r['slot'] for r in (self.reservation(c, it['item_id']),
-                                                                       self.reservation(c, o['item_id'])) if r}
+        for slot in (payload['slot'], payload['other_slot']):
+            try:
+                rules.validate_owner_time(now, it['format'], slot)
+            except rules.RuleError as e:
+                raise Rejected(f'A proposed time is no longer valid ({e}); proposal not executed', 'stale')
+        keep = {r['slot'] for r in (mine, theirs) if r}
+        taken = self.reserved_slots(c, it['format']) - keep
         if payload['other_slot'] in taken or payload['slot'] in taken:
             raise Rejected('A proposed slot was taken in the meantime; proposal not executed', 'stale')
         c.execute('DELETE FROM ops_reservations WHERE item_id IN (?,?)', (it['item_id'], o['item_id']))
-        self._reserve(c, self.item(c, o['item_id']), rules.instant(payload['other_slot']), 'owner', True, cmd.actor)
+        moved = [{'item_id': it['item_id'], 'slot': payload['slot']}]
+        if theirs and not self.eligible(c, o):
+            self._reserve(c, self.item(c, o['item_id']), rules.instant(payload['other_slot']),
+                          theirs['origin'] if payload.get('other_pinned') else 'auto', payload.get('other_pinned'),
+                          cmd.actor)
+            moved.append({'item_id': o['item_id'], 'slot': payload['other_slot']})
         self._reserve(c, self.item(c, it['item_id']), rules.instant(payload['slot']), 'owner', True, cmd.actor)
-        return {'moved': [{'item_id': it['item_id'], 'slot': payload['slot']},
-                          {'item_id': o['item_id'], 'slot': payload['other_slot']}]}
+        return {'moved': moved}
 
     def op_request_publish(self, c, cmd: Command):
-        """Owner asks to get an item out: earliest valid free slot through the
-        normal publisher. Never a direct publish and never off-grid."""
+        """Owner asks to get an item out: the earliest free slot on the usual schedule (inside any day/not-before
+        constraint given with the instruction) through the normal publisher. Never a direct publish."""
         it = self.item(c, cmd.item_id)
+        self._guard_mutable(c, it, allow_paused=True)
+        win = self.parse_window(cmd.args)
         res = self.reservation(c, it['item_id'])
-        if res:
+        if res and self.deadline(c, res) <= self.now_dt():
+            self.release(c, it, 'missed slot replaced by an owner publish request', keep_request=False)
+            res = None
+        if res and (not win or rules.in_window(rules.instant(res['slot']), win)):
             return {'scheduled': res['slot'], 'display': rules.display(rules.instant(res['slot'])),
                     'message': 'Already scheduled; the publisher will post it at that time'}
+        it = self._clear_time_hold(c, it, cmd.actor)    # "publish it" answers an open time question (R5 A16)
+        if win or res:
+            self._store_window(c, it['item_id'], win, cmd.actor)
+        if res:
+            self.release(c, it, 'outside the owner window', keep_request=False)
+        if it['requested_at']:
+            self.update_item(c, it['item_id'], cmd.actor, 'publish request replaces earlier time', requested_at=None,
+                             requested_by=None)
+        it = self.item(c, it['item_id'])
         why = self.eligible(c, it)
+        if why and it['owner_state'] == 'active' and not loads(it['hold'], None) and it['readiness'] != 'ready':
+            return {'_state': 'accepted', 'message': f'It will be scheduled as soon as it is ready ({why}).',
+                    **({'window': win} if win else {})}
         if why:
             raise Rejected('Cannot schedule yet: ' + why, 'not_eligible')
-        for at in rules.grid(self.now_dt(), it['format'], rules.NEAR_DUE):
-            if rules.iso(at) not in self.taken(c, it['format']):
-                self._reserve(c, it, at, 'owner', True, cmd.actor)
+        for at in rules.grid(self.now_dt(), it['format'], rules.NEAR_DUE, window=win):
+            if rules.iso(at) not in self.taken(c, it['format'], it['item_id']):
+                self._reserve(c, it, at, 'owner', False, cmd.actor)
                 return {'scheduled': rules.iso(at), 'display': rules.display(at)}
-        raise Rejected('No free slot in the scheduling horizon', 'no_slot')
+        raise Rejected('No free slot ' + (self.window_text(win) if win else 'in the scheduling horizon'), 'no_slot')

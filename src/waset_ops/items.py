@@ -16,7 +16,9 @@ RELIST_READY_SECONDS = 30 * 60          # metadata-only revision check for ready
 INFRA_RECHECK_SECONDS = 20 * 60
 FRESH_READ_SECONDS = 120              # non-WF1 callers read the board right before observing
 TIME_KEYS = ('publish_at', 'post_date', 'post_time')
-RESUMABLE_HOLDS = ('resume', 'rejected_edit', 'publish_retry_limit')
+# Holds that only wait for the owner to say "continue" (or give a time): resume clears them (contract §3/§7).
+RESUMABLE_HOLDS = ('resume', 'rejected_edit', 'publish_retry_limit', 'unscheduled', 'missed_time',
+                   'incomplete_time', 'rework')
 BACKOFF_STEPS = (600, 1200, 2400, 3600) # waiting/blocked items: fair, bounded backoff
 
 
@@ -501,14 +503,45 @@ class ItemsMixin:
         it = self.item(c, cmd.item_id)
         hold = loads(it['hold'], None)
         clearable = bool(hold and hold.get('kind') in RESUMABLE_HOLDS)
-        if it['owner_state'] == 'active' and not clearable:
+        win = self.parse_window(cmd.args)
+        if it['publication'] == 'published':
+            # Terminal publication protection is never cleared by an ordinary resume (R5 B2).
+            if it['owner_state'] != 'active':
+                self.update_item(c, it['item_id'], cmd.actor, 'resume (published)', owner_state='active',
+                                 owner_state_reason=None)
+            return {'resumed': False, 'message': 'This item is recorded as published; it will not be published again'}
+        if it['owner_state'] == 'active' and not clearable and not win:
             return {'resumed': False, 'message': 'Item is not paused or skipped'}
         # Resume also clears holds that only wait for the owner to say "continue" (audit: a rejected board
         # edit or the publish retry limit on an active item could otherwise never be cleared).
         self.update_item(c, it['item_id'], cmd.actor, 'resume', owner_state='active', owner_state_reason=None,
                          hold=None if clearable else it['hold'])
+        if win:
+            # Constraints said with the instruction travel with it ("publish them tomorrow, nothing more", R5 A15).
+            self._store_window(c, it['item_id'], win, cmd.actor)
+            cur = self.item(c, it['item_id'])
+            if cur['requested_at'] and not rules.in_window(rules.instant(cur['requested_at']), win):
+                self.update_item(c, it['item_id'], cmd.actor, 'request outside window', requested_at=None,
+                                 requested_by=None)
+            res = self.reservation(c, it['item_id'])
+            if res and not rules.in_window(rules.instant(res['slot']), win):
+                self.release(c, self.item(c, it['item_id']), 'outside the owner window', keep_request=False)
         out = self.try_schedule(c, it['item_id'], cmd.actor)
-        return {'resumed': True, **out}
+        return {'resumed': True, **({'window': win} if win else {}), **out}
+
+    def op_request_rework(self, c, cmd: Command):
+        """Owner sends the item back to the editor ("رجعها للمونتير"): never a resume. Held until a new file
+        version arrives or the owner resumes it; the editor gets one task."""
+        it = self.item(c, cmd.item_id)
+        self._guard_mutable(c, it, allow_paused=True)
+        reason = (cmd.args.get('reason') or 'The owner asked for a new edit').strip()[:300]
+        self.release(c, it, 'rework requested', keep_request=False)
+        self.update_item(c, it['item_id'], cmd.actor, 'rework requested', hold=dumps(
+            {'kind': 'rework', 'asset': it['asset_key'], 'origin': 'owner', 'party': 'editor',
+             'recover': 'a new file version, or the owner resumes it', 'reason': 'Owner asked for a new edit: ' + reason}))
+        self.editor_task(c, it['item_id'], 'rework:' + str(it['asset_key']), 'Owner asked for a new edit: ' + reason)
+        return {'rework': True, 'message': 'Sent back to the editor; it will not be scheduled until a new version '
+                                           'arrives or you resume it.'}
 
     def explicit_owner(self, cmd: Command) -> bool:
         return cmd.actor_kind == OWNER and (cmd.auth.get('explicit') is True or bool(cmd.auth.get('proposal')))
@@ -753,6 +786,9 @@ class ItemsMixin:
         it = self.item(c, item_id)
         if it['publication'] in PROTECTED_PUBLICATION:
             return {'readiness': it['readiness']}
+        hold = loads(it['hold'], None)
+        if hold and hold.get('kind') == 'rework' and it['asset_key'] and hold.get('asset') != it['asset_key']:
+            it = self.update_item(c, item_id, actor, 'new version after rework request', hold=None)
         fields = {}
         if self.safe_style(it['code']) is None:
             fields = dict(readiness='blocked', block_kind='config', block_key='invalid_code',
