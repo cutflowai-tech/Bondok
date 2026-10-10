@@ -54,7 +54,10 @@ class MonitorMixin:
                     findings.append(self._f('off_grid', r, 'release',
                                             f"{it['name']} is reserved at {rules.display(slot)}, outside the usual "
                                             'schedule; it will be moved to a valid slot.'))
-            for a in c.execute("SELECT * FROM ops_attempts WHERE stage='outcome_unknown'").fetchall():
+            # An unknown attempt the owner already answered (reported published) is not an open question any more;
+            # its provider evidence is still reconciled and recorded (R5 LOW-12).
+            for a in c.execute("SELECT a.* FROM ops_attempts a JOIN ops_items i ON i.item_id=a.item_id WHERE "
+                               "a.stage='outcome_unknown' AND i.publication!='published'").fetchall():
                 findings.append({'fingerprint': f"unknown:{a['id']}", 'item_id': a['item_id'], 'kind': 'outcome_unknown',
                                  'action': 'notify', 'notify': False,  # already notified when it became unknown
                                  'detail': f"Publication outcome unknown for item {a['item_id']}."})

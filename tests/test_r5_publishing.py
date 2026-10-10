@@ -300,5 +300,29 @@ class R5_A2_WorkflowRoutesEveryPreCommitFailure(unittest.TestCase):
         self.assertTrue(self.nodes['Probe Instagram Access']['parameters']['url'].endswith('?fields=id'))
 
 
+class R5_LOW12_OneOwnerReportResolvesAnUnknownOutcome(PublishOnce):
+    """LOW-12: an unknown outcome plus the owner's board Posted needed two owner answers."""
+
+    def test_board_posted_on_an_unknown_attempt_needs_no_second_answer(self):
+        cl = self.committed('30')
+        self.ops.result(cl['attempt_id'], 'w', error=err(1, msg='An unknown error occurred'), http_status=500,
+                        definitive=False)
+        self.assertEqual(self.item('30')['publication'], 'outcome_unknown')
+        r = self.ops.submit(owner_cmd(self.rid(), 'report_published', '30', source='board status', value='Posted'))
+        self.assertEqual(r['state'], 'completed', r)
+        self.assertEqual(self.item('30')['publication'], 'published')
+        self.assertIsNone(self.item('30')['hold'])
+        self.assertNotIn('outcome_unknown', [f['kind'] for f in self.ops.inspect()['findings']
+                                             if f.get('item_id') == '30'])
+        with self.ops.store.read() as c:                                 # no open owner question remains
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM ops_proposals WHERE state='pending' AND "
+                                       "bindings LIKE '%30%'").fetchone()[0], 0)
+        self.clock.advance(3 * 86400)
+        self.ops.repair()
+        self.assertEqual(self.item('30')['publication'], 'published')
+        self.assertFalse([w for w in self.ops.due('w9', limit=50)['work'] if w.get('item_id') == '30'
+                          and w['kind'] == 'publish'])
+
+
 if __name__ == '__main__':
     unittest.main()
