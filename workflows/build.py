@@ -177,6 +177,17 @@ def social_snapshot(f: Flow, prefix: str):
     return start, snap
 
 
+# Error-output item -> {stage, error, httpStatus}: keeps the provider's JSON body when n8n embeds it in the message
+# ("400 - {...}") so the handler can classify it (R5 A2, M6).
+FAILURE_JS = r"""
+const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');
+let text=String(raw||JSON.stringify($json)).slice(0,1500);
+const code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;
+let body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}
+if(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}
+return [{json:{stage:'__STAGE__',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"""
+
+
 # ============================================================================ WF2
 def build_wf2():
     o = load('pUIshuf16zIYoYRz__2_Publish_When_Due.json')
@@ -243,6 +254,16 @@ return {id:job,worker:$('Configuration').first().json.worker,ok:!err&&!!$json.da
     # ---- due work from durable state (empty queue ends cleanly: no Monday call)
     due_in, due = f.helper('Due Work', '/v2/publish/due', "{worker:$('Configuration').first().json.worker,limit:5}")
     f.link(cfg, due_in)
+    # Account breaker open: a cheap read proves access is back before publishing resumes (R5 A2).
+    probe_q = f.cond('Probe Instagram Access?', '$json.probe===true')
+    probe = f.reuse('Check Container', 'Probe Instagram Access', onError='continueRegularOutput')
+    f.nodes[probe]['parameters']['url'] = f.orig['Create Container']['parameters']['url'].replace('/media', '?fields=id')
+    f.nodes[probe]['parameters'].pop('method', None)
+    pr_in, pr = f.helper('Record Probe', '/v2/publish/probe', r"""{ok:!!$json.id&&!$json.error,
+error:$json.error?JSON.stringify($json.error).slice(0,600):null}""", fail=False)
+    f.link(due, probe_q)
+    f.link(probe_q, probe, 0)
+    f.chain(probe, pr_in)
     items = f.code('Due Items', 'return ($json.work||[]).map(w=>({json:w}));')
     loop = f.reuse('Each Due Item')
     f.chain(due, items, loop)
@@ -283,10 +304,15 @@ freshItem:{...fresh,group},sourceStatus:status};})()""", on_error='continueError
     claimed = f.cond('Publication Claimed?', '$json.claimed===true')
     f.link(is_rec, q, 1)
     f.chain(q, read, src_q, read_src, claim_in)
-    for n in (read, src_q, read_src):
-        f.link(n, done, 1)
+    # Reads before a claim failed: recorded once per item and cause (no attempt exists yet), never silent (R5 A2).
+    rf_in, rf = f.helper('Record Read Failure', '/v2/publish/read_failure', r"""{itemId:$('Each Due Item').item.json.item_id,
+stage:$json.stage,error:$json.error,httpStatus:$json.httpStatus}""", fail=False)
+    for n, stage in ((read, 'read_item'), (src_q, 'read_item'), (read_src, 'read_source'), (claim, 'claim')):
+        rfc = f.code('Read Failure — ' + n, FAILURE_JS.replace('__STAGE__', stage))
+        f.link(n, rfc, 1)
+        f.link(rfc, rf_in)
+    f.link(rf, done)
     f.link(claim, claimed)
-    f.link(claim, done, 1)
     f.link(claimed, done, 1)
 
     resume = f.cond('Resume Existing Container?', '!!$json.container_id')
@@ -311,9 +337,20 @@ return [{json:{containerId:id,attempt:0}}];""")
     f.link(resume, body, 1)
     f.chain(body, create, created, save_in)
     f.link(save, active)
-    f.link(create, done, 1)
-    f.link(created, done, 1)
-    f.link(save, done, 1)
+    # Every failure before the commitment point reaches the handler with its stage and real error (R5 A2, M6).
+    pf_in, pf = f.helper('Record Pre-commit Failure', '/v2/publish/failure', r"""{attemptId:$('Claim Publication').item.json.attempt_id,
+worker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,stage:$json.stage,
+error:$json.error,httpStatus:$json.httpStatus,statusCode:$json.statusCode||null}""", fail=False)
+    f.link(pf, done)
+
+    def precommit(node, stage):
+        fc = f.code('Failure — ' + node, FAILURE_JS.replace('__STAGE__', stage))
+        f.link(node, fc, 1)
+        f.link(fc, pf_in)
+
+    precommit(create, 'create_container')
+    precommit(created, 'create_container')
+    precommit(save, 'save_container')
 
     poll = f.code('Poll Context', 'return [{json:{attempt:($json.attempt||0)+1}}];')
     wait = f.reuse('Wait For Processing')
@@ -324,13 +361,16 @@ worker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.
     status = f.code('Container Status', "return [{json:{...$json,attempt:$('Poll Context').item.json.attempt}}];")
     finished = f.reuse('Container Finished?')
     keep = f.cond('Keep Polling?', "$json.status_code==='IN_PROGRESS'&&$json.attempt<20")
-    ab_in, ab = f.helper('Abandon Attempt', '/v2/publish/abandon', r"""{attemptId:$('Claim Publication').item.json.attempt_id,
-worker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,
-reason:'Container status '+($json.status_code||'unknown')+' after '+$json.attempt+' polls (30 s each)'}""", fail=False)
+    # Container never became FINISHED: Instagram's status text (with its error subcode) reaches the handler (R5 M6).
+    ab_in, ab = f.helper('Abandon Attempt', '/v2/publish/failure', r"""{attemptId:$('Claim Publication').item.json.attempt_id,
+worker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,stage:'container_status',
+statusCode:$json.status_code||'unknown',
+error:String($json.status||('Container status '+($json.status_code||'unknown')+' after '+$json.attempt+' polls (30 s each)')).slice(0,600)}""",
+                         fail=False)
     f.chain(active, poll, wait, renew_in)
     f.chain(renew, check, status, finished)
-    f.link(renew, done, 1)
-    f.link(check, done, 1)
+    precommit(renew, 'renew_lease')
+    precommit(check, 'check_container')
     f.link(finished, keep, 1)
     f.link(keep, poll, 0)
     f.link(keep, ab_in, 1)
@@ -348,7 +388,7 @@ sourceAsset:($json.id&&$json.rev)?$json.id+'@'+$json.rev:'unverifiable',containe
     f.chain(verify, commit_in)
     f.link(verify, commit_in, 1)       # Dropbox unavailable -> commit refuses ('unverifiable')
     f.link(commit, committed)
-    f.link(commit, done, 1)
+    precommit(commit, 'commit_call')
     f.link(committed, done, 1)
 
     publish = f.reuse('Publish To Instagram', onError='continueRegularOutput')

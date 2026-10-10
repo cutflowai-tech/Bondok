@@ -170,6 +170,18 @@ class PublishMixin:
             c.execute("UPDATE ops_meta SET value=? WHERE key='breaker:instagram'", (dumps(b),))
             return {'open': True}
 
+    def read_failure(self, item_id, stage, error=None, http_status=None) -> dict:
+        """A read before the claim failed (Monday item/source status, or the claim call): nothing was started.
+        Recorded once per item and cause per hour; WF2 tries again next minute without creating containers."""
+        with self.store.tx() as c:
+            text = summary(error) if error else 'no response'
+            new = self.finding(c, f'wf2-read:{item_id}:{stage}:{int(self.now() // 3600)}', str(item_id), 'publish_read',
+                               f'Publisher could not {stage.replace("_", " ")} for item {item_id} '
+                               f'(HTTP {http_status}): {text[:200]}. Nothing was published; it retries every minute.',
+                               notify=False)
+            audit(c, item_id, 'publish_read_failed', 'service:wf2', {'stage': stage, 'http_status': http_status})
+            return {'recorded': True, 'new': new}
+
     def due(self, worker: str, limit=5) -> dict:
         """Durable due work. Empty queue -> empty list (no Monday call needed)."""
         now, now_dt = self.now(), self.now_dt()

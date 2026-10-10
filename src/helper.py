@@ -123,6 +123,13 @@ def action(path, b):
         return media.maintenance()
     if path == '/v2/publish/abandon':
         return o.abandon(b['attemptId'], b['worker'], b['fence'], b.get('reason'))
+    if path == '/v2/publish/failure':
+        return o.precommit_failure(b['attemptId'], b['worker'], b['fence'], b.get('stage') or 'unknown',
+                                   error=b.get('error'), http_status=b.get('httpStatus'), status_code=b.get('statusCode'))
+    if path == '/v2/publish/read_failure':
+        return o.read_failure(b['itemId'], b.get('stage') or 'read', b.get('error'), b.get('httpStatus'))
+    if path == '/v2/publish/probe':
+        return o.provider_probe(bool(b.get('ok')), b.get('error'))
     if path == '/v2/prep/step':
         return prep_step(o, b)
     if path == '/v2/prep/delivered':

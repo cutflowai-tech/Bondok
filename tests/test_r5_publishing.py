@@ -252,5 +252,53 @@ class R5_M7_FailedPublicationDisplayAndRetry(PublishOnce):
         self.assertIsNotNone(self.res('40'))
 
 
+class R5_A2_WorkflowRoutesEveryPreCommitFailure(unittest.TestCase):
+    """The generated WF2 sends every pre-commit error output to the handler (not to 'Item Finished')."""
+
+    def setUp(self):
+        from test_workflows import WF
+        self.w = WF['pUIshuf16zIYoYRz']
+        self.nodes = {n['name']: n for n in self.w['nodes']}
+        self.conns = self.w['connections']
+
+    def targets(self, name, out=1):
+        lists = self.conns.get(name, {}).get('main', [])
+        return [c['node'] for c in (lists[out] if len(lists) > out else [])]
+
+    def test_error_outputs_reach_the_failure_recorders(self):
+        for src in ('Create Container', 'Container Created', 'Save Container', 'Renew Publication Lease',
+                    'Check Container', 'Commit Publication'):
+            with self.subTest(node=src):
+                t = self.targets(src)
+                self.assertEqual(t, ['Failure — ' + src])
+                self.assertEqual(self.targets(t[0], 0), ['Record Pre-commit Failure — Input'])
+                self.assertNotIn('Publication Item Finished', t)
+        for src in ('Read Fresh Item', 'Source Status — Query', 'Read Source Status', 'Claim Publication'):
+            with self.subTest(node=src):
+                self.assertEqual(self.targets(src), ['Read Failure — ' + src])
+
+    def test_failure_extraction_keeps_the_provider_body(self):
+        from test_workflows import NODE, run_js
+        if not NODE:
+            self.skipTest('node not installed')
+        js = self.nodes['Failure — Create Container']['parameters']['jsCode']
+        out = run_js(js, {'error': {'message': '400 - {"error":{"message":"Error validating access token",'
+                                               '"type":"OAuthException","code":190}}', 'httpCode': '400'}})
+        self.assertEqual(out[0]['json']['stage'], 'create_container')
+        self.assertEqual(out[0]['json']['httpStatus'], 400)
+        self.assertIn('"code":190', out[0]['json']['error'])
+
+    def test_container_status_text_reaches_the_handler(self):
+        body = self.nodes['Abandon Attempt — Input']['parameters']['jsCode']
+        self.assertIn('/v2/publish/failure', body)
+        self.assertIn('$json.status', body)
+        self.assertIn('statusCode', body)
+
+    def test_breaker_probe_branch(self):
+        self.assertIn('Probe Instagram Access?', self.targets('Due Work', 0))
+        self.assertEqual(self.targets('Probe Instagram Access?', 0), ['Probe Instagram Access'])
+        self.assertTrue(self.nodes['Probe Instagram Access']['parameters']['url'].endswith('?fields=id'))
+
+
 if __name__ == '__main__':
     unittest.main()

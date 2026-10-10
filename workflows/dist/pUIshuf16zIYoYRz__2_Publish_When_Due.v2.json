@@ -394,6 +394,106 @@
    ]
   },
   {
+   "name": "Probe Instagram Access?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "0a1dfab0-007b-5de6-808b-10610a6b7895",
+       "leftValue": "={{ $json.probe===true }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "64dd2e23-fe60-5d9a-a44b-50293b89c30c",
+   "position": [
+    2160,
+    200
+   ]
+  },
+  {
+   "parameters": {
+    "url": "https://graph.facebook.com/v26.0/17841479950766455?fields=id",
+    "authentication": "genericCredentialType",
+    "genericAuthType": "httpTemplatedCustomAuth",
+    "options": {}
+   },
+   "name": "Probe Instagram Access",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.3,
+   "position": [
+    260,
+    520
+   ],
+   "onError": "continueRegularOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "httpTemplatedCustomAuth": {
+     "id": "<REDACTED>",
+     "name": "Simplified Custom Auth account"
+    }
+   },
+   "id": "0c42df29-fa53-5922-9782-32a3b8760b24"
+  },
+  {
+   "name": "Record Probe — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={ok:!!$json.id&&!$json.error,\nerror:$json.error?JSON.stringify($json.error).slice(0,600):null};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/probe\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "bfe5f263-37ea-57e9-828f-e136a64eff6b",
+   "position": [
+    2640,
+    200
+   ]
+  },
+  {
+   "name": "Record Probe — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "f6b9de59-6931-5f8c-bf84-4ed273003d80",
+   "position": [
+    0,
+    400
+   ]
+  },
+  {
+   "name": "Record Probe",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+   },
+   "id": "eae2348f-1442-5760-9437-934b3b8301ff",
+   "position": [
+    240,
+    400
+   ]
+  },
+  {
    "name": "Due Items",
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
@@ -402,8 +502,8 @@
    },
    "id": "c6d1118a-3c5b-56e1-9f2b-9b2726b090e4",
    "position": [
-    2160,
-    200
+    480,
+    400
    ]
   },
   {
@@ -450,8 +550,8 @@
    },
    "id": "3f79e619-3a8a-591b-8c2b-0f3e6fff0b25",
    "position": [
-    2640,
-    200
+    960,
+    400
    ]
   },
   {
@@ -463,7 +563,7 @@
    },
    "id": "9473083c-674b-585c-9295-e865681ccd00",
    "position": [
-    0,
+    1200,
     400
    ]
   },
@@ -502,7 +602,7 @@
    },
    "id": "5d878a11-3dc6-511d-b96b-d8456dc9e213",
    "position": [
-    480,
+    1680,
     400
    ]
   },
@@ -516,7 +616,7 @@
    },
    "id": "5b2b0044-a4a9-5e84-b163-61c19aa27e45",
    "position": [
-    720,
+    1920,
     400
    ]
   },
@@ -529,7 +629,7 @@
    },
    "id": "709c46a8-f571-5dee-8bec-e6118de57c56",
    "position": [
-    960,
+    2160,
     400
    ]
   },
@@ -542,7 +642,7 @@
    },
    "id": "cb4fdadc-c18a-5600-a566-4fd967e3cf52",
    "position": [
-    1200,
+    2400,
     400
    ]
   },
@@ -578,7 +678,7 @@
    "onError": "continueErrorOutput",
    "id": "fe992571-3d20-5626-9593-3373516ed693",
    "position": [
-    1440,
+    2640,
     400
    ]
   },
@@ -592,8 +692,8 @@
    "onError": "continueErrorOutput",
    "id": "543263c5-5333-575f-a8cb-fec83bed5c90",
    "position": [
-    1680,
-    400
+    0,
+    600
    ]
   },
   {
@@ -628,8 +728,8 @@
    "onError": "continueErrorOutput",
    "id": "a5140920-c726-5308-8e93-cb2c74273414",
    "position": [
-    1920,
-    400
+    240,
+    600
    ]
   },
   {
@@ -641,8 +741,8 @@
    },
    "id": "af289a09-c679-5713-88b0-8072892e8b0a",
    "position": [
-    2160,
-    400
+    480,
+    600
    ]
   },
   {
@@ -655,8 +755,8 @@
    },
    "id": "a4ab9774-b415-515f-9c58-3609948484a9",
    "position": [
-    2400,
-    400
+    720,
+    600
    ]
   },
   {
@@ -669,8 +769,8 @@
    "onError": "continueErrorOutput",
    "id": "f9717995-5f15-5e21-b82b-c55bb745a9e1",
    "position": [
-    2640,
-    400
+    960,
+    600
    ]
   },
   {
@@ -703,8 +803,100 @@
    },
    "id": "89248609-dd07-5104-8993-5c62fbafd42f",
    "position": [
-    0,
+    1200,
     600
+   ]
+  },
+  {
+   "name": "Record Read Failure — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={itemId:$('Each Due Item').item.json.item_id,\nstage:$json.stage,error:$json.error,httpStatus:$json.httpStatus};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/read_failure\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "6242ef69-ebf1-5c2e-9ff2-b4fd968e268e",
+   "position": [
+    1440,
+    600
+   ]
+  },
+  {
+   "name": "Record Read Failure — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "df7b4b0a-85a3-58ee-a44b-3353a898696b",
+   "position": [
+    1680,
+    600
+   ]
+  },
+  {
+   "name": "Record Read Failure",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+   },
+   "id": "de01820b-0285-5794-b76d-d88bd7e7dd80",
+   "position": [
+    1920,
+    600
+   ]
+  },
+  {
+   "name": "Read Failure — Read Fresh Item",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');\nlet text=String(raw||JSON.stringify($json)).slice(0,1500);\nconst code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;\nlet body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}\nif(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}\nreturn [{json:{stage:'read_item',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"
+   },
+   "id": "4bb5f7c2-40bd-51e8-9e3a-d053b1660dad",
+   "position": [
+    2160,
+    600
+   ]
+  },
+  {
+   "name": "Read Failure — Source Status — Query",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');\nlet text=String(raw||JSON.stringify($json)).slice(0,1500);\nconst code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;\nlet body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}\nif(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}\nreturn [{json:{stage:'read_item',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"
+   },
+   "id": "b8de709d-e738-593b-9195-8179cc1d2851",
+   "position": [
+    2400,
+    600
+   ]
+  },
+  {
+   "name": "Read Failure — Read Source Status",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');\nlet text=String(raw||JSON.stringify($json)).slice(0,1500);\nconst code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;\nlet body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}\nif(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}\nreturn [{json:{stage:'read_source',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"
+   },
+   "id": "d34be734-2ea9-5a7f-a8cd-acfb379fc57b",
+   "position": [
+    2640,
+    600
+   ]
+  },
+  {
+   "name": "Read Failure — Claim Publication",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');\nlet text=String(raw||JSON.stringify($json)).slice(0,1500);\nconst code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;\nlet body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}\nif(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}\nreturn [{json:{stage:'claim',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"
+   },
+   "id": "2d0ba998-5053-585a-8167-bf8dd80e369c",
+   "position": [
+    0,
+    800
    ]
   },
   {
@@ -738,7 +930,7 @@
    "id": "c87183cc-f72f-5000-890e-3c2401c3f290",
    "position": [
     240,
-    600
+    800
    ]
   },
   {
@@ -751,7 +943,7 @@
    "id": "53908116-1f16-521f-9377-54dfb69e7aef",
    "position": [
     480,
-    600
+    800
    ]
   },
   {
@@ -793,7 +985,7 @@
    "id": "a840e51b-4b0a-5071-a70d-ee0355e756de",
    "position": [
     960,
-    600
+    800
    ]
   },
   {
@@ -806,7 +998,7 @@
    "id": "479df78e-8b24-5ea0-b560-952170d01ec8",
    "position": [
     1200,
-    600
+    800
    ]
   },
   {
@@ -820,7 +1012,7 @@
    "id": "1edcd826-1d9d-5f7e-8329-4a31d153b946",
    "position": [
     1440,
-    600
+    800
    ]
   },
   {
@@ -834,7 +1026,7 @@
    "id": "5cf48501-c5ef-5ba1-90de-64ae2fbaa589",
    "position": [
     1680,
-    600
+    800
    ]
   },
   {
@@ -847,7 +1039,86 @@
    "id": "3c0aec9e-1300-5ae0-ba46-59c6eac402ba",
    "position": [
     1920,
-    600
+    800
+   ]
+  },
+  {
+   "name": "Record Pre-commit Failure — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,stage:$json.stage,\nerror:$json.error,httpStatus:$json.httpStatus,statusCode:$json.statusCode||null};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/failure\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+   },
+   "id": "f3c852e8-7df5-53de-a437-aa1b13781a27",
+   "position": [
+    2160,
+    800
+   ]
+  },
+  {
+   "name": "Record Pre-commit Failure — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "id": "11b85d75-b861-57a2-a755-c7f12ee1d8ed",
+   "position": [
+    2400,
+    800
+   ]
+  },
+  {
+   "name": "Record Pre-commit Failure",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Helper process failed (exit '+$json.exitCode+'): '+String($json.stderr||'').slice(-600));\nconst r=JSON.parse($json.stdout||'{}');\nreturn [{json:r}];"
+   },
+   "id": "54e546a1-5238-5a45-b21b-d2b5b5651b14",
+   "position": [
+    2640,
+    800
+   ]
+  },
+  {
+   "name": "Failure — Create Container",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');\nlet text=String(raw||JSON.stringify($json)).slice(0,1500);\nconst code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;\nlet body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}\nif(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}\nreturn [{json:{stage:'create_container',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"
+   },
+   "id": "9f6eaa6c-d514-5a1f-9d50-39b387826d9c",
+   "position": [
+    0,
+    1000
+   ]
+  },
+  {
+   "name": "Failure — Container Created",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');\nlet text=String(raw||JSON.stringify($json)).slice(0,1500);\nconst code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;\nlet body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}\nif(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}\nreturn [{json:{stage:'create_container',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"
+   },
+   "id": "3e1268f7-b622-523b-ab42-807004767385",
+   "position": [
+    240,
+    1000
+   ]
+  },
+  {
+   "name": "Failure — Save Container",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');\nlet text=String(raw||JSON.stringify($json)).slice(0,1500);\nconst code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;\nlet body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}\nif(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}\nreturn [{json:{stage:'save_container',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"
+   },
+   "id": "492b0c25-1843-5b9b-b432-4464e9753acf",
+   "position": [
+    480,
+    1000
    ]
   },
   {
@@ -859,8 +1130,8 @@
    },
    "id": "626061d0-c671-5429-b964-44b1bb23bb70",
    "position": [
-    2160,
-    600
+    720,
+    1000
    ]
   },
   {
@@ -885,8 +1156,8 @@
    },
    "id": "fbbc3f8d-2c84-5908-b45f-2a2820b3ee68",
    "position": [
-    2640,
-    600
+    1200,
+    1000
    ]
   },
   {
@@ -899,8 +1170,8 @@
    },
    "id": "a730acb2-a763-561b-9f88-c54b5c849ba0",
    "position": [
-    0,
-    800
+    1440,
+    1000
    ]
   },
   {
@@ -913,8 +1184,8 @@
    "onError": "continueErrorOutput",
    "id": "69ac5d99-8275-59d5-817e-319e4e1c7bd6",
    "position": [
-    240,
-    800
+    1680,
+    1000
    ]
   },
   {
@@ -952,8 +1223,8 @@
    },
    "id": "ac0c210f-713f-58a9-98eb-79dc65d2bc23",
    "position": [
-    720,
-    800
+    2160,
+    1000
    ]
   },
   {
@@ -1020,8 +1291,8 @@
    },
    "id": "bb80af71-95eb-57d7-a628-3658981e3098",
    "position": [
-    1200,
-    800
+    2640,
+    1000
    ]
   },
   {
@@ -1029,12 +1300,12 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,\nreason:'Container status '+($json.status_code||'unknown')+' after '+$json.attempt+' polls (30 s each)'};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/abandon\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,stage:'container_status',\nstatusCode:$json.status_code||'unknown',\nerror:String($json.status||('Container status '+($json.status_code||'unknown')+' after '+$json.attempt+' polls (30 s each)')).slice(0,600)};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/failure\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
    },
    "id": "609a4a88-4329-581e-824d-d075ecc0ee49",
    "position": [
-    1440,
-    800
+    0,
+    1200
    ]
   },
   {
@@ -1047,8 +1318,8 @@
    },
    "id": "d2f217bb-bf1a-5792-9019-895da6443756",
    "position": [
-    1680,
-    800
+    240,
+    1200
    ]
   },
   {
@@ -1060,8 +1331,34 @@
    },
    "id": "085b522f-6b7f-512f-a14b-9f53683895ee",
    "position": [
-    1920,
-    800
+    480,
+    1200
+   ]
+  },
+  {
+   "name": "Failure — Renew Publication Lease",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');\nlet text=String(raw||JSON.stringify($json)).slice(0,1500);\nconst code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;\nlet body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}\nif(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}\nreturn [{json:{stage:'renew_lease',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"
+   },
+   "id": "e2a1be5a-0e81-52e7-bd44-7c68736c68e2",
+   "position": [
+    720,
+    1200
+   ]
+  },
+  {
+   "name": "Failure — Check Container",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');\nlet text=String(raw||JSON.stringify($json)).slice(0,1500);\nconst code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;\nlet body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}\nif(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}\nreturn [{json:{stage:'check_container',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"
+   },
+   "id": "74edaf84-c963-56ef-be44-ca4d02dff687",
+   "position": [
+    960,
+    1200
    ]
   },
   {
@@ -1112,8 +1409,8 @@
    },
    "id": "95fbede0-1a29-573c-baf0-4dc46b673dc7",
    "position": [
-    2400,
-    800
+    1440,
+    1200
    ]
   },
   {
@@ -1126,8 +1423,8 @@
    },
    "id": "6d25082c-519c-5ce1-9a47-7e72f35af35d",
    "position": [
-    2640,
-    800
+    1680,
+    1200
    ]
   },
   {
@@ -1140,8 +1437,8 @@
    "onError": "continueErrorOutput",
    "id": "f12479d3-8bdc-52ed-8755-e341f4aa9c06",
    "position": [
-    0,
-    1000
+    1920,
+    1200
    ]
   },
   {
@@ -1174,8 +1471,21 @@
    },
    "id": "ec54c5a7-f4b6-5767-9dc6-1a6d2f98a1aa",
    "position": [
-    240,
-    1000
+    2160,
+    1200
+   ]
+  },
+  {
+   "name": "Failure — Commit Publication",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const e=$json.error;const raw=(e&&typeof e==='object')?(e.message||e.description||''):String(e||$json.message||'');\nlet text=String(raw||JSON.stringify($json)).slice(0,1500);\nconst code=(e&&typeof e==='object')?(e.httpCode||e.statusCode||(e.response&&e.response.status)||null):null;\nlet body=null;const i=text.indexOf('{');if(i>=0){try{body=JSON.parse(text.slice(i))}catch(x){}}\nif(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON.parse(e.description)}catch(x){}}\nreturn [{json:{stage:'commit_call',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"
+   },
+   "id": "202f1550-50fe-510c-b053-448f153c5cd7",
+   "position": [
+    2400,
+    1200
    ]
   },
   {
@@ -1223,8 +1533,8 @@
    },
    "id": "edaa0146-ac04-551f-aed1-459ecddba074",
    "position": [
-    720,
-    1000
+    0,
+    1400
    ]
   },
   {
@@ -1237,8 +1547,8 @@
    },
    "id": "c2747acc-a97f-5fd1-ab18-ba1dd2d89d8b",
    "position": [
-    960,
-    1000
+    240,
+    1400
    ]
   },
   {
@@ -1250,8 +1560,8 @@
    },
    "id": "e2f8528f-bd6d-5c12-adcf-b8b011f78e1f",
    "position": [
-    1200,
-    1000
+    480,
+    1400
    ]
   },
   {
@@ -1284,8 +1594,8 @@
    },
    "id": "ab320b0b-4512-55a3-91c6-6ad2e7eb55cc",
    "position": [
-    1440,
-    1000
+    720,
+    1400
    ]
   },
   {
@@ -1329,8 +1639,8 @@
    },
    "id": "a625ecdc-1db8-5669-89aa-0e52684eba32",
    "position": [
-    1920,
-    1000
+    1200,
+    1400
    ]
   },
   {
@@ -1343,8 +1653,8 @@
    },
    "id": "16eb0357-d61e-58f3-adc1-99391b4c0741",
    "position": [
-    2160,
-    1000
+    1440,
+    1400
    ]
   },
   {
@@ -1356,8 +1666,8 @@
    },
    "id": "fa49fcfe-53fd-5c92-8a3e-35e25e1358ae",
    "position": [
-    2400,
-    1000
+    1680,
+    1400
    ]
   }
  ],
@@ -1579,11 +1889,60 @@
     ]
    ]
   },
+  "Record Probe — Input": {
+   "main": [
+    [
+     {
+      "node": "Record Probe — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Probe — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Record Probe",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
   "Due Work": {
    "main": [
     [
      {
+      "node": "Probe Instagram Access?",
+      "type": "main",
+      "index": 0
+     },
+     {
       "node": "Due Items",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Probe Instagram Access?": {
+   "main": [
+    [
+     {
+      "node": "Probe Instagram Access",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Probe Instagram Access": {
+   "main": [
+    [
+     {
+      "node": "Record Probe — Input",
       "type": "main",
       "index": 0
      }
@@ -1730,7 +2089,7 @@
     ],
     [
      {
-      "node": "Publication Item Finished",
+      "node": "Read Failure — Read Fresh Item",
       "type": "main",
       "index": 0
      }
@@ -1748,7 +2107,7 @@
     ],
     [
      {
-      "node": "Publication Item Finished",
+      "node": "Read Failure — Source Status — Query",
       "type": "main",
       "index": 0
      }
@@ -1766,7 +2125,62 @@
     ],
     [
      {
-      "node": "Publication Item Finished",
+      "node": "Read Failure — Read Source Status",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Read Failure — Input": {
+   "main": [
+    [
+     {
+      "node": "Record Read Failure — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Read Failure — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Record Read Failure",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Failure — Read Fresh Item": {
+   "main": [
+    [
+     {
+      "node": "Record Read Failure — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Failure — Source Status — Query": {
+   "main": [
+    [
+     {
+      "node": "Record Read Failure — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Failure — Read Source Status": {
+   "main": [
+    [
+     {
+      "node": "Record Read Failure — Input",
       "type": "main",
       "index": 0
      }
@@ -1782,6 +2196,28 @@
       "index": 0
      }
     ],
+    [
+     {
+      "node": "Read Failure — Claim Publication",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Failure — Claim Publication": {
+   "main": [
+    [
+     {
+      "node": "Record Read Failure — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Read Failure": {
+   "main": [
     [
      {
       "node": "Publication Item Finished",
@@ -1871,7 +2307,7 @@
     ],
     [
      {
-      "node": "Publication Item Finished",
+      "node": "Failure — Create Container",
       "type": "main",
       "index": 0
      }
@@ -1889,7 +2325,7 @@
     ],
     [
      {
-      "node": "Publication Item Finished",
+      "node": "Failure — Container Created",
       "type": "main",
       "index": 0
      }
@@ -1907,7 +2343,73 @@
     ],
     [
      {
+      "node": "Failure — Save Container",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Pre-commit Failure — Input": {
+   "main": [
+    [
+     {
+      "node": "Record Pre-commit Failure — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Pre-commit Failure — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Record Pre-commit Failure",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Pre-commit Failure": {
+   "main": [
+    [
+     {
       "node": "Publication Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Failure — Create Container": {
+   "main": [
+    [
+     {
+      "node": "Record Pre-commit Failure — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Failure — Container Created": {
+   "main": [
+    [
+     {
+      "node": "Record Pre-commit Failure — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Failure — Save Container": {
+   "main": [
+    [
+     {
+      "node": "Record Pre-commit Failure — Input",
       "type": "main",
       "index": 0
      }
@@ -2002,7 +2504,7 @@
     ],
     [
      {
-      "node": "Publication Item Finished",
+      "node": "Failure — Renew Publication Lease",
       "type": "main",
       "index": 0
      }
@@ -2020,7 +2522,7 @@
     ],
     [
      {
-      "node": "Publication Item Finished",
+      "node": "Failure — Check Container",
       "type": "main",
       "index": 0
      }
@@ -2032,6 +2534,28 @@
     [
      {
       "node": "Container Finished?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Failure — Renew Publication Lease": {
+   "main": [
+    [
+     {
+      "node": "Record Pre-commit Failure — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Failure — Check Container": {
+   "main": [
+    [
+     {
+      "node": "Record Pre-commit Failure — Input",
       "type": "main",
       "index": 0
      }
@@ -2136,7 +2660,18 @@
     ],
     [
      {
-      "node": "Publication Item Finished",
+      "node": "Failure — Commit Publication",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Failure — Commit Publication": {
+   "main": [
+    [
+     {
+      "node": "Record Pre-commit Failure — Input",
       "type": "main",
       "index": 0
      }
