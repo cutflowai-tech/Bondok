@@ -17,8 +17,9 @@ import threading
 import time
 from pathlib import Path
 
-from agent import Agent, Model, ServiceError, policy_text, render_outcome
-from bridge import Bridge
+import language as lang
+from agent import Agent, Model, ServiceError, policy_text, render_outcome, speaker
+from bridge import Bridge, Turn
 from monday_read import MondayReader
 from store import Store
 from waset_ops import Ops
@@ -31,7 +32,7 @@ ENV_PATH = Path(os.environ.get('BONDOK_ENV_FILE', '/opt/waset-bondok/.env'))
 REQUIRED = ('SLACK_BOT_TOKEN', 'SLACK_APP_TOKEN', 'SLACK_CHANNEL_ID', 'SLACK_TEAM_ID', 'SLACK_OWNER_ID',
             'SLACK_BOT_USER_ID', 'SLACK_APP_ID', 'MONDAY_API_TOKEN', 'OPENROUTER_API_KEY', 'PIPELINE_DB')
 # Copy-paste from Bondok's own reply brings backticks; a trailing period/"!" is common (audit M5: these went
-# to the model).
+# to the model). Kept for callers; Core reads approvals with language.approval (decorations, several ids, R5 M26).
 APPROVE = re.compile(r'^\s*`?\s*(?:اعتمد|approve)\s+(B-[0-9A-F]{8})\s*`?\s*[.!۔]?\s*$', re.I)
 REJECT = re.compile(r'^\s*`?\s*(?:ارفض|reject)\s+(B-[0-9A-F]{8})\s*`?\s*[.!۔]?\s*$', re.I)
 HEARTBEAT_LIMITS = {'wf2': 300, 'wf1': 1800, 'wf3': 4200}
@@ -58,7 +59,7 @@ class Core:
         self.store = Store(Path(env.get('BONDOK_STATE_DIR', '/var/lib/bondok')) / 'bondok.sqlite')
         self.ops = ops or Ops(env['PIPELINE_DB'])
         self.owner = env['SLACK_OWNER_ID']
-        self.bridge = Bridge(self.ops, self.owner)
+        self.bridge = Bridge(self.ops, self.owner, self.store)
         self.model = model or Model(env['OPENROUTER_API_KEY'], env.get('OPENROUTER_MODEL') or 'openai/gpt-6.1-sol',
                                     policy_text())
         self.agent = Agent(self.bridge, self.model, monday)
@@ -68,25 +69,32 @@ class Core:
 
     # ------------------------------------------------------------------ requests
     def handle(self, e: dict) -> str:
-        """One Slack message -> reply text. Deterministic paths first; the model
-        only for language understanding."""
+        """One Slack message -> reply text. Deterministic paths first (approvals, answers to the single open
+        question, acknowledgments, "show it again", replies under alerts: no model call); the model only for
+        language understanding, and its proposals are checked against the owner's words (bridge.py)."""
         text = re.sub(r'<@[A-Z0-9]+>', '', e.get('text') or '').strip()
         thread = e.get('thread_ts') or e['ts']
         actor, event_id = e['user'], f"{self.env['SLACK_TEAM_ID']}:{e['channel']}:{e['ts']}"
-        m = APPROVE.match(text) or REJECT.match(text)
-        if m:
-            r = self.bridge.approve(m[1].upper(), actor, thread, event_id, reject=bool(REJECT.match(text)))
-            if r.get('state') == 'completed':
-                return ('❌ Rejected ' if REJECT.match(text) else '✅ Executed ') + m[1].upper() + \
-                    ('' if REJECT.match(text) else self._summary(r))
-            return f"⛔ {m[1].upper()} not executed: {r.get('reason', r.get('state'))}"
+        quick = self._deterministic(text, actor, thread, event_id)
+        if quick is not None:
+            self.store.remember(thread, 'user', speaker(actor, self.owner) + text)
+            self.store.remember(thread, 'assistant', quick)
+            return quick
+        ctx = self.store.kv('thread_ctx:' + thread) or {}
+        turn = Turn(text, thread, self.bridge.today(), context_items=[ctx['item_id']] if ctx.get('item_id') else [],
+                    history_text=self.store.thread_text(thread))
         history = self.store.history(thread)
-        self.store.remember(thread, 'user', f'{actor}: {text}')
+        self.store.remember(thread, 'user', speaker(actor, self.owner) + text)
+        owner = actor == self.owner
         try:
-            reply, outcomes = self.agent.answer(text, actor=actor, thread=thread, event_id=event_id, history=history)
+            reply, outcomes = self.agent.answer(text, actor=actor, thread=thread, event_id=event_id, history=history,
+                                                turn=turn)
         except ServiceError as e:
-            # Model unavailable: nothing more is guessed or executed; automation continues.
+            # Model unavailable: nothing more is guessed or executed; automation continues. An open question
+            # stays open (its "اه" needs no model).
             LOG.warning('model_error code=%s detail=%s', e.code, e.detail)
+            if owner and turn.pending():
+                self._set_pending(thread, turn.pending())
             done = getattr(e, 'outcomes', None)
             if done:
                 # Actions already ran before the model failed: report them, never "nothing was done" (audit H1).
@@ -94,6 +102,9 @@ class Core:
                 self.store.remember(thread, 'assistant', reply)
                 return reply
             return self._fallback(thread, e.code)
+        if owner:
+            self._set_pending(thread, turn.pending())     # the thread's single open question (or none)
+        self._note_proposals(thread, outcomes)
         if getattr(self.model, 'last_budget', None):
             LOG.warning('model_low_credit reduced_output_budget=%s', self.model.last_budget)
         self.store.kv('fallback:' + thread, {'code': None, 'at': 0})
@@ -102,6 +113,142 @@ class Core:
             reply += '\n\n' + render_outcome(o)
         self.store.remember(thread, 'assistant', reply)
         return reply or 'No reply.'
+
+    # ------------------------------------------------------------------ deterministic paths (no model)
+    def _deterministic(self, text, actor, thread, event_id) -> str | None:
+        owner = actor == self.owner
+        ap = lang.approval(text)
+        if ap:
+            kind, ids, quoted = ap
+            if ids:
+                if quoted and owner:
+                    # A quoted approval may be a copy of an old message: confirm before it runs (R5 M26).
+                    verb = 'أعتمد' if kind == 'approve' else 'أرفض'
+                    self._set_pending(thread, {'kind': kind, 'ids': ids, 'question': f"{verb} {', '.join(ids)}؟"})
+                    return f"❓ {verb} {', '.join(ids)}؟ (رد بـ «اه» أو «لا»)"
+                return self._decide(ids, kind, actor, thread, event_id)
+            if not owner:
+                return None
+            if self._pending(thread):
+                return self._answer('yes' if kind == 'approve' else 'no', actor, thread, event_id)
+            return self._open_choice(thread, kind, actor, event_id)
+        if not owner:
+            return None
+        a = lang.answer(text)
+        if a == 'ack':
+            return 'العفو 🙏'
+        if a == 'show':
+            return self._show(thread)
+        if a in ('yes', 'no'):
+            if self._pending(thread) or a == 'no':
+                return self._answer(a, actor, thread, event_id)
+            if self._open_proposals(thread):
+                return self._open_choice(thread, 'approve', actor, event_id)
+            if any(t in lang.AFFIRM_COMMAND for t in lang.tokens(text)):
+                return None              # "تمام كمل", "go ahead with them": the model reads what to continue
+            return 'مفيش سؤال مفتوح هنا أرد عليه بـ «اه»، فمعملتش حاجة. قولّي تحب أعمل إيه بالظبط.'
+        return self._alert_reply(text, actor, thread, event_id)
+
+    def _pending(self, thread):
+        return self.store.kv('pending:' + thread)
+
+    def _set_pending(self, thread, value):
+        if value or self.store.kv('pending:' + thread):
+            self.store.kv('pending:' + thread, value or {})
+
+    def _answer(self, a, actor, thread, event_id) -> str:
+        """'اه'/'لا' answers only the thread's single open question; an answered question is never reused."""
+        p = self._pending(thread)
+        if not p:
+            return 'تمام، معملتش أي حاجة.'
+        self._set_pending(thread, None)
+        if a == 'no':
+            return 'تمام، لغيت السؤال ومعملتش أي حاجة.'
+        if p.get('kind') in ('approve', 'reject'):
+            return self._decide(p['ids'], p['kind'], actor, thread, event_id)
+        lines = []
+        for n, act in enumerate(p.get('actions') or []):
+            r = self.bridge.execute(act, actor=actor, cid=f'slack:{event_id}:yes:{n}', thread=thread, event_id=event_id)
+            lines.append(render_outcome({'tool': act['tool'], 'args': {}, 'result': r}))
+        return '\n\n'.join(lines) or 'تمام.'
+
+    def _open_proposals(self, thread) -> list[dict]:
+        """Pending proposals that belong to this thread: made in it, shown in it, or the notification it answers."""
+        ctx = self.store.kv('thread_ctx:' + thread) or {}
+        ids = set(self.store.kv('thread_props:' + thread) or []) | ({ctx['proposal_id']} if ctx.get('proposal_id') else set())
+        now = self.ops.now()
+        with self.ops.store.read() as c:
+            rows = [dict(r) for r in c.execute("SELECT id,kind,summary,expires,thread,created FROM ops_proposals "
+                                               "WHERE state='pending' ORDER BY created")]
+        return [r for r in rows if (r['thread'] == thread or r['id'] in ids) and
+                (r['expires'] > now or r['kind'] in ('approve_caption', 'approve_captions'))]
+
+    def _open_choice(self, thread, kind, actor, event_id) -> str | None:
+        open_ = self._open_proposals(thread)
+        if len(open_) == 1:
+            return self._decide([open_[0]['id']], kind, actor, thread, event_id)
+        if len(open_) > 1:
+            # Several open proposals: one question, nothing created or approved (R5 M26).
+            return ('❓ فيه أكتر من مقترح مفتوح هنا، أنهي واحد؟\n' +
+                    '\n'.join(f"• {p['id']}: {(p['summary'] or '').splitlines()[0][:120]}" for p in open_) +
+                    '\nاكتب «اعتمد» ورقم المقترح.')
+        return None
+
+    def _decide(self, ids, kind, actor, thread, event_id) -> str:
+        out = []
+        for pid in ids:
+            r = self.bridge.approve(pid, actor, thread, event_id, reject=kind == 'reject')
+            if r.get('state') == 'completed':
+                out.append(('❌ Rejected ' if kind == 'reject' else '✅ Executed ') + pid +
+                           ('' if kind == 'reject' else self._summary(r)))
+            else:
+                out.append(f"⛔ {pid} not executed: {r.get('reason', r.get('state'))}")
+        p = self._pending(thread)
+        if p and set(p.get('ids') or []) & set(ids):
+            self._set_pending(thread, None)
+        return '\n'.join(out)
+
+    def _show(self, thread) -> str | None:
+        """'ابعتهولي تاني': the draft/proposal shown in this thread, again, without a model call (R5 M23, A8)."""
+        open_ = self._open_proposals(thread)
+        if not open_:
+            return None
+        p = open_[-1]
+        return f"{p['summary']}\n\nللاعتماد: «اعتمدها» أو `اعتمد {p['id']}`"
+
+    def _alert_reply(self, text, actor, thread, event_id) -> str | None:
+        """Short owner replies under an unknown-outcome notice: "published" records an owner report; "not
+        published" asks once (it re-opens scheduling). Anything else goes to the model (R5 M21)."""
+        ctx = self.store.kv('thread_ctx:' + thread) or {}
+        iid = ctx.get('item_id')
+        if not iid or len(lang.tokens(text)) > 8 or (self.bridge.items_named(text) - {iid}):
+            return None
+        with self.ops.store.read() as c:
+            it = self.ops.item(c, iid, required=False)
+        if not it or it['publication'] != 'outcome_unknown':
+            return None
+        label = f"{it['name']} ({it['code'] or iid})"
+        if lang.supports('report_published', text, text) and lang.contradiction('report_published', text, text) is None:
+            act = {'tool': 'report_published', 'op': 'report_published', 'item': iid,
+                   'args': {'source': 'slack reply to the unknown-outcome notice', 'value': text[:300]}}
+            r = self.bridge.execute(act, actor=actor, cid=f'slack:{event_id}:alert', thread=thread, event_id=event_id)
+            return label + '\n' + render_outcome({'tool': 'report_published', 'args': {}, 'result': r})
+        toks = lang.tokens(text)
+        if lang.has(toks, lang.COMPLETED_PUBLISH) and lang.markers(text)['negation']:
+            q = f'Record that {label} was NOT published on Instagram (it becomes schedulable again)؟'
+            act = {'tool': 'resolve_publication', 'op': 'resolve_outcome', 'item': iid,
+                   'args': {'outcome': 'not_published', 'media_id': None}}
+            self._set_pending(thread, {'kind': 'actions', 'question': q, 'actions': [act]})
+            return '❓ ' + q + ' (رد بـ «اه» أو «لا»)'
+        return None
+
+    def _note_proposals(self, thread, outcomes):
+        ids = [o['result'].get('proposal_id') for o in outcomes
+               if isinstance(o.get('result'), dict) and o['result'].get('state') == 'awaiting_approval']
+        ids = [i for i in ids if i]
+        if ids:
+            self.store.kv('thread_props:' + thread, list(dict.fromkeys((self.store.kv('thread_props:' + thread) or [])
+                                                                       + ids))[-20:])
 
     def _fallback(self, thread, code) -> str:
         """Short Egyptian Arabic notice; the same cause in the same thread is not repeated in full."""
@@ -121,12 +268,21 @@ class Core:
 
     @staticmethod
     def _summary(r):
+        """What an executed approval actually did (R5 M22): moved slots, the new slot, the format, and a
+        truthful "may already be in progress"."""
+        from waset_ops import rules
+        parts = []
         if r.get('moved'):
-            from waset_ops import rules
-            return ': ' + '; '.join(f"{m['item_id']} → {rules.display(rules.instant(m['slot']))}" for m in r['moved'])
+            parts.append('; '.join(f"{m['item_id']} → {rules.display(rules.instant(m['slot']))}" for m in r['moved']))
         if r.get('format'):
-            return f": format is now {r['format']}"
-        return ''
+            parts.append(f"format is now {r['format']}")
+        if r.get('scheduled'):
+            parts.append('scheduled ' + rules.display(rules.instant(r['scheduled'])))
+        if r.get('publication') == 'may_already_be_in_progress':
+            parts.append('publication may already be in progress; the outcome will be reported')
+        elif r.get('waiting'):
+            parts.append('not scheduled yet: ' + str(r['waiting']))
+        return (': ' + '; '.join(parts)) if parts else ''
 
     # ------------------------------------------------------------------ notifications (no model)
     def deliver_notifications(self, limit=10) -> int:
@@ -139,9 +295,12 @@ class Core:
                     ts = sent['ts'] if sent is not None else None
                 except (KeyError, TypeError):
                     ts = None
-                if ts and p.get('proposal_id'):
-                    # Replies in a proposal notification's thread reach Bondok (audit H3).
+                if ts and not p.get('thread') and (p.get('proposal_id') or job.get('item_id')):
+                    # Replies under a proposal or an item alert reach Bondok and bind to it (audit H3, R5 M21).
                     self.store.kv('thread:' + ts, True)
+                    self.store.kv('thread_ctx:' + ts, {'item_id': job.get('item_id'),
+                                                       'proposal_id': p.get('proposal_id')})
+                    self.store.remember(ts, 'assistant', p['text'])
                 self.ops.outbox_ack(job['id'], 'bondok', True)
                 n += 1
             except Exception as ex:  # noqa: BLE001 - delivery failure is retried with backoff
@@ -182,8 +341,8 @@ class Core:
             for key, prev in reversed(self._undo):     # not delivered: report the transition next time
                 self.store.kv('wd:' + key, prev if prev is not None else False)
             raise
-        if self._new_offset is not None:               # helper errors reported: advance only now (#13)
-            self.store.kv('errors_offset', self._new_offset)
+        if self._new_offset is not None:               # helper errors reported: advance only now (#13, R5 M20)
+            self._commit_errors(self._new_offset)
 
     def _flip(self, key, value) -> bool:
         """Record a boolean state; True when it changed (first observation of a
@@ -195,43 +354,81 @@ class Core:
             self._undo.append((key, prev))      # restored if the alert cannot be posted (audit M1)
         return changed
 
+    @staticmethod
+    def _read_lines(path, offset, final=False):
+        """Complete lines from `offset` (a partial last line is left for the next read unless the file is
+        final, e.g. rotated away) and the offset after them."""
+        with open(path, 'rb') as f:
+            f.seek(offset)
+            data = f.read()
+        if not final:
+            data = data[:data.rfind(b'\n') + 1]
+        return data.decode('utf-8', 'replace').splitlines(), offset + len(data)
+
     def _helper_errors(self) -> list[str]:
-        """errors.log is written by helper.py without SQLite, so failures stay
-        visible even when the database is the problem."""
+        """errors.log is written by helper.py without SQLite, so failures stay visible even when the database is
+        the problem. Every distinct failure (path, kind) is reported; repeats of one failure are coalesced for an
+        hour and then reported with their count; nothing is consumed before the alert is posted; a rotation keeps
+        the unread tail of the old file; a partial last line waits (R5 M20)."""
         log = Path(self.env['PIPELINE_DB']).with_name('errors.log')
         try:
-            size = log.stat().st_size
+            st = log.stat()
         except OSError:
             return []
         offset = self.store.kv('errors_offset') or 0
-        if size < offset:
+        inode = self.store.kv('errors_inode')
+        raw = []
+        if inode is not None and st.st_ino != inode:
+            rotated = log.with_name('errors.log.1')
+            try:
+                if rotated.stat().st_ino == inode:
+                    raw += self._read_lines(rotated, offset, final=True)[0]
+            except OSError:
+                pass
             offset = 0
-        if size == offset:
+        elif st.st_size < offset:
+            offset = 0
+        try:
+            lines, new_offset = self._read_lines(log, offset)
+        except OSError:
             return []
-        lines = []
-        with log.open() as f:
-            f.seek(offset)
-            for x in f.read().splitlines():
-                try:
-                    lines.append(json.loads(x)) if x.strip().startswith('{') else None
-                except ValueError:
-                    lines.append({'kind': 'unreadable', 'path': 'errors.log', 'error': x[:200]})  # audit M1
+        raw += lines
+        entries = []
+        for x in raw:
+            if not x.strip():
+                continue
+            try:
+                entries.append(json.loads(x)) if x.strip().startswith('{') else None
+            except ValueError:
+                entries.append({'kind': 'unreadable', 'path': 'errors.log', 'error': x[:200]})  # audit M1
+        state = self.store.kv('errclass') or {}
+        for x in entries:
+            if not isinstance(x, dict) or x.get('kind') in ('rejected', 'stale', 'fenced', 'slot_taken', 'retired'):
+                continue
+            k = f"{x.get('path')}|{x.get('kind')}"
+            s = state.setdefault(k, {'path': x.get('path'), 'kind': x.get('kind'), 'last': None, 'pending': 0})
+            s['pending'] += 1
+            s['error'] = str(x.get('error'))[:200]
+        now = time.time()
+        due = sorted(k for k, s in state.items() if s['pending'] and (s['last'] is None or now - s['last'] >= 3600))
+        alerts = []
+        if due:
+            alerts.append('⚠️ Automation helper errors: ' + '; '.join(
+                f"{state[k]['path']} {state[k]['kind']} ×{state[k]['pending']}: {state[k].get('error')}" for k in due))
+            for k in due:
+                state[k].update(last=now, pending=0)
+        pending = (new_offset, st.st_ino, state)
         if self._defer_offset:
-            self._new_offset = size
+            self._new_offset = pending
         else:
-            self.store.kv('errors_offset', size)
-        infra = [x for x in lines if x.get('kind') not in ('rejected', 'stale', 'fenced', 'slot_taken', 'retired')]
-        if not infra:
-            return []
-        key = 'errhour:' + str(int(time.time() // 3600))
-        if self.store.kv(key):
-            return []
-        self.store.kv(key, True)
-        by = {}
-        for x in infra:
-            by[(x.get('path'), x.get('kind'))] = by.get((x.get('path'), x.get('kind')), 0) + 1
-        return ['⚠️ Automation helper errors: ' + '; '.join(f'{p} {k} ×{n}' for (p, k), n in sorted(by.items())[:6])
-                + f". Latest: {str(infra[-1].get('error'))[:200]}"]
+            self._commit_errors(pending)
+        return alerts
+
+    def _commit_errors(self, pending):
+        offset, inode, state = pending
+        self.store.kv('errors_offset', offset)
+        self.store.kv('errors_inode', inode)
+        self.store.kv('errclass', state)
 
 
 class Runtime(Core):

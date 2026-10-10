@@ -45,6 +45,12 @@ class Store:
             rows = c.execute('SELECT role,text FROM messages WHERE thread=? ORDER BY id DESC LIMIT ?', (thread, limit)).fetchall()
         return [{'role': r['role'], 'content': r['text']} for r in reversed(rows)]
 
+    def thread_text(self, thread, limit=60) -> str:
+        """Everything said in the thread (for its named set), newest last."""
+        with self.db() as c:
+            rows = c.execute('SELECT text FROM messages WHERE thread=? ORDER BY id DESC LIMIT ?', (thread, limit)).fetchall()
+        return '\n'.join(r['text'] for r in reversed(rows))
+
     def remember(self, thread, role, text):
         with self.db() as c:
             c.execute('INSERT INTO messages(thread,role,text,created) VALUES(?,?,?,?)', (thread, role, text[:8000], time.time()))
