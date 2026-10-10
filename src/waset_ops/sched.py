@@ -25,6 +25,57 @@ class SchedMixin:
     def payload_fp(self, c, it) -> str:
         return fingerprint(self.payload(c, it))
 
+    # ------------------------------------------------------------------ cross-item duplicate guard (R5 B1)
+    def content_identities(self, c, it) -> set[str]:
+        """Publication identities of an item's content: account + format + source bytes (Dropbox content hash)
+        and account + format + delivered video sha256. Story and Post of one video are different publications."""
+        fmt, out = it.get('format'), set()
+        if fmt not in rules.FORMATS:
+            return out
+        if it.get('content_hash'):
+            out.add(f"{rules.ACCOUNT}|{fmt}|src:{it['content_hash']}")
+        m = self.media_row(c, it.get('verification_id'))
+        sha = (loads(m['metadata'], {}) or {}).get('sha256') if m else None
+        if sha:
+            out.add(f'{rules.ACCOUNT}|{fmt}|{sha}')
+        return out
+
+    def duplicate_of(self, c, it) -> dict | None:
+        """Another item that already uses this content: published, owner-reported, in flight, or reserved earlier.
+        Includes the local publication journal (legacy `assets`), so a deleted or archived original still counts."""
+        ids = self.content_identities(c, it)
+        if not ids:
+            return None
+        marks = ','.join('?' * len(ids))
+        for j in c.execute(f'SELECT DISTINCT item FROM assets WHERE identity IN ({marks}) AND item!=?',
+                           (*ids, it['item_id'])).fetchall():
+            # A journal row blocks while its item is (or may be) published: v1-only items, legacy Posted,
+            # owner-reported, committed/unknown/published attempts. A definitively failed attempt does not.
+            o = self.item(c, j['item'], required=False)
+            if o is None or o['legacy_posted'] or o['publication'] in ('published', 'outcome_unknown', 'in_progress') \
+                    or c.execute("SELECT 1 FROM ops_attempts WHERE item_id=? AND stage IN "
+                                 "('committed','outcome_unknown','published')", (j['item'],)).fetchone():
+                return {'item_id': j['item'], 'name': o['name'] if o else None,
+                        'state': (o['publication'].replace('_', ' ') if o else 'published (earlier system)')}
+        mine = self.reservation(c, it['item_id'])
+        for o in c.execute("SELECT * FROM ops_items WHERE item_id!=? AND format=? AND content_hash IS NOT NULL",
+                           (it['item_id'], it['format'])).fetchall():
+            o = dict(o)
+            if not (self.content_identities(c, o) & ids):
+                continue
+            if o['publication'] in ('published', 'outcome_unknown', 'in_progress') or self.active_attempt(c, o['item_id']):
+                return {'item_id': o['item_id'], 'name': o['name'], 'state': o['publication'].replace('_', ' ')}
+            res = self.reservation(c, o['item_id'])
+            if res and o['owner_state'] == 'active' and (not mine or (res['slot'], o['item_id']) < (mine['slot'], it['item_id'])):
+                return {'item_id': o['item_id'], 'name': o['name'], 'state': 'scheduled ' + rules.display(rules.instant(res['slot']))}
+        return None
+
+    @staticmethod
+    def duplicate_reason(dup) -> str:
+        who = f"{dup.get('name') or 'item'} ({dup['item_id']})"
+        return (f'Same video as {who}, which is {dup["state"]}; publishing the same video twice is blocked. '
+                'Select a different file for one of them or skip one.')
+
     def eligible(self, c, it) -> str | None:
         """Reason the item cannot hold a reservation, or None."""
         if it['publication'] != 'not_started':
@@ -39,6 +90,9 @@ class SchedMixin:
             return 'caption is not approved'
         if self.active_attempt(c, it['item_id']):
             return 'a publication attempt is active'
+        dup = self.duplicate_of(c, it)
+        if dup:
+            return self.duplicate_reason(dup)
         return None
 
     def taken(self, c, fmt, exclude=None) -> set[str]:

@@ -170,5 +170,110 @@ class R5_OwnerReportCorrection(OpsCase):
         self.assertEqual(self.item('42')['publication'], 'published')
 
 
+class R5_B1_CrossItemDuplicateGuard(OpsCase):
+    """B1 (critical): a duplicated board item (same link/file/Topaz) published the same video twice."""
+
+    def publish(self, iid, media='IG'):
+        self.clock.set(rules.instant(self.res(iid)['slot']) + timedelta(seconds=10))
+        cl = self.ops.claim(iid, 'w-' + iid)
+        self.assertTrue(cl['claimed'], cl)
+        self.ops.container(cl['attempt_id'], 'w-' + iid, cl['fence'], 'C-' + iid)
+        r = self.ops.commit(cl['attempt_id'], 'w-' + iid, cl['fence'], container_status='FINISHED')
+        self.assertTrue(r['committed'], r)
+        self.ops.result(cl['attempt_id'], 'w-' + iid, media_id=media + iid)
+
+    def test_duplicate_item_with_same_file_is_blocked_visibly(self):
+        self.make_ready('50', name='Calli 3 Horizontal', content='hash')
+        self.make_ready('51', name='Calli 3 Reel', content='hash')           # same file, same Topaz confirmation copied
+        self.assertIsNotNone(self.res('50'))
+        self.assertIsNone(self.res('51'))
+        it = self.item('51')
+        self.assertEqual(it['readiness'], 'blocked')
+        self.assertTrue(it['block_key'].startswith('duplicate:'))
+        self.assertIn('50', it['block_reason'])
+        self.assertEqual(sum('Same video' in o['payload'] for o in self.outbox('slack')), 1)
+
+    def test_same_bytes_under_another_file_id_is_a_duplicate(self):
+        self.make_ready('52', content='hash')
+        self.observe(monday_item('53', name='Item53 LIP12'))
+        f = {'id': 'id:OTHER', 'rev': 'revX', 'content_hash': 'hash1', 'name': 'copy.mp4'}   # same bytes as FILE1
+        self.wf1('prep_source', '53', file=f, url='https://www.dropbox.com/s/copy/v.mp4')
+        self.wf1('prep_preflight', '53', result={'ready': True, 'duration': 30.0, 'assetKey': 'id:OTHER@revX',
+                                                'contentHash': 'hash1'})
+        self.ops.submit(owner_cmd(self.rid(), 'confirm_topaz', '53', explicit=True, confirmed=True,
+                                  asset_key='id:OTHER@revX'))
+        self.wf1('prep_source', '53', file=f, url='https://www.dropbox.com/s/copy/v.mp4')
+        mid = 'media-53'
+        self.add_media('53', 'Story')
+        with self.ops.store.tx() as c:
+            c.execute("UPDATE media SET id=?, metadata=json_set(metadata,'$.assetKey','id:OTHER@revX') WHERE item='53'",
+                      (mid,))
+        self.wf1('prep_media', '53', result={'ready': True, 'mediaId': mid})
+        self.assertIsNone(self.res('53'))
+        self.assertTrue(self.item('53')['block_key'].startswith('duplicate:'))
+
+    def test_published_original_blocks_duplicate_even_after_removal_from_board(self):
+        self.make_ready('54', content='hash')
+        self.publish('54')
+        self.assertEqual(self.item('54')['publication'], 'published')
+        self.ops.board_missing(['55'])                           # original deleted from the board
+        self.make_ready('55', content='hash')
+        self.assertIsNone(self.res('55'))
+        self.assertTrue(self.item('55')['block_key'].startswith('duplicate:'))
+
+    def test_story_and_post_of_the_same_video_are_different_publications(self):
+        self.make_ready('56', 'Story', content='hash')
+        self.make_ready('57', 'Post', code='LIP57', content='hash')
+        self.assertIsNotNone(self.res('56'))
+        self.assertIsNotNone(self.res('57'))
+
+    def test_skipped_unpublished_original_does_not_block(self):
+        self.make_ready('58', content='hash')
+        self.ops.submit(owner_cmd(self.rid(), 'skip', '58', explicit=True))
+        self.make_ready('59', content='hash')
+        self.assertIsNotNone(self.res('59'))
+
+    def test_both_reserved_before_the_guard_only_the_earlier_publishes(self):
+        self.make_ready('60', content='hash')
+        first = self.res('60')['slot']
+        # Simulate a second reservation made by the deployed release (no guard) for a duplicate item.
+        self.observe(monday_item('61', name='Item61 LIP12'))
+        self.add_media('61', 'Story')
+        later = rules.iso(rules.instant(first) + timedelta(days=1))
+        with self.ops.store.tx() as c:
+            c.execute("UPDATE ops_items SET format='Story', asset_key='id:FILE1@rev1', content_hash='hash1', "
+                      "topaz_asset='id:FILE1@rev1', readiness='ready', verification_id='media-61-1-Story' "
+                      "WHERE item_id='61'")
+            it = self.ops.item(c, '61')
+            c.execute('INSERT INTO ops_reservations VALUES(?,?,?,?,?,?,?,?,?,?)',
+                      ('61', rules.ACCOUNT, 'Story', later, it['content_rev'], self.ops.payload_fp(c, it), 'auto', 0, 0, 0))
+        self.publish('60')
+        self.clock.set(rules.instant(later) + timedelta(seconds=10))
+        cl = self.ops.claim('61', 'w2')
+        self.assertFalse(cl['claimed'])
+        self.assertIn('Same video', cl['reason'])
+
+    def test_commit_rechecks_duplicates(self):
+        self.make_ready('62', content='hash')
+        self.clock.set(rules.instant(self.res('62')['slot']) + timedelta(seconds=10))
+        cl = self.ops.claim('62', 'w')
+        self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
+        # Meanwhile the owner reports another item with the same file as already posted.
+        self.observe(monday_item('63', name='Item63 LIP12'))
+        with self.ops.store.tx() as c:
+            c.execute("UPDATE ops_items SET format='Story', content_hash='hash1', asset_key='id:FILE1@rev1' "
+                      "WHERE item_id='63'")
+        self.ops.submit(owner_cmd(self.rid(), 'report_published', '63', source='slack'))
+        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        self.assertFalse(r['committed'])
+        self.assertTrue(any('Same video' in x for x in r['reasons']))
+
+    def test_owner_reported_original_blocks_duplicate(self):
+        self.make_ready('64', content='hash')
+        self.ops.submit(owner_cmd(self.rid(), 'report_published', '64', source='slack'))
+        self.make_ready('65', content='hash')
+        self.assertIsNone(self.res('65'))
+
+
 if __name__ == '__main__':
     unittest.main()

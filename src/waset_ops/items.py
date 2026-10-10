@@ -769,6 +769,13 @@ class ItemsMixin:
             elif it['topaz_asset'] != it['asset_key']:
                 fields = dict(readiness='blocked', block_kind='editor', block_key='topaz:' + str(it['asset_key']),
                               block_reason='Topaz confirmation is required for the selected file version')
+            elif self.duplicate_of(c, it):
+                dup = self.duplicate_of(c, it)
+                fields = dict(readiness='blocked', block_kind='review', block_key='duplicate:' + str(dup['item_id']),
+                              block_reason=self.duplicate_reason(dup))
+                if it.get('block_key') != fields['block_key']:
+                    self.notify(c, f"dup:{item_id}:{dup['item_id']}:{it['content_rev']}",
+                                f"{it['name']} ({item_id}): {fields['block_reason']}", item_id)
             else:
                 fields = dict(readiness='ready', block_kind=None, block_reason=None, block_key=None)
         elif it['readiness'] == 'blocked' and it['block_key'] in ('invalid_code', 'collab'):
@@ -937,6 +944,9 @@ class ItemsMixin:
             # Blocked under an older duration policy; the same measurement now passes (automatic trim).
             it = self.update_item(c, it['item_id'], cmd.actor, 'story duration accepted (automatic trim)',
                                   readiness='checking', block_kind=None, block_reason=None, block_key=None)
+        if it['readiness'] == 'blocked' and (it['block_key'] or '').startswith('duplicate:') and not changed \
+                and not recheck:
+            return {'next': 'none', **self.evaluate(c, it['item_id'], cmd.actor)}   # cleared once the other item is gone
         if it['readiness'] == 'ready' and not changed and not recheck:
             return {'next': 'none', 'unchanged': True}
         if it['readiness'] == 'blocked' and not changed and not recheck and it['block_kind'] != 'infra':

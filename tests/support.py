@@ -80,6 +80,7 @@ class OpsCase(unittest.TestCase):
         self.run_id = 'run-1'
         self.fence = self.ops.run_start('wf1', self.run_id)['fence']
         self.seq = 0
+        self.contents = {}          # item -> synthetic content-hash prefix used by make_ready/select
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -100,10 +101,12 @@ class OpsCase(unittest.TestCase):
     def file(self, n=1, content='hash'):
         return {'id': f'id:FILE{n}', 'rev': f'rev{n}', 'content_hash': f'{content}{n}', 'name': f'video_v{n}.mp4'}
 
-    def select(self, item_id, n=1, content='hash'):
+    def select(self, item_id, n=1, content=None):
+        content = content or self.contents.get(str(item_id), 'hash')
         return self.wf1('prep_source', item_id, file=self.file(n, content), url=f'https://www.dropbox.com/s/f{n}/v.mp4')
 
-    def duration(self, item_id, seconds, n=1, content='hash'):
+    def duration(self, item_id, seconds, n=1, content=None):
+        content = content or self.contents.get(str(item_id), 'hash')
         return self.wf1('prep_preflight', item_id, result={'ready': True, 'duration': seconds,
                                                           'assetKey': f'id:FILE{n}@rev{n}',
                                                           'contentHash': f'{content}{n}'})
@@ -125,13 +128,17 @@ class OpsCase(unittest.TestCase):
                                          confirmed=True, asset_key=f'id:FILE{n}@rev{n}'))
 
     def make_ready(self, iid, fmt='Story', *, code='LIP12', caption='', n=1, duration=30.0, approve_caption=True,
-                   name=None):
+                   name=None, content=None):
+        # Different items carry different videos (distinct Dropbox content hashes) unless a test passes the same
+        # `content` on purpose: identical bytes are a duplicate publication (R5 B1).
+        content = content or f'c{iid}-'
+        self.contents[str(iid)] = content
         self.observe(monday_item(iid, fmt=fmt, code=code, name=name or f'Item{iid} {code}'))
-        self.select(iid, n)
+        self.select(iid, n, content)
         if fmt == 'Story':
-            self.duration(iid, duration, n)
+            self.duration(iid, duration, n, content)
         self.topaz(iid, n)
-        r = self.select(iid, n)          # proceeds to prepare once Topaz is bound
+        r = self.select(iid, n, content)          # proceeds to prepare once Topaz is bound
         assert r.get('next') == 'prepare', r
         mid = self.add_media(iid, fmt, n, duration=duration)
         if fmt == 'Post' and approve_caption:

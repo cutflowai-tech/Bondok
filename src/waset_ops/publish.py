@@ -268,6 +268,9 @@ class PublishMixin:
                 problems.append('Dropbox file version changed after verification')
             if self.verification_problem(c, it):
                 problems.append(self.verification_problem(c, it))
+            dup = self.duplicate_of(c, it)
+            if dup:
+                problems.append(self.duplicate_reason(dup))          # re-checked at the commitment point (R5 B1)
             slot = rules.instant(a['slot'])
             if not (slot <= now_dt <= slot + rules.LATE_WINDOW):
                 problems.append('outside the publication window')
@@ -303,9 +306,17 @@ class PublishMixin:
                 'mediaId': info.get('verification_id'), 'sourceSynced': False, **(extra or {})}
         c.execute('INSERT OR REPLACE INTO publications VALUES(?,?,?,?,?)',
                   (a['item_id'], 'ops:' + a['id'], stage, dumps(data), self.now()))
-        if info.get('video_sha256'):
-            c.execute('INSERT OR IGNORE INTO assets VALUES(?,?)',
-                      (f"{rules.ACCOUNT}|{info.get('format')}|{info.get('video_sha256')}", a['item_id']))
+        self.journal_identities(c, self.item(c, a['item_id']), info)
+
+    def journal_identities(self, c, it, info=None):
+        """Append the item's content identities to the local publication journal (legacy `assets`, also read by a
+        rolled-back helper). Written at the commitment point and for owner-reported publications; it only ever
+        blocks a publication (ADR §5)."""
+        ids = set(self.content_identities(c, it))
+        if info and info.get('video_sha256'):
+            ids.add(f"{rules.ACCOUNT}|{info.get('format')}|{info.get('video_sha256')}")
+        for identity in ids:
+            c.execute('INSERT OR IGNORE INTO assets VALUES(?,?)', (identity, it['item_id']))
 
     # ------------------------------------------------------------------ outcomes
     def result(self, attempt_id, worker, *, media_id=None, error=None, http_status=None, definitive=False) -> dict:
@@ -444,6 +455,7 @@ class PublishMixin:
         # Mirrored into the legacy receipt table so a rolled-back helper refuses to publish it too.
         c.execute("INSERT OR IGNORE INTO publications VALUES(?,?,?,?,?)",
                   (it['item_id'], 'ops:owner-report', 'published', dumps({'itemId': it['item_id'], **report}), now))
+        self.journal_identities(c, it)
         self.update_item(c, it['item_id'], cmd.actor, 'owner reported published', publication='published',
                          legacy_posted=1, hold=None)
         self.notify(c, f"owner-posted:{it['item_id']}", f"Recorded {it['name']} ({it['item_id']}) as published by the "
