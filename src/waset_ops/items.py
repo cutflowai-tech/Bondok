@@ -325,18 +325,23 @@ class ItemsMixin:
     def _system_edit(self, iid, e, run) -> dict:
         k, new = e['key'], e['new']
         if k == 'status':
+            # Owner-reported publication is terminal and is decided before any pause/resume meaning (R5 B2).
+            if new == 'Posted':
+                return run('report_published', {'source': 'board status', 'value': new})
             if new == 'Paused':
                 return run('pause', {'reason': 'Paused on the board'})
             if new == 'Skipped':
                 return run('skip', {'reason': 'Skipped on the board'})
             with self.store.read() as c:
                 it = self.item(c, iid)
+            if it['publication'] == 'published':
+                return self._revert(iid, k, 'This item is recorded as published; it will not be published again. '
+                                            'If it was not actually posted, tell Bondok "not published"')
             if it['owner_state'] in ('paused', 'skipped'):
-                return run('propose', {'kind': 'resume', 'from_label': new})
-            if new == 'Posted' and it['publication'] != 'published':
-                return run('hold', {'kind': 'external_posted', 'reason': 'Marked Posted on the board without a publication '
-                                    'receipt. Publication is held; confirm in Slack whether it was posted manually.'})
-            return self._revert(iid, k, 'Status is derived by the system; use Pause/Skip or ask Bondok')
+                # The owner changed Paused/Skipped to another label: that is the decision to resume (contract §3).
+                return run('resume', {'source': 'board', 'from_label': new})
+            return self._revert(iid, k, 'Status shows the system state; use Paused/Skipped/Posted, Publish at, '
+                                        'or ask Bondok')
         if k == 'publish_at' and not new:
             # Clearing Publish at unschedules; legacy Post Date/Time never stand in for it (contract, audit S2).
             return run('request_reschedule', {'at': None})
@@ -358,8 +363,8 @@ class ItemsMixin:
         if k == 'folder' and new:
             return run('set_folder', {'url': new})
         if k in ('post_link', 'ig_media') and new:
-            return run('hold', {'kind': 'external_posted', 'reason': 'Publication evidence was typed on the board. '
-                                'Publication is held; confirm in Slack whether it was posted manually.'})
+            return run('report_published', {'source': 'board ' + ('post link' if k == 'post_link' else 'media id'),
+                                            'value': new})
         return self._revert(iid, k, 'This column is managed by the system')
 
     def _mark_observed(self, iid, key, value, result):

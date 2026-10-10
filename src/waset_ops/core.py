@@ -186,7 +186,8 @@ class CoreMixin:
     PERMISSIONS = {
         'pause': {OWNER, MONDAY},
         'skip': {OWNER, MONDAY},
-        'resume': {OWNER},
+        'resume': {OWNER, MONDAY},          # a board label change away from Paused/Skipped (contract §3)
+        'report_published': {OWNER, MONDAY},  # board Posted / typed post link, Slack "I posted it"
         'change_format': {OWNER},
         'replace_source': {OWNER, MONDAY},
         'update_caption': {OWNER, MONDAY},
@@ -428,7 +429,9 @@ class CoreMixin:
         for k in force_keys:      # a forced write (revert) overwrites deliberately: no inherited guard (#7)
             if k in board.COL:
                 guard.pop(board.COL[k], None)
-        if 'status' in changes and 'status' not in force_keys and confirmed.get('status') is not None:
+        if 'status' in changes:
+            # Always guarded, also from an empty cell (R5 B7) and for a revert (it applies only while the board still
+            # shows the value being reverted).
             # WF2 reads the board first and skips the write if a person changed the status since v2 last wrote
             # it (e.g. Paused typed between WF1 observations): the edit must reach observe, not be overwritten.
             # Always the latest confirmed board value (a consumed human edit updates it), never an older job's.

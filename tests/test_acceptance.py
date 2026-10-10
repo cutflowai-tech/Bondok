@@ -431,9 +431,10 @@ class Scenario12Protections(OpsCase):
             self.assertEqual(self.select(iid, n=3).get('note'), 'protected')   # infra fix does not resume
             self.ops.repair()
             self.assertIsNone(self.res(iid))
+        # R5.2 contract §3 (expectation changed): the owner's board change away from Paused resumes directly.
         r = self.ops.submit(Command('m', 'resume', 'monday', 'monday', '110', {}))
-        self.assertEqual(r['code'], 'forbidden')
-        r = self.ops.submit(owner_cmd('r', 'resume', '110'))
+        self.assertTrue(r['resumed'])
+        r = self.ops.submit(owner_cmd('r', 'resume', '111'))
         self.assertTrue(r['resumed'])
 
     def test_published_item_cannot_be_reset(self):
@@ -1014,7 +1015,10 @@ class PublishingAuditCritical(OpsCase):
         set_cell(b, 'status', 'Posted')
         r = self.observe(b)
         self.assertEqual(r['edits'][0]['state'], 'completed', r)
-        self.assertEqual(json.loads(self.item('400')['hold'])['kind'], 'external_posted')
+        # R5.2 contract §3 (expectation changed, R5 B2/LOW-12): an owner Posted is a terminal owner-reported
+        # publication, not a hold waiting for a second confirmation in Slack.
+        self.assertEqual(self.item('400')['publication'], 'published')
+        self.assertIsNone(self.item('400')['hold'])
         self.assertIsNone(self.res('400'))
 
     def test_board_post_link_holds(self):
@@ -1648,7 +1652,8 @@ class RoundTwoRegressions(OpsCase):
         for _ in range(4):
             self.observe(b)
             self.clock.advance(11 * 60)
-        self.assertEqual(sum('Held' in o['payload'] for o in self.outbox('slack')), 1)
+        # R5.2 contract §3 (expectation changed): one terminal owner report, notified once, no hold.
+        self.assertEqual(sum('as published by the owner' in o['payload'] for o in self.outbox('slack')), 1)
         self.ops.submit(owner_cmd('ro', 'resolve_outcome', '1101', explicit=True, outcome='not_published'))
         self.observe(b)
         self.assertIsNone(self.item('1101')['hold'])
@@ -1662,7 +1667,9 @@ class RoundTwoRegressions(OpsCase):
         for _ in range(3):
             self.observe(b)
             self.clock.advance(11 * 60)
-        self.assertEqual(sum('Held' in o['payload'] for o in self.outbox('slack')), 1)
+        # R5.2 contract §3 (expectation changed): a typed post link is a terminal owner report, notified once.
+        self.assertEqual(sum('as published by the owner' in o['payload'] for o in self.outbox('slack')), 1)
+        self.assertEqual(self.item('1102')['publication'], 'published')
 
     def test_rejected_format_write_back_is_sent_unguarded(self):                       # 4
         self.make_ready('1103', 'Story')

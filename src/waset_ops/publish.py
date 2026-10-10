@@ -349,6 +349,9 @@ class PublishMixin:
                                 f"({it['item_id']}): {str(error)[:200]}. Nothing was published; it will be tried again "
                                 f"at {when}.", it['item_id'])
                     return {'stage': 'failed', 'retry': out}
+                if self.item(c, a['item_id'])['publication'] == 'published':
+                    # The owner already reported it as published: keep that; this attempt's refusal is evidence only.
+                    return {'stage': 'failed', 'owner_reported_published': True}
                 it = self.update_item(c, a['item_id'], worker, 'publication failed', publication='failed')
                 self.notify(c, f'pub-failed:{attempt_id}', f"Instagram rejected {it['name']} ({it['item_id']}): "
                             f"{str(error)[:300]}. Nothing was published. Tell Bondok to retry when fixed.", it['item_id'])
@@ -362,6 +365,8 @@ class PublishMixin:
         c.execute("UPDATE ops_attempts SET stage='outcome_unknown', evidence=?, next_check=?, updated=? WHERE id=?",
                   (dumps({'why': why}), self.now() + RECONCILE_INTERVALS[0], self.now(), a['id']))
         self._legacy_receipt(c, a, 'publish_requested', {'unknown': why[:200]})
+        if self.item(c, a['item_id'])['publication'] == 'published':
+            return                     # owner-reported publication stays; the attempt is reconciled for evidence
         it = self.update_item(c, a['item_id'], 'service:wf2', 'outcome unknown', publication='outcome_unknown')
         self.notify(c, f"unknown:{a['id']}", f"⚠️ Publication outcome unknown for {it['name']} ({it['item_id']}): {why}. "
                     'It will NOT be published again automatically. Please check Instagram and tell Bondok '
@@ -413,12 +418,61 @@ class PublishMixin:
                             'required; it stays blocked from republishing.', a['item_id'])
             return {'stage': 'outcome_unknown', 'checks': checks}
 
+    def op_report_published(self, c, cmd: Command):
+        """The owner reports the item as published (board Posted, a typed post link/media id, or Slack).
+
+        Terminal for automatic publication of this item and of the same video (R5 B2): no Resume proposal, no
+        second confirmation (R5 LOW-12). A pre-commit attempt is abandoned (nothing was sent); a committed or
+        unknown attempt keeps its record and any later provider evidence is still recorded."""
+        it = self.item(c, cmd.item_id)
+        if it['publication'] == 'published':
+            return {'published': True, 'unchanged': True}
+        now = self.now()
+        report = {'source': cmd.args.get('source') or 'owner', 'value': (str(cmd.args.get('value') or ''))[:300],
+                  'by': cmd.actor, 'at': self.iso_ts(now)}
+        att = self.active_attempt(c, it['item_id'])
+        if att and att['stage'] in PRE_COMMIT:
+            c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
+                      (dumps({'abandoned': 'owner reported the item as published'}), now, att['id']))
+        elif att and att['stage'] == 'outcome_unknown':
+            ev = {**(loads(att['evidence'], {}) or {}), 'owner_report': report}
+            c.execute('UPDATE ops_attempts SET evidence=?, updated=? WHERE id=?', (dumps(ev), now, att['id']))
+        self.release(c, it, 'owner reported published', keep_request=False)
+        obs = loads(it['observed'], {}) or {}
+        obs['_owner_report'] = report
+        c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
+        # Mirrored into the legacy receipt table so a rolled-back helper refuses to publish it too.
+        c.execute("INSERT OR IGNORE INTO publications VALUES(?,?,?,?,?)",
+                  (it['item_id'], 'ops:owner-report', 'published', dumps({'itemId': it['item_id'], **report}), now))
+        self.update_item(c, it['item_id'], cmd.actor, 'owner reported published', publication='published',
+                         legacy_posted=1, hold=None)
+        self.notify(c, f"owner-posted:{it['item_id']}", f"Recorded {it['name']} ({it['item_id']}) as published by the "
+                    f"owner ({report['source']}). It will not be published automatically again.", it['item_id'])
+        return {'published': True, 'owner_reported': True,
+                'attempt': att['id'] if att and att['stage'] in ('committed', 'outcome_unknown') else None}
+
     def op_resolve_outcome(self, c, cmd: Command):
         """Owner's manual verification of an unknown/failed publication."""
         it = self.item(c, cmd.item_id)
         outcome = cmd.args.get('outcome')
         if outcome not in ('published', 'not_published'):
             raise Rejected('Outcome must be published or not_published', 'invalid')
+        report = (loads(it['observed'], {}) or {}).get('_owner_report')
+        provider = c.execute("SELECT 1 FROM ops_attempts WHERE item_id=? AND stage='published'",
+                             (it['item_id'],)).fetchone()
+        if it['publication'] == 'published' and outcome == 'not_published' and report and not provider and \
+                not c.execute("SELECT 1 FROM ops_attempts WHERE item_id=? AND stage IN ('committed','outcome_unknown')",
+                              (it['item_id'],)).fetchone():
+            # The owner corrects their own report (e.g. Posted clicked by mistake). Both statements are kept;
+            # only an owner report without any provider evidence or open attempt can be corrected this way.
+            obs = loads(it['observed'], {}) or {}
+            obs['_owner_report_corrected'] = {**report, 'corrected_by': cmd.actor, 'corrected_at': self.iso_ts(self.now())}
+            obs.pop('_owner_report', None)
+            c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
+            c.execute("DELETE FROM publications WHERE item=? AND owner='ops:owner-report'", (it['item_id'],))
+            self.update_item(c, it['item_id'], cmd.actor, 'owner report corrected: not published',
+                             publication='not_started', legacy_posted=0)
+            return {'publication': 'not_started', 'corrected': True, **self.try_schedule(c, it['item_id'], cmd.actor)}
         if it['publication'] == 'published':
             # An old failed attempt must never turn a published item back into schedulable (duplicate post).
             raise Rejected('This item is already published; nothing to resolve', 'already_published')
