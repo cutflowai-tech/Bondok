@@ -73,3 +73,21 @@ replacing a folder link) and v1 "Version Check" text gets v2's file/revision. St
   detection (WF3 or a cheaper revisit) would release the slot sooner.
 * Replay harness limits: mock Dropbox cannot know links created outside the recorded data, so some
   items receive a new share link where production may reuse an existing one (same file, harmless).
+
+## Round 5 replay on the 2026-10-10 production snapshot (local copy, read-only inputs)
+
+Inputs: store copy and board snapshot taken 2026-10-10 09:48 UTC (`.local-snapshots/2026-10-10`, private).
+Clock frozen at the snapshot time. Code: `bondok/r5-monday-authority` at 14f2233.
+
+* First observation by the new code: 164 items, 0 imported, 22 edits — 19 "Publish at cleared" (the 00:12 agent
+  writes, R5 A16) now notified, 1 owner date accepted as a request, 1 past date rejected with a notice, 1 System
+  column edit. Owner facts changed for exactly one item (the accepted request). No reservation, pause, skip,
+  publication or Topaz binding was lost.
+* The 19 cleared-time notices go to Slack as **one** message (14f2233); before, 19 separate messages.
+* First WF3 repair: changes nothing on owner facts. 23 "prepared file missing" findings are a replay artifact
+  (the prepared media exist only on the server) and are grouped into one message as well.
+* `due`: empty (no publication would start from the replay state).
+* Rollback compatibility: the live helper 452da98 run against the database written by the new code — `/v2/health`
+  ok (schema 1), `/v2/publish/due`, `/v2/prep/queue`, `/v2/maintenance` all succeed.
+* `deploy/rehearse.py` is the v1→v2 cutover rehearsal: its `/v1/...` probes do not apply to a v2→v2 rollout
+  (452da98 has no v1 routes); its bootstrap numbers matched the replay (164 items, 15 published, 19 unscheduled).

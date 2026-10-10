@@ -106,3 +106,34 @@ than container create/status, media_publish and permalink; prepared files are lo
 checks existence); a stale mock from an earlier replay and a shared n8n task-runner port each invalidated one run
 before they were detected — the harness now refuses to start against a foreign mock, gives every replay its own
 runner port, and reports failed workflow runs in every summary.
+
+## Round 5 (2026-10-10): R5.2 repair on `bondok/r5-monday-authority`
+
+Command (every module; the earlier four-module command silently left the R5 suites out — LOW-16):
+`cd tests && python3 -m unittest discover -s . -p 'test_*.py'`
+
+| Interpreter | Collected | Run | Skipped | Failed | Result |
+|---|---|---|---|---|---|
+| Python 3.12 (Homebrew) | 477 | 477 | 0 | 0 | OK |
+| Python 3.13.5 | 477 | 477 | 0 | 0 | OK |
+| Python 3.14 (Homebrew; the n8n image's major) | 477 | 477 | 0 | 0 | OK |
+
+Node and FFmpeg were installed, so the generated-workflow JavaScript and real-media tests ran (none skipped).
+Suites: acceptance, workflows, helper CLI, Bondok, deploy, and R5 safety / scheduling / publishing / board /
+infra / media / n8n / language / captions / authority (R2 rebuild) / campaign. Mapping: `REPAIR_TRACEABILITY.md`.
+
+### Multi-cycle campaigns (tests/test_r5_campaign.py)
+
+Seeded simulated weeks (4 days of activity + a 7-day settling period, 10-minute cycles): new items including
+copies of the same video, owner pause/resume/skip/Posted/time changes, file replacement mid-job, Instagram
+answers (published, lost response, unknown, documented refusal), worker crashes, WF2/Monday/Slack outages and
+restarts. Invariants are stated against a world model and the owner's decisions (I1 no video twice, I2 no claim
+against an owner stop, I3 Slack delivered after outages, I4 every active item eventually published, I5 every
+real publication recorded).
+
+* Suite: seeds 11, 23, 37, 41 — pass.
+* Soak (not in the suite): seeds 100–159 — 60/60 pass after one fix.
+* Finding fixed (391d2a2): a definitively refused attempt left its file in the publication journal; after the item
+  published another file, a different item holding the never-published file was blocked for ever.
+* Harness corrections (not product changes): a file "replacement" on a paused item is not taken by WF1 (the
+  oracle followed it wrongly); `request_publish` on a blocked duplicate answers `accepted`.

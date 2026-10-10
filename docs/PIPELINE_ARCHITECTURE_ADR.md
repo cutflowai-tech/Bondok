@@ -57,6 +57,11 @@ writes are attributed differently (not documented). Both need the owner; neither
 * **R2 (authority migration):** adds the Bondok record column (live schema change, needs authorization),
   writes it for every item, enables rebuild-from-board, then retires SQLite business columns as authority.
   Remaining SQLite dependencies and the retirement gate are tracked in `MIGRATION_PLAN.md`.
+  *Status 2026-10-10:* code implemented and tested (`src/waset_ops/record.py`, `tests/test_r5_authority.py`).
+  The column id is fixed as `bondok_record` (monday `create_column` accepts a user id); records are written only
+  while the board shows the column (an unknown id in `column_values(ids:)` is omitted by Monday, verified
+  read-only), so the code can ship before the column exists. Reservations are not restored from the record:
+  media is verified again first; owner times come back as requests.
 
 ## Consequences
 

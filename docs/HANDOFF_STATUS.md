@@ -1,8 +1,31 @@
 # Handoff Status
 
-Updated: 2026-10-10 ~17:30 UTC. Directive: R5.2 master implementation directive (private; owner handoff).
-Milestone: **Phase 0 done (baseline, freeze). Phase 1–2 (contracts, urgent safety repair) IN PROGRESS.**
-Nothing from this work is DEPLOYED. No production change was made by this session.
+Updated: 2026-10-10 ~20:15 UTC. Directive: R5.2 master implementation directive (private; owner handoff).
+Milestone: **R5 repair and R2 authority code IMPLEMENTED · TESTED · RELEASE READY. NOT DEPLOYED.**
+No production change was made by this or the previous session (read-only Monday queries only).
+
+## Current state (continuation session, 2026-10-10 evening)
+* Integration branch `bondok/r5-monday-authority` contains every R5 workstream: urgent safety set, scheduling,
+  publisher/WF2, board edits, infra/outbox, n8n transport + deployment tooling (agent worktree a808…),
+  media/preparation (agent worktree ada0…), Bondok language reader (agent worktrees a4a5…/a5b1…), M18, LOW-12,
+  LOW-13, LOW-18, R2 record + rebuild, campaign tests, grouped notices. Nothing uncommitted.
+* Tests: 477 collected / run, 0 skipped, pass on Python 3.12, 3.13, 3.14 (`REGRESSION_TEST_RESULTS.md`).
+* Every Round 5 register entry maps to an executable test (`REPAIR_TRACEABILITY.md`).
+* Release candidate: built locally from the final commit with private `--creds`/`--site` inputs kept in
+  gitignored `.local-snapshots/private/` → `release/<id>/` (`deployable: code ✔ workflows ✔`, no blockers).
+* Rollout plan: `PRODUCTION_RUNBOOK.md` (C1 code, C2 workflow import, C3 activation, C4 Monday record column);
+  go/no-go and gates: `RELEASE_READINESS.md`; field authority and retirement gate: `MIGRATION_PLAN.md`.
+* Agent worktrees under `.claude/worktrees/` are merged; they can be removed (a4a5… still holds the
+  uncommitted original copies of `language.py`/`test_r5_language.py`, identical in intent to the merged ones).
+
+## Next executable task
+Owner authorization for change sets C1–C3 (then C4), then the runbook: read-only preflight on the day,
+`deploy.py code`, `deploy.py workflows`, activation, live acceptance (Gate 7). Owner decisions still open:
+publication-journal exception (ADR §5), TEMP Story slots as permanent automatic slots (policy) or not,
+distinct Monday integration identity (optional).
+
+---
+Earlier state (16:40 UTC baseline, kept for evidence):
 
 ## Where things are
 * Local root `/Volumes/Zeno/Bondok` · GitHub `cutflowai-tech/Bondok` (public by owner decision).
@@ -48,10 +71,7 @@ Nothing from this work is DEPLOYED. No production change was made by this sessio
 * Technical journal exception (ADR §5): needs owner agreement before "Monday-only" can be declared met.
 * 15 of 28 n8n workflows unreadable via MCP (earlier finding): cannot be ruled out as board writers.
 
-## Next executable task
-Implement and test the urgent safety set on `bondok/r5-monday-authority`: A3 regression, B1, B2, B7, A1, A2,
-A4, B3, B4, B5/B6/A14/A15, A6, A8; then the safe deployment tooling; then request one scoped rollout authorization.
 
 ## Test command
-`cd tests && python3 -m unittest test_acceptance test_workflows test_helper_cli test_bondok` (220 OK at 91ee8c5,
-Python 3.13.5). Python 3.12/3.14 are not installed locally (compatibility checked by syntax rules only so far).
+`cd tests && python3 -m unittest discover -s . -p 'test_*.py'` (477 OK on 3.12/3.13/3.14; Homebrew python@3.12
+and python@3.14 were installed locally for this).
