@@ -10,6 +10,7 @@ Monday is the human interface, not proof of readiness/reservation/publication.
 from __future__ import annotations
 
 import json
+import re
 
 from . import rules
 
@@ -104,6 +105,12 @@ def snapshot(item: dict) -> dict:
     return out
 
 
+def date_only(value) -> str | None:
+    """A Publish at value picked without a time (Monday stores only the date): 'YYYY-MM-DD', else None."""
+    s = str(value or '').strip()
+    return s if re.fullmatch(r'\d{4}-\d{2}-\d{2}', s) else None
+
+
 def requested_instant(snap: dict):
     """Requested publication time from the board. Publish at (UTC value) wins;
     legacy Post Date/Time (Cairo wall time) is used only when Publish at is
@@ -132,7 +139,11 @@ def mutation_value(key: str, value):
         url, label = (value if isinstance(value, (list, tuple)) else (value, value))
         return {'url': url, 'text': label}
     if kind == 'datetime':
-        return rules.monday_publish_at_value(rules.instant(value)) if value else {}
+        if not value:
+            return {}
+        if date_only(value):                  # an owner's date without a time is shown as it was entered
+            return {'date': date_only(value)}
+        return rules.monday_publish_at_value(rules.instant(value))
     if kind == 'date':
         return {'date': value} if value else {}
     if kind == 'hour':
@@ -150,5 +161,8 @@ def compare_value(key, value):
     if value in ('', None):
         return None
     if KIND.get(key) == 'datetime':
-        return rules.iso(rules.instant(value))
+        try:
+            return rules.iso(rules.instant(value))
+        except (ValueError, TypeError, rules.RuleError):
+            return str(value).strip()          # date without a time: compared as read (audit R5 A3)
     return str(value).strip()

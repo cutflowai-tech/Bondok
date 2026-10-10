@@ -157,6 +157,18 @@ class SchedMixin:
         if res and rules.instant(res['slot']) <= self.now_dt() + rules.NEAR_DUE:
             raise Rejected('The current slot is within 10 minutes of publication; it cannot be moved now', 'near_due')
         at_raw = cmd.args.get('at')
+        if at_raw is None and cmd.args.get('incomplete_date'):
+            day = cmd.args['incomplete_date']
+            self.release(c, it, 'incomplete requested time', keep_request=False)
+            self.update_item(c, it['item_id'], cmd.actor, 'incomplete time', requested_at=None, requested_by=None,
+                             hold=dumps({'kind': 'incomplete_time', 'date': day, 'origin': 'owner',
+                                         'recover': 'a complete time, a cleared Publish at, or a time in Slack',
+                                         'reason': f'Publish at has the date {day} but no time. Add the time '
+                                                   '(Cairo); it will not be published until then.'}))
+            self.notify(c, f"incomplete-time:{it['item_id']}:{day}", f"{it['name']} ({it['item_id']}): Publish at "
+                        f"has the date {day} but no time, so it is not scheduled. Add the time on the board or tell "
+                        'Bondok the time.', it['item_id'])
+            return {'incomplete': True, 'date': day}
         if at_raw is None:
             self.release(c, it, 'unscheduled by request', keep_request=False)
             self.update_item(c, it['item_id'], cmd.actor, 'unscheduled', requested_at=None, requested_by=None,
@@ -172,7 +184,7 @@ class SchedMixin:
         slot = rules.iso(at)
         if res and res['slot'] == slot:
             return {'scheduled': slot, 'unchanged': True}
-        if (loads(it['hold'], {}) or {}).get('kind') == 'unscheduled':
+        if (loads(it['hold'], {}) or {}).get('kind') in ('unscheduled', 'incomplete_time'):
             # A new time answers "tell Bondok when to schedule it" (audit S1/S4).
             it = self.update_item(c, it['item_id'], cmd.actor, 'unscheduled hold cleared', hold=None)
         other = c.execute('SELECT * FROM ops_reservations WHERE account=? AND format=? AND slot=?',

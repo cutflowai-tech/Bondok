@@ -25,9 +25,12 @@ def _h(x) -> str:
 
 
 def dropbox_url(url: str) -> str:
-    u = urlsplit(url or '')
-    host = (u.hostname or '').lower()
-    if u.scheme != 'https' or u.username or u.password or u.port not in (None, 443):
+    try:
+        u = urlsplit(url or '')
+        host, port = (u.hostname or '').lower(), u.port
+    except ValueError:                         # e.g. a bad port or bracket: an item-local error (R5 A3)
+        raise Rejected('The Dropbox link is not a valid address', 'invalid_url') from None
+    if u.scheme != 'https' or u.username or u.password or port not in (None, 443):
         raise Rejected('A secure https Dropbox link is required', 'invalid_url')
     if not any(host == d or host.endswith('.' + d) for d in ('dropbox.com', 'dropboxusercontent.com')):
         raise Rejected('A Dropbox link is required', 'invalid_url')
@@ -124,29 +127,40 @@ class ItemsMixin:
             r = c.execute("SELECT started FROM ops_runs WHERE kind='wf1'").fetchone()
         floor = (r['started'] or 0) if actor == 'service:wf1' and r else self.now() - FRESH_READ_SECONDS
         for raw in items:
-            iid = str(raw['id'])
+            iid = str(raw.get('id'))
             seen.add(iid)
-            snap = board.snapshot(raw)
-            with self.store.tx() as c:
-                it = self.item(c, iid, required=False)
-                if it is None:
-                    self._bootstrap(c, iid, snap)
-                    created.append(iid)
-                    continue
-                edits = self._diff(c, it, snap, floor)
-                c.execute('UPDATE ops_items SET name=? WHERE item_id=?', (snap.get('name'), iid))
-            for e in edits:
-                results.append({'item_id': iid, 'edit': e['key'], **self._apply_edit(iid, e)})
-            if src and it is not None and it.get('source_item_id') in src:
-                s = src[it['source_item_id']]
-                if s.get('format') == 'Canceled':
-                    r = self.submit(Command(f"source-cancel:{iid}:{it['source_item_id']}", 'source_canceled',
-                                            'service:wf1', 'service:wf1', iid, {}))
-                    if r['state'] == 'completed' and not r.get('duplicate'):
-                        results.append({'item_id': iid, 'edit': 'source_canceled', **r})
+            try:
+                self._observe_one(raw, iid, src, floor, results, created)
+            except Exception as e:  # noqa: BLE001 - one malformed item never stops the board (R5 A3)
+                results.append({'item_id': iid, 'edit': '_item', 'state': 'failed',
+                                'reason': f'{type(e).__name__}: {str(e)[:200]}'})
+                with self.store.tx() as c:
+                    self.finding(c, f'observe_failed:{iid}:{type(e).__name__}', iid, 'observe_failed',
+                                 f'Board item {iid} could not be read ({type(e).__name__}: {str(e)[:160]}); '
+                                 'other items continue. It is retried every cycle.')
         missing = self.board_missing(seen) if complete else []
         return {'edits': results, 'imported': created, 'missing': missing,
                 'work': self.work_queue(limit=limit) if actor == 'service:wf1' else None}
+
+    def _observe_one(self, raw, iid, src, floor, results, created):
+        snap = board.snapshot(raw)
+        with self.store.tx() as c:
+            it = self.item(c, iid, required=False)
+            if it is None:
+                self._bootstrap(c, iid, snap)
+                created.append(iid)
+                return
+            edits = self._diff(c, it, snap, floor)
+            c.execute('UPDATE ops_items SET name=? WHERE item_id=?', (snap.get('name'), iid))
+        for e in edits:
+            results.append({'item_id': iid, 'edit': e['key'], **self._apply_edit(iid, e)})
+        if src and it.get('source_item_id') in src:
+            s = src[it['source_item_id']]
+            if s.get('format') == 'Canceled':
+                r = self.submit(Command(f"source-cancel:{iid}:{it['source_item_id']}", 'source_canceled',
+                                        'service:wf1', 'service:wf1', iid, {}))
+                if r['state'] == 'completed' and not r.get('duplicate'):
+                    results.append({'item_id': iid, 'edit': 'source_canceled', **r})
 
     def board_missing(self, seen) -> list:
         """Items known to the store but absent from a complete board snapshot."""
@@ -326,6 +340,9 @@ class ItemsMixin:
         if k == 'publish_at' and not new:
             # Clearing Publish at unschedules; legacy Post Date/Time never stand in for it (contract, audit S2).
             return run('request_reschedule', {'at': None})
+        if k == 'publish_at' and board.date_only(new):
+            # A date without a time is an incomplete request: kept as entered, never midnight or a legacy value.
+            return run('request_reschedule', {'at': None, 'incomplete_date': board.date_only(new)})
         if k in ('publish_at', 'post_date', 'post_time'):
             at = board.requested_instant(e['snap'])
             if k != 'publish_at' and e['snap'].get('publish_at'):

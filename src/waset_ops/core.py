@@ -158,6 +158,17 @@ class CoreMixin:
                     c.execute('ROLLBACK TO op')
                     c.execute('RELEASE op')
                     result, state = {'reason': e.reason, 'code': e.code, **e.extra}, 'rejected'
+                except (ValueError, TypeError, KeyError, AttributeError, IndexError) as e:
+                    # A defect or malformed input in one command must not stop the caller's whole run (R5 A3):
+                    # nothing of this command is kept, the outcome is recorded and reported once.
+                    c.execute('ROLLBACK TO op')
+                    c.execute('RELEASE op')
+                    result, state = {'reason': f'Internal error ({type(e).__name__}): {str(e)[:200]}',
+                                     'code': 'internal_error'}, 'failed'
+                    self.notify(c, f"internal:{cmd.op}:{cmd.item_id}:{type(e).__name__}",
+                                f"⚠️ A {cmd.op} request for item {cmd.item_id} failed with an internal error "
+                                f"({type(e).__name__}: {str(e)[:160]}). Nothing was changed for it; other items "
+                                'continue.', cmd.item_id)
                 c.execute('UPDATE ops_commands SET state=?, result=?, updated=? WHERE id=?',
                           (state, dumps(result), self.now(), cmd.id))
                 audit(c, cmd.item_id, 'command', cmd.actor, {'id': cmd.id, 'op': cmd.op, 'state': state})
@@ -308,14 +319,20 @@ class CoreMixin:
                               f'{rules.STORY_TRIM_SECONDS:g} s when prepared (end cut; no shorter edit needed)')
         if res:
             system.append('Confirmed slot ' + rules.display(rules.instant(res['slot'])))
+        # Publish at shows the confirmed slot, else the owner's requested time (visible while not reservable, R5 M4;
+        # an automatic slot kept as a preference is not an owner request and is not shown),
+        # else a date the owner entered without a time (R5 A3); legacy Post Date/Time mirror the same instant.
+        shown = res['slot'] if res else (it.get('requested_at') if it.get('requested_by') != 'legacy-board' else None)
+        if not shown and hold and hold.get('kind') == 'incomplete_time':
+            shown = hold.get('date')
+        legacy = rules.monday_legacy_values(rules.instant(shown)) if shown and not board.date_only(shown) else None
         d = {
             'status': board.LABELS[label],
             'action': action or None,
             'system': '\n'.join(system) or None,
-            'publish_at': res['slot'] if res else None,
-            'post_date': rules.monday_legacy_values(rules.instant(res['slot']))['date4']['date'] if res else None,
-            'post_time': (lambda v: f"{v['hour']:02d}:{v['minute']:02d}")(
-                rules.monday_legacy_values(rules.instant(res['slot']))['hour_mm7xy9cf']) if res else None,
+            'publish_at': shown or None,
+            'post_date': legacy['date4']['date'] if legacy else None,
+            'post_time': f"{legacy['hour_mm7xy9cf']['hour']:02d}:{legacy['hour_mm7xy9cf']['minute']:02d}" if legacy else None,
             'media': it.get('verification_id') if it['readiness'] == 'ready' else None,
             'video': ver.get('url') if ver and it['readiness'] == 'ready' else None,
             'measurements': (f"{ver['width']}x{ver['height']} | {ver['bytes']/1e6:.1f} MB | {float(ver['duration']):.3f} s"
