@@ -1865,3 +1865,29 @@ class MissingPreparedFileAtSlot(OpsCase):
         self.assertIn('Prepared file is missing', lost[0])
         self.assertIn('Nothing was posted', lost[0])
         self.assertIsNone(self.res('1500'))
+
+
+class LowDiskAlert(OpsCase):
+    """Round 4 (production 2026-10-10): the server fell below the 6 GB media-preparation reserve; every item waiting
+    for preparation failed each cycle with only a per-item board note and no Slack alert."""
+
+    def test_one_alert_while_preparation_is_blocked_and_resolved_after(self):
+        from unittest import mock
+        from waset_ops import monitor
+        self.observe(monday_item('1600', code='LIP1'))
+        self.wf1('prep_media', '1600', result={'ready': False, 'retryable': True, 'error_kind': 'infra',
+                                                'reason': 'Insufficient free space for safe media preparation'})
+        low = mock.Mock(free=4_800_000_000, total=96_000_000_000, used=91_200_000_000)
+        with mock.patch.object(monitor.shutil, 'disk_usage', return_value=low):
+            for _ in range(3):                                   # WF3 every 30 minutes
+                self.ops.repair()
+                self.clock.advance(1800)
+        texts = [json.loads(o['payload'])['text'] for o in self.outbox('slack')]
+        alerts = [t for t in texts if 'free disk space' in t.lower()]
+        self.assertEqual(len(alerts), 1, texts)
+        self.assertIn('4.8 GB', alerts[0])
+        ok = mock.Mock(free=20_000_000_000, total=96_000_000_000, used=76_000_000_000)
+        with mock.patch.object(monitor.shutil, 'disk_usage', return_value=ok):
+            self.ops.repair()
+        with self.ops.store.read() as c:
+            self.assertIsNotNone(c.execute("SELECT resolved FROM ops_findings WHERE fingerprint='low_disk'").fetchone()[0])

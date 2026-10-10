@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+import shutil
+
 from . import rules
 from .core import NOTICE_SECONDS, Command, Rejected
 from .db import dumps, loads
@@ -71,6 +73,16 @@ class MonitorMixin:
                     findings.append({'fingerprint': f"heartbeat:{name}", 'item_id': None, 'kind': 'heartbeat',
                                      'action': 'notify', 'notify': True,
                                      'detail': f"{name} has not reported for {int((now - hb['at']) / 60)} minutes."})
+            free = shutil.disk_usage(self.store.path.resolve().parent).free
+            if free < rules.MEDIA_MIN_FREE_BYTES:
+                # One alert while preparation is blocked (production 2026-10-10: only per-item board notes).
+                waiting = c.execute('SELECT COUNT(*) FROM ops_items WHERE infra_issue IS NOT NULL').fetchone()[0]
+                findings.append({'fingerprint': 'low_disk', 'item_id': None, 'kind': 'low_disk', 'action': 'notify',
+                                 'notify': True,
+                                 'detail': f'Media preparation is paused: the server has {free / 1e9:.1f} GB of free '
+                                           f'disk space and needs {rules.MEDIA_MIN_FREE_BYTES / 1e9:.0f} GB. {waiting} '
+                                           'item(s) are waiting. Free disk space; preparation resumes automatically. '
+                                           'Do not delete the prepared media folder: it holds the scheduled videos.'})
         return {'findings': findings, 'checked_at': self.iso_ts(now), 'read_only': True}
 
     @staticmethod

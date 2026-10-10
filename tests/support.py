@@ -65,6 +65,12 @@ def set_cell(item, key, text, value=None):
 
 class OpsCase(unittest.TestCase):
     def setUp(self):
+        from unittest import mock
+        from waset_ops import monitor
+        ample = mock.Mock(free=100_000_000_000, total=200_000_000_000, used=100_000_000_000)
+        patcher = mock.patch.object(monitor.shutil, 'disk_usage', return_value=ample)   # tests never depend on this disk
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.dir = Path(self.tmp.name)
         self.clock = Clock()

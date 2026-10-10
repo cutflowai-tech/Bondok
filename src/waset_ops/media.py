@@ -113,14 +113,14 @@ def probe(path):
 
 
 def _download(source, original, content_hash):
-    if shutil.disk_usage(ROOT).free < 6_000_000_000:
+    if shutil.disk_usage(ROOT).free < rules.MEDIA_MIN_FREE_BYTES:
         raise ValueError('Insufficient free space for safe media preparation')
     opener = build_opener(SafeRedirect())
     total = 0
     with opener.open(Request(source, headers={'User-Agent': 'WasetMediaWorker/3'}), timeout=60) as r, \
             original.open('wb') as f:
         while block := r.read(1024 * 1024):
-            if shutil.disk_usage(ROOT).free < 2_000_000_000:
+            if shutil.disk_usage(ROOT).free < rules.MEDIA_RESERVE_BYTES:
                 raise ValueError('Disk reserve reached; media job stopped safely')
             total += len(block)
             if total > 5_000_000_000:

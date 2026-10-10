@@ -37,6 +37,8 @@ STORY_MAX_SECONDS = 60.0               # strictly below; exactly 60.000 fails (f
 # source still needs a shorter edit from the editor.
 STORY_TRIM_MAX_SECONDS = 65.0
 STORY_TRIM_SECONDS = 59.9
+MEDIA_MIN_FREE_BYTES = 6_000_000_000     # free disk needed before a media download starts
+MEDIA_RESERVE_BYTES = 2_000_000_000      # a running download stops below this
 QA_POLICY = 3                          # DEFAULT: deployed media verification policy
 
 HORIZON_DAYS = 84                      # DEFAULT
