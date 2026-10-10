@@ -1960,3 +1960,28 @@ class MediaNotReadyAtPublish(OpsCase):
         r = self.ops.claim('981', 'w')
         self.assertFalse(r['claimed'], r)
         self.assertEqual(json.loads(self.item('981')['hold'])['kind'], 'publish_retry_limit')
+
+
+class ReconciledPublicationShownOnBoard(OpsCase):
+    """Guard (round 4, end-to-end WF2 test): a publication confirmed from the container status after the publish
+    answer was lost must reach the board as Posted in the Posted group; WF1 never revisits published items, so this
+    display write is the only one."""
+
+    def test_reconciled_publication_is_projected(self):
+        self.make_ready('990', 'Story')
+        self.drain_monday()
+        self.clock.set(rules.instant(self.res('990')['slot']) + timedelta(seconds=30))
+        cl = self.ops.claim('990', 'w')
+        self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C1')
+        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        self.ops.result(cl['attempt_id'], 'w', error='socket hang up', http_status=None)       # answer lost
+        self.drain_monday()                                                                     # board: Needs Review
+        self.clock.advance(400)
+        self.ops.reconcile(cl['attempt_id'], container_status='PUBLISHED')
+        self.assertEqual(self.item('990')['publication'], 'published')
+        jobs = [j for j in self.ops.outbox_take(['monday'], 'w', 50)]
+        compare = {}
+        for j in jobs:
+            compare.update(j['payload']['compare'])
+        self.assertEqual(compare.get('status'), board.LABELS['posted'], compare)
+        self.assertEqual(compare.get('_group'), board.GROUPS['Posted'], compare)
