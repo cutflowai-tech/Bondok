@@ -295,9 +295,14 @@ class Deployer:
         return out
 
     def backup(self, label='manual') -> Path:
-        bdir = self.backup_root / f'{stamp()}-{label}'
         self.backup_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        bdir.mkdir(mode=0o700)
+        bdir, n = self.backup_root / f'{stamp()}-{label}', 1
+        while True:                     # never reuse (or overwrite) a backup taken in the same second
+            try:
+                bdir.mkdir(mode=0o700)
+                break
+            except FileExistsError:
+                bdir, n = self.backup_root / f'{stamp()}-{label}-{n}', n + 1
         os.chmod(bdir, 0o700)
         lay = self.helper_layout()
         files = self.live_files()

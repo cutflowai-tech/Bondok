@@ -751,7 +751,7 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const x=$json;if(x.empty)return [{json:{...x,valid:false}}];\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst source=$('Source Snapshot').first().json.items.find(s=>String(s.id)===String(x.source_item_id))||null;\nconst srcLink=source?val(source,'link_mm06bswn')?.url:null;\nconst folder=x.folder_url||[x.file_url,srcLink].find(u=>u&&u.includes('/scl/fo/'))||'';\nreturn [{json:{...x,itemId:x.item_id,source,folderUrl:folder||[x.file_url,srcLink].find(u=>u&&/dropbox/.test(u))||'',valid:true}}];"
+    "jsCode": "const x=$json;if(x.empty)return [{json:{...x,valid:false}}];\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst source=$('Source Snapshot').first().json.items.find(s=>String(s.id)===String(x.source_item_id))||null;\nconst srcLink=source?val(source,'link_mm06bswn')?.url:null;\n// R5 B3: a file the owner selected (Dropbox Link / Slack) outranks the project folder: it is resolved through its\n// own link and the folder is never listed for this item.\nconst owner=x.selection_mode==='owner_selected_file'&&!!x.selected_url;\nconst folder=owner?'':(x.folder_url||[x.file_url,srcLink].find(u=>u&&u.includes('/scl/fo/'))||'');\nreturn [{json:{...x,itemId:x.item_id,source,ownerSelected:owner,selectedUrl:owner?x.selected_url:null,\nfolderUrl:owner?'':(folder||[x.file_url,srcLink].find(u=>u&&/dropbox/.test(u))||''),valid:true}}];"
    },
    "id": "8cb36e1a-2cd7-58b6-a30d-f17c4fe56b0a",
    "position": [
@@ -1127,7 +1127,7 @@
    ],
    "parameters": {
     "mode": "runOnceForAllItems",
-    "jsCode": "const x=$('Item Context').item.json;return [{json:{...x,folderCreated:true,folderPath:$('Configuration').first().json.folderRoot+'/'+String(x.code).replace(/[^A-Za-z0-9#_-]/g,'_')+'/'+x.format}}];"
+    "jsCode": "const x=$('Item Context').item.json;\nif(!/^\\s*[a-z]{2,3}\\s*[#_\\- ]?\\s*\\d+/i.test(String(x.code??'')))throw new Error('[config] Code is missing or invalid on the social board, so no project folder can be created. Add the Code (for example LIP12) or a Dropbox link to the item');\nreturn [{json:{...x,folderCreated:true,folderPath:$('Configuration').first().json.folderRoot+'/'+String(x.code).replace(/[^A-Za-z0-9#_-]/g,'_')+'/'+x.format}}];"
    },
    "onError": "continueErrorOutput",
    "id": "61649c64-6e1c-5d4a-b680-9995127d869e"
@@ -1337,7 +1337,7 @@
    ],
    "parameters": {
     "mode": "runOnceForAllItems",
-    "jsCode": "const p=$('Folder Context').item.json;if(!$json.path_lower)throw new Error('Dropbox link is unavailable');const direct=$json['.tag']==='file'||/\\.(mp4|mov|m4v)$/i.test($json.name||'');const directPath=direct?$json.path_lower:null;const path=direct?$json.path_lower.slice(0,$json.path_lower.lastIndexOf('/')):$json.path_lower;const parts=path.split('/');parts.pop();const parent=parts.join('/'),useParent=!direct&&/#\\d+/.test(parts.at(-1)||'');return [{json:{...p,directPath,folderPath:path,parent,useParent,listBody:{path:useParent?parent:path,recursive:!direct,limit:2000},entries:[]}}];"
+    "jsCode": "const p=$('Folder Context').item.json;if(!$json.path_lower)throw new Error('[config] The Dropbox link on the board is not in the connected Dropbox account or is no longer shared; replace the link or share it from that account');const direct=$json['.tag']==='file'||/\\.(mp4|mov|m4v)$/i.test($json.name||'');const directPath=direct?$json.path_lower:null;const path=direct?$json.path_lower.slice(0,$json.path_lower.lastIndexOf('/')):$json.path_lower;const parts=path.split('/');parts.pop();const parent=parts.join('/'),useParent=!direct&&/#\\d+/.test(parts.at(-1)||'');return [{json:{...p,directPath,folderPath:path,parent,useParent,listBody:{path:useParent?parent:path,recursive:!direct,limit:2000},entries:[]}}];"
    },
    "onError": "continueErrorOutput",
    "id": "7fb5e368-336b-5782-b48d-becdfc813a6e"
@@ -1648,16 +1648,203 @@
    "id": "cba57ff8-33bb-5e7d-8bf8-76d67703e491"
   },
   {
+   "name": "Owner Selected File?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "17500e82-c3f8-5fe0-97fd-f2276d4cc800",
+       "leftValue": "={{ $json.ownerSelected===true&&!!$json.selectedUrl }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "66f67a67-0406-50e9-a1bf-6ffa14188e56",
+   "position": [
+    2160,
+    1200
+   ]
+  },
+  {
+   "name": "Owner File Link Metadata",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    260,
+    1040
+   ],
+   "parameters": {
+    "url": "https://api.dropboxapi.com/2/sharing/get_shared_link_metadata",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({url:$('Item Context').item.json.selectedUrl}) }}"
+   },
+   "onError": "continueErrorOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "b711afb0-56d6-57d7-968c-5102200f18c5"
+  },
+  {
+   "name": "Owner File Link",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const m=$json;\n// A folder link, or a link to a file outside the connected Dropbox, cannot be bound to one file version: a\n// permanent configuration problem for this link (never a reason to fall back to the folder).\nif(m['.tag']!=='file')throw new Error('[config] The Dropbox link selected for this item is not a file; select the exact video file');\nif(!m.path_lower)throw new Error('[config] The Dropbox file selected for this item is not in the connected Dropbox account; share it from that account or select another file');\nreturn [{json:{path:m.path_lower,linkId:m.id||null}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "9384afe4-805e-5cbf-982c-92339127148d",
+   "position": [
+    2640,
+    1200
+   ]
+  },
+  {
+   "name": "Owner File Version",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    260,
+    1040
+   ],
+   "parameters": {
+    "url": "https://api.dropboxapi.com/2/files/get_metadata",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({path:$json.path}) }}"
+   },
+   "onError": "continueErrorOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "74fe1f46-a588-5c7e-8861-acb543bf406d"
+  },
+  {
+   "name": "Owner Selected File",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const ctx=$('Item Context').item.json,link=$('Owner File Link Metadata').item.json,m=$json;\nif(m['.tag']&&m['.tag']!=='file')throw new Error('[config] The Dropbox link selected for this item is not a file; select the exact video file');\nif(!m.id||!m.rev||!m.content_hash)throw new Error('[config] Dropbox did not report the exact version of the selected file; select it again');\nif(link.id&&link.id!==m.id)throw new Error('[config] The selected Dropbox link no longer points to the same file; select the file again');\nif(!/\\.(mp4|mov|m4v)$/i.test(m.name||''))throw new Error('[config] The selected Dropbox file is not an MP4/MOV video ('+String(m.name||'').slice(0,80)+')');\nreturn [{json:{file:{id:m.id,rev:m.rev,content_hash:m.content_hash,name:m.name,path:m.path_lower},url:ctx.selectedUrl,ok:true}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "ff7de682-75b4-5f8a-a944-c4c249ddc06f",
+   "position": [
+    240,
+    1400
+   ]
+  },
+  {
+   "name": "Folder Creatable?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "12c2c47f-518e-5036-89ef-33e412ae194c",
+       "leftValue": "={{ $json.code_valid!==false }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "e0eb97c6-a27d-585c-81bb-d07ad0d354f9",
+   "position": [
+    480,
+    1400
+   ]
+  },
+  {
+   "name": "Missing Source Identity",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "return [{json:{ok:false,errorKind:'config',note:'Code is missing or invalid on the social board, so no project folder can be created. Add the Code (for example LIP12) or a Dropbox link to the item'}}];"
+   },
+   "id": "7dc1ef08-d8c9-5ec4-896f-97cecee5ba50",
+   "position": [
+    720,
+    1400
+   ]
+  },
+  {
    "name": "Dropbox Problem",
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const raw=$json.error;const e=(raw&&typeof raw==='object')?raw:{};\n// n8n error outputs may carry the message as a plain string; keep it.\nconst msg=String((typeof raw==='string'&&raw)||e.message||e.description||$json.error_summary||$json.message||'Dropbox request failed');\n// Status from structured HTTP fields or n8n's \"409 - {...}\" / \"status code 503\" forms only: a number\n// elsewhere in free text (an item name like \"Calli 403\", an address) says nothing (audit MP4).\nconst code=String(e.httpCode||e.statusCode||e.status||(e.response&&e.response.status)||$json.statusCode||\n  (msg.match(/^\\s*([45]\\d\\d) - /)||msg.match(/status code ([45]\\d\\d)\\b/)||[])[1]||'');\nconst blob=msg+' '+String(e.description||'');\n// Owner-readable text instead of raw API JSON; the Dropbox error tag is kept in brackets.\nconst tag=String(e.error_summary||$json.error_summary||(blob.match(/\"error_summary\"\\s*:\\s*\"([^\"]+)\"/)||[])[1]||'').replace(/\\/+(\\.\\.)?$/,'');\n// Only a Dropbox 4xx about the request itself blocks the content. 401/403 (expired or revoked token,\n// app permission) affect every item, 408/429 are temporary, and no status at all is a system problem.\nconst credential=(code==='401'||code==='403')&&!/^shared_link/.test(tag);\nconst config=/^4/.test(code)&&!['408','429'].includes(code)&&!credential;\nconst known={'shared_link_not_found':'The Dropbox link on the board no longer works. Replace the folder link on the board.',\n'shared_link_access_denied':'Dropbox refused access to the link on the board. Check the link\\'s sharing settings.',\n'path/not_found':'The Dropbox folder or file was not found. Check the folder link on the board.',\n'path/malformed_path':'The Dropbox path is invalid. Check the folder link on the board.'};\nconst head=tag.split('/')[0],text=known[tag]||known[head]||null;\nconst out=config?(text||('Dropbox rejected the request'+(tag?'':': '+msg.slice(0,200))))+(tag?' (Dropbox: '+tag+')':'')\n  :'Temporary Dropbox problem'+(code?' ('+code+')':'')+': '+msg.slice(0,200);\nreturn [{json:{error:out.slice(0,400),errorKind:config?'config':'infra'}}];"
+    "jsCode": "const classify=(raw,j)=>{\nconst e=(raw&&typeof raw==='object')?raw:{};\n// n8n may carry the message as a plain string, and appends \" [line N]\" to Code node errors.\nconst msg=String((typeof raw==='string'&&raw)||e.message||e.description||j.error_summary||j.message||'Dropbox request failed')\n  .replace(/\\s*\\[line [^\\]]*\\]\\s*$/,'');\n// Typed failures raised by our own Code nodes: \"[config] text\" / \"[editor] text\" (permanent, item-local).\nconst typed=msg.match(/^\\s*(?:Error:\\s*)?\\[(config|editor)\\]\\s*([\\s\\S]*)$/);\nif(typed)return {text:typed[2].trim().slice(0,400),kind:typed[1]};\n// Status from structured HTTP fields or n8n's \"409 - {...}\" / \"status code 503\" forms only: a number\n// elsewhere in free text (an item name like \"Calli 403\", an address) says nothing (audit MP4).\nconst code=String(e.httpCode||e.statusCode||e.status||(e.response&&e.response.status)||j.statusCode||\n  (msg.match(/^\\s*([45]\\d\\d) - /)||msg.match(/status code ([45]\\d\\d)\\b/)||[])[1]||'');\nconst blob=msg+' '+String(e.description||'');\n// A bare Dropbox error tag thrown by a Code node (e.g. \"path/not_found/..\") is Dropbox's own answer.\nconst bare=(msg.trim().match(/^([a-z_]+(?:\\/[a-z_]+)*)\\/*(?:\\.\\.?)?$/)||[])[1]||'';\n// Owner-readable text instead of raw API JSON; the Dropbox error tag is kept in brackets.\nconst tag=String(e.error_summary||j.error_summary||(blob.match(/\"error_summary\"\\s*:\\s*\"([^\"]+)\"/)||[])[1]||bare||'').replace(/\\/+(\\.\\.?)?$/,'');\nconst PERMANENT=/^(path\\/(not_found|malformed_path|no_write_permission|insufficient_space|conflict|disallowed_name)|path_lookup\\/(not_found|malformed_path)|shared_link_(not_found|access_denied|is_directory)|unsupported_link_type|email_not_verified)/;\n// Only a Dropbox 4xx about the request itself (or a bare permanent tag) blocks the content. 401/403 (expired or\n// revoked token, app permission) affect every item, 408/429 are temporary, and no status at all is a system problem.\nconst credential=(code==='401'||code==='403')&&!/^shared_link/.test(tag);\nconst config=!credential&&((/^4/.test(code)&&!['408','429'].includes(code))||(!code&&!!bare&&PERMANENT.test(tag)));\nconst known={'shared_link_not_found':'The Dropbox link on the board no longer works. Replace the folder link on the board.',\n'shared_link_access_denied':'Dropbox refused access to the link on the board. Check the link\\'s sharing settings.',\n'path/not_found':'The Dropbox folder or file was not found. Check the folder link on the board.',\n'path/malformed_path':'The Dropbox path is invalid. Check the folder link on the board.',\n'path/no_write_permission':'The connected Dropbox account may not write to this folder.',\n'path/insufficient_space':'The connected Dropbox account is full.'};\nconst head=tag.split('/')[0],text=known[tag]||known[head]||null;\nconst out=config?(text||('Dropbox rejected the request'+(tag?'':': '+msg.slice(0,200))))+(tag?' (Dropbox: '+tag+')':'')\n  :'Temporary Dropbox problem'+(code?' ('+code+')':'')+': '+msg.slice(0,200);\nreturn {text:out.slice(0,400),kind:config?'config':'infra'};};\n\nconst r=classify($json.error,$json);\nreturn [{json:{error:r.text,errorKind:r.kind}}];"
    },
    "id": "dc798626-db84-58c5-8afa-d91119d55ec9",
    "position": [
-    2160,
-    1200
+    960,
+    1400
    ]
   },
   {
@@ -1665,12 +1852,12 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body=(()=>{\nconst ctx=$('Item Context').item.json,cfg=$('Configuration').first().json,run=$('Run Start').first().json;\nlet fc={};try{fc=$('Folder Context').item.json}catch{}\nconst base={requestId:cfg.runId+':'+ctx.itemId,itemId:ctx.itemId,runId:cfg.runId,fence:run.fence,expectedFormat:ctx.format,\nfolderUrl:fc.folderCreated?fc.folderUrl:null};\nif($json.file&&$json.ok!==false&&$json.url)return {...base,file:{id:$json.file.id,rev:$json.file.rev,content_hash:$json.file.content_hash,name:$json.file.name},url:$json.url};\nif($json.ok===false)return {...base,error:$json.note,errorKind:$json.errorKind||'editor'};\nreturn {...base,error:$json.error||'Dropbox selection failed',errorKind:$json.errorKind||'infra'};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/prep/step\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
+    "jsCode": "const body=(()=>{\nconst ctx=$('Item Context').item.json,cfg=$('Configuration').first().json,run=$('Run Start').first().json;\nlet fc={};try{fc=$('Folder Context').item.json}catch{}\n// The selection mode this run used (R5 B3): the handler refuses a result that is not the owner-selected file.\nconst base={requestId:cfg.runId+':'+ctx.itemId,itemId:ctx.itemId,runId:cfg.runId,fence:run.fence,expectedFormat:ctx.format,\nfolderUrl:fc.folderCreated?fc.folderUrl:null,\nselection:{mode:ctx.selection_mode||'automatic_folder_selection',url:ctx.selected_url||null}};\nif($json.file&&$json.ok!==false&&$json.url)return {...base,file:{id:$json.file.id,rev:$json.file.rev,content_hash:$json.file.content_hash,name:$json.file.name},url:$json.url};\nif($json.ok===false)return {...base,error:$json.note,errorKind:$json.errorKind||'editor'};\nreturn {...base,error:$json.error||'Dropbox selection failed',errorKind:$json.errorKind||'infra'};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/prep/step\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "5e3e12f5-01f1-5738-bced-ca1bc4344336",
    "position": [
-    2400,
-    1200
+    1200,
+    1400
    ]
   },
   {
@@ -1684,8 +1871,8 @@
    "onError": "continueRegularOutput",
    "id": "81481872-46c7-55bc-a230-5ae3aad11664",
    "position": [
-    2640,
-    1200
+    1440,
+    1400
    ]
   },
   {
@@ -1698,7 +1885,7 @@
    "onError": "continueErrorOutput",
    "id": "d03fe81a-f1d2-5ea6-af67-ad6325d55e9c",
    "position": [
-    0,
+    1680,
     1400
    ]
   },
@@ -1717,7 +1904,7 @@
      "conditions": [
       {
        "id": "8fb04ddb-cacd-5a31-8d78-726714d50ea8",
-       "leftValue": "={{ $json.state==='completed'&&$json.next==='upload' }}",
+       "leftValue": "={{ $json.state==='completed'&&['upload','share','identify'].includes($json.next) }}",
        "rightValue": true,
        "operator": {
         "type": "boolean",
@@ -1732,7 +1919,75 @@
    },
    "id": "86ea67d1-69f9-5d90-bc34-737bd7112d7b",
    "position": [
-    240,
+    1920,
+    1400
+   ]
+  },
+  {
+   "name": "Upload Stage?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "0b9829f5-086e-5aca-b929-2d4d0b9e4bc9",
+       "leftValue": "={{ $json.next==='upload' }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "e072585d-fa34-50b6-902d-4ccff8f4cbb3",
+   "position": [
+    2160,
+    1400
+   ]
+  },
+  {
+   "name": "Identify Stage?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "95badb3c-58e7-5fe1-a81b-ffb120cc7ea3",
+       "leftValue": "={{ $json.next==='identify' }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "be4b6030-3067-5cf6-84ac-f07bbeb433ab",
+   "position": [
+    2400,
     1400
    ]
   },
@@ -1782,8 +2037,8 @@
    "onError": "continueErrorOutput",
    "id": "56c920fd-ea3d-5372-b6db-a51c1f2224d1",
    "position": [
-    720,
-    1400
+    0,
+    1600
    ]
   },
   {
@@ -1827,7 +2082,7 @@
      "parameters": [
       {
        "name": "Dropbox-API-Arg",
-       "value": "={{ JSON.stringify({path:'/Social Media/Prepared/'+$('Item Context').item.json.itemId+'-'+$('Preparation Step').item.json.mediaId+'.mp4',mode:'overwrite',autorename:false,mute:true}) }}"
+       "value": "={{ JSON.stringify({path:$('Preparation Step').item.json.deliveryPath,mode:'overwrite',autorename:false,mute:true}) }}"
       },
       {
        "name": "Content-Type",
@@ -1853,6 +2108,135 @@
    "id": "199a0fd4-aabc-5027-9a2a-117fb7da24bd"
   },
   {
+   "name": "Identify Delivered Copy",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    260,
+    1040
+   ],
+   "parameters": {
+    "url": "https://api.dropboxapi.com/2/files/get_metadata",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({path:$('Preparation Step').item.json.deliveryPath}) }}"
+   },
+   "onError": "continueErrorOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "b4803f32-da3d-5908-886c-01ab91292d2d"
+  },
+  {
+   "name": "Record Upload — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body=(()=>{const s=$('Preparation Step').item.json;\nconst stage=s.next==='identify'?'identified':'uploaded';\nreturn {requestId:$('Configuration').first().json.runId+':'+$('Item Context').item.json.itemId+':'+stage,\nitemId:$('Item Context').item.json.itemId,runId:$('Configuration').first().json.runId,fence:$('Run Start').first().json.fence,\nmediaId:s.mediaId,stage,upload:{id:$json.id,rev:$json.rev,content_hash:$json.content_hash,path_lower:$json.path_lower,size:$json.size}};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/prep/delivered\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
+   },
+   "id": "01345ff8-187a-571c-baa9-cdb67875e3fa",
+   "position": [
+    960,
+    1600
+   ]
+  },
+  {
+   "name": "Record Upload — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "onError": "continueRegularOutput",
+   "id": "ffcef9ff-33f4-5c56-bb75-4d7f8006eb2b",
+   "position": [
+    1200,
+    1600
+   ]
+  },
+  {
+   "name": "Record Upload",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nif(r.ok===false)throw new Error(r.kind==='helper_process_failed'?r.error:'Handler '+(r.kind||'error')+': '+r.error);\nreturn [{json:r}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "feea1f0f-a7c5-5cc3-afd2-4d02165a17fc",
+   "position": [
+    1440,
+    1600
+   ]
+  },
+  {
+   "name": "Upload Recorded?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "205bf568-64af-5054-b88f-132d4e4185b8",
+       "leftValue": "={{ $json.state==='completed'&&$json.next==='share' }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "5e03a54e-eb02-579e-be29-c73154997d08",
+   "position": [
+    1680,
+    1600
+   ]
+  },
+  {
+   "name": "Delivery Target",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const p=$json.deliveryPath||$('Preparation Step').item.json.deliveryPath;\nif(!p)throw new Error('Delivery path missing');return [{json:{path:p}}];"
+   },
+   "onError": "continueErrorOutput",
+   "id": "c6059ad5-79ff-55ba-87d8-d3f8b5f25be3",
+   "position": [
+    1920,
+    1600
+   ]
+  },
+  {
    "name": "Share Verified Video",
    "type": "n8n-nodes-base.httpRequest",
    "typeVersion": 4.5,
@@ -1873,7 +2257,7 @@
     "sendBody": true,
     "contentType": "json",
     "specifyBody": "json",
-    "jsonBody": "={{ JSON.stringify({path:$json.path_lower,settings:{requested_visibility:'public'} }) }}"
+    "jsonBody": "={{ JSON.stringify({path:$('Delivery Target').item.json.path,settings:{requested_visibility:'public'} }) }}"
    },
    "position": [
     2080,
@@ -1909,7 +2293,7 @@
     "sendBody": true,
     "contentType": "json",
     "specifyBody": "json",
-    "jsonBody": "={{ JSON.stringify({path:$('Upload Verified 1080 Video').item.json.path_lower,direct_only:true}) }}"
+    "jsonBody": "={{ JSON.stringify({path:$('Delivery Target').item.json.path,direct_only:true}) }}"
    },
    "position": [
     2340,
@@ -1937,8 +2321,8 @@
    "onError": "continueErrorOutput",
    "id": "afbadbf4-d5c8-537c-9110-e5d0c3c24795",
    "position": [
-    1920,
-    1400
+    2640,
+    1600
    ]
   },
   {
@@ -1946,12 +2330,12 @@
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={requestId:$('Configuration').first().json.runId+':'+$('Item Context').item.json.itemId+':delivered',\nitemId:$('Item Context').item.json.itemId,runId:$('Configuration').first().json.runId,fence:$('Run Start').first().json.fence,\nmediaId:$('Preparation Step').item.json.mediaId,url:$json.url};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/prep/delivered\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
+    "jsCode": "const body={requestId:$('Configuration').first().json.runId+':'+$('Item Context').item.json.itemId+':delivered',\nitemId:$('Item Context').item.json.itemId,runId:$('Configuration').first().json.runId,fence:$('Run Start').first().json.fence,\nmediaId:$('Preparation Step').item.json.mediaId,stage:'shared',url:$json.url};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/prep/delivered\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
    },
    "id": "a5405379-bf04-592e-a4c1-1f70c1cbc811",
    "position": [
-    2160,
-    1400
+    0,
+    1800
    ]
   },
   {
@@ -1965,8 +2349,8 @@
    "onError": "continueRegularOutput",
    "id": "6a6ee34a-f24e-59f6-9f34-338007d9d104",
    "position": [
-    2400,
-    1400
+    240,
+    1800
    ]
   },
   {
@@ -1979,8 +2363,62 @@
    "onError": "continueErrorOutput",
    "id": "7409dc35-22b4-5b61-9f51-ac55e3ea3097",
    "position": [
-    2640,
-    1400
+    480,
+    1800
+   ]
+  },
+  {
+   "name": "Delivery Problem",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const classify=(raw,j)=>{\nconst e=(raw&&typeof raw==='object')?raw:{};\n// n8n may carry the message as a plain string, and appends \" [line N]\" to Code node errors.\nconst msg=String((typeof raw==='string'&&raw)||e.message||e.description||j.error_summary||j.message||'Dropbox request failed')\n  .replace(/\\s*\\[line [^\\]]*\\]\\s*$/,'');\n// Typed failures raised by our own Code nodes: \"[config] text\" / \"[editor] text\" (permanent, item-local).\nconst typed=msg.match(/^\\s*(?:Error:\\s*)?\\[(config|editor)\\]\\s*([\\s\\S]*)$/);\nif(typed)return {text:typed[2].trim().slice(0,400),kind:typed[1]};\n// Status from structured HTTP fields or n8n's \"409 - {...}\" / \"status code 503\" forms only: a number\n// elsewhere in free text (an item name like \"Calli 403\", an address) says nothing (audit MP4).\nconst code=String(e.httpCode||e.statusCode||e.status||(e.response&&e.response.status)||j.statusCode||\n  (msg.match(/^\\s*([45]\\d\\d) - /)||msg.match(/status code ([45]\\d\\d)\\b/)||[])[1]||'');\nconst blob=msg+' '+String(e.description||'');\n// A bare Dropbox error tag thrown by a Code node (e.g. \"path/not_found/..\") is Dropbox's own answer.\nconst bare=(msg.trim().match(/^([a-z_]+(?:\\/[a-z_]+)*)\\/*(?:\\.\\.?)?$/)||[])[1]||'';\n// Owner-readable text instead of raw API JSON; the Dropbox error tag is kept in brackets.\nconst tag=String(e.error_summary||j.error_summary||(blob.match(/\"error_summary\"\\s*:\\s*\"([^\"]+)\"/)||[])[1]||bare||'').replace(/\\/+(\\.\\.?)?$/,'');\nconst PERMANENT=/^(path\\/(not_found|malformed_path|no_write_permission|insufficient_space|conflict|disallowed_name)|path_lookup\\/(not_found|malformed_path)|shared_link_(not_found|access_denied|is_directory)|unsupported_link_type|email_not_verified)/;\n// Only a Dropbox 4xx about the request itself (or a bare permanent tag) blocks the content. 401/403 (expired or\n// revoked token, app permission) affect every item, 408/429 are temporary, and no status at all is a system problem.\nconst credential=(code==='401'||code==='403')&&!/^shared_link/.test(tag);\nconst config=!credential&&((/^4/.test(code)&&!['408','429'].includes(code))||(!code&&!!bare&&PERMANENT.test(tag)));\nconst known={'shared_link_not_found':'The Dropbox link on the board no longer works. Replace the folder link on the board.',\n'shared_link_access_denied':'Dropbox refused access to the link on the board. Check the link\\'s sharing settings.',\n'path/not_found':'The Dropbox folder or file was not found. Check the folder link on the board.',\n'path/malformed_path':'The Dropbox path is invalid. Check the folder link on the board.',\n'path/no_write_permission':'The connected Dropbox account may not write to this folder.',\n'path/insufficient_space':'The connected Dropbox account is full.'};\nconst head=tag.split('/')[0],text=known[tag]||known[head]||null;\nconst out=config?(text||('Dropbox rejected the request'+(tag?'':': '+msg.slice(0,200))))+(tag?' (Dropbox: '+tag+')':'')\n  :'Temporary Dropbox problem'+(code?' ('+code+')':'')+': '+msg.slice(0,200);\nreturn {text:out.slice(0,400),kind:config?'config':'infra'};};\n\nconst STAGES={'Ensure Prepared Dropbox Folder':'folder','Prepared Folder Checked':'folder',\n'Read Verified Video from n8n Disk':'read','Upload Verified 1080 Video':'upload','Identify Delivered Copy':'identify',\n'Record Upload':'record','Delivery Target':'share','Share Verified Video':'share','Find Verified Share':'share',\n'Verified Delivery Link':'share','Register Verified Delivery':'register'};\nlet prev='';try{prev=$prevNode.name}catch(e){}\nconst r=classify($json.error,$json);\nconst local=/ENOENT|no such file/i.test(JSON.stringify($json.error||''));\nreturn [{json:{error:r.text,errorKind:r.kind,stage:$json.stage||STAGES[prev]||(local?'read':'unknown')}}];"
+   },
+   "id": "75f1fced-ccf5-5b9c-8756-eee895233673",
+   "position": [
+    720,
+    1800
+   ]
+  },
+  {
+   "name": "Record Delivery Failure — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body=(()=>{const s=$('Preparation Step').item.json;\nreturn {requestId:$('Configuration').first().json.runId+':'+$('Item Context').item.json.itemId+':delivery-failed:'+$json.stage,\nitemId:$('Item Context').item.json.itemId,runId:$('Configuration').first().json.runId,fence:$('Run Start').first().json.fence,\nmediaId:s.mediaId,stage:$json.stage,error:$json.error,errorKind:$json.errorKind};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/prep/delivered\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
+   },
+   "id": "70d2fe5b-eae3-5c9b-a43a-a66a8230f291",
+   "position": [
+    960,
+    1800
+   ]
+  },
+  {
+   "name": "Record Delivery Failure — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "onError": "continueRegularOutput",
+   "id": "80338ba8-1b8c-5b3e-be61-4ea9e844bf67",
+   "position": [
+    1200,
+    1800
+   ]
+  },
+  {
+   "name": "Record Delivery Failure",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nreturn [{json:r}];"
+   },
+   "id": "9ab09fa0-f817-5cea-a704-b39e85318073",
+   "position": [
+    1440,
+    1800
    ]
   },
   {
@@ -1992,8 +2430,8 @@
    },
    "id": "e604e5fe-11de-5a17-9b45-75099f37cf35",
    "position": [
-    0,
-    1600
+    1680,
+    1800
    ]
   },
   {
@@ -2007,8 +2445,8 @@
    "onError": "continueRegularOutput",
    "id": "36a5a596-3e2f-55fa-a3fd-010389f23b27",
    "position": [
-    240,
-    1600
+    1920,
+    1800
    ]
   },
   {
@@ -2020,8 +2458,8 @@
    },
    "id": "f0f39f8f-2f61-5d61-b6ec-25fa48ddf135",
    "position": [
-    480,
-    1600
+    2160,
+    1800
    ]
   },
   {
@@ -2033,8 +2471,8 @@
    },
    "id": "8e166ff4-967a-54f3-a91e-ce1610fa6aa7",
    "position": [
-    720,
-    1600
+    2400,
+    1800
    ]
   },
   {
@@ -2047,8 +2485,8 @@
    },
    "id": "bf460928-1af4-5890-893b-9548b4996451",
    "position": [
-    960,
-    1600
+    2640,
+    1800
    ]
   },
   {
@@ -2081,8 +2519,8 @@
    },
    "id": "e5e5588f-497c-5853-b547-90060f318e25",
    "position": [
-    1200,
-    1600
+    0,
+    2000
    ]
   },
   {
@@ -2094,8 +2532,8 @@
    },
    "id": "4a92965f-74c8-527b-a74f-f1513a888e7e",
    "position": [
-    1440,
-    1600
+    240,
+    2000
    ]
   },
   {
@@ -2130,8 +2568,8 @@
    "onError": "continueErrorOutput",
    "id": "2f1c95b1-f4c3-5662-b855-be8bed593ad9",
    "position": [
-    1680,
-    1600
+    480,
+    2000
    ]
   },
   {
@@ -2144,8 +2582,8 @@
    "onError": "continueErrorOutput",
    "id": "76446831-61cf-5b81-b7eb-1af8f14bdc1e",
    "position": [
-    1920,
-    1600
+    720,
+    2000
    ]
   },
   {
@@ -2178,8 +2616,8 @@
    },
    "id": "326292d2-7b2b-54a0-9645-6c2f97775624",
    "position": [
-    2160,
-    1600
+    960,
+    2000
    ]
   },
   {
@@ -2214,8 +2652,8 @@
    "onError": "continueErrorOutput",
    "id": "3ed2ba7c-8bf7-523a-8967-07cb712bfdcc",
    "position": [
-    2400,
-    1600
+    1200,
+    2000
    ]
   },
   {
@@ -2228,8 +2666,8 @@
    "onError": "continueErrorOutput",
    "id": "f0df8355-0f3c-57d3-8b4d-51b64d794d31",
    "position": [
-    2640,
-    1600
+    1440,
+    2000
    ]
   },
   {
@@ -2264,8 +2702,8 @@
    "onError": "continueErrorOutput",
    "id": "4b89bdf4-a8cb-5386-8266-253e4c40931a",
    "position": [
-    0,
-    1800
+    1680,
+    2000
    ]
   },
   {
@@ -2277,8 +2715,8 @@
    },
    "id": "46b77f68-1b06-5c72-9215-9a38e369e88e",
    "position": [
-    240,
-    1800
+    1920,
+    2000
    ]
   },
   {
@@ -2292,8 +2730,8 @@
    "onError": "continueRegularOutput",
    "id": "a317177c-0ac7-575c-bd3b-d22fe34a3d2a",
    "position": [
-    480,
-    1800
+    2160,
+    2000
    ]
   },
   {
@@ -2305,8 +2743,8 @@
    },
    "id": "569574dd-b8c1-5745-810b-91caf2a29016",
    "position": [
-    720,
-    1800
+    2400,
+    2000
    ]
   },
   {
@@ -2318,8 +2756,8 @@
    },
    "id": "2007fb78-c006-5f4e-acb9-8bd372229618",
    "position": [
-    960,
-    1800
+    2640,
+    2000
    ]
   },
   {
@@ -2352,8 +2790,8 @@
    },
    "id": "4a09a7ff-25c1-5239-8962-3fa46d48d7c7",
    "position": [
-    1200,
-    1800
+    0,
+    2200
    ]
   },
   {
@@ -2365,8 +2803,8 @@
    },
    "id": "85ac4363-a37e-52a6-b541-00b86600acfd",
    "position": [
-    1440,
-    1800
+    240,
+    2200
    ]
   },
   {
@@ -2380,8 +2818,8 @@
    "onError": "continueRegularOutput",
    "id": "652ad0cd-2d94-5050-91ef-fa9d0af8b84e",
    "position": [
-    1680,
-    1800
+    480,
+    2200
    ]
   },
   {
@@ -2393,8 +2831,8 @@
    },
    "id": "4f6c79cb-201a-57f7-a36c-66b02fbb409d",
    "position": [
-    1920,
-    1800
+    720,
+    2200
    ]
   },
   {
@@ -2406,8 +2844,8 @@
    },
    "id": "076ecc64-44f8-52bc-bb75-b57a964361e6",
    "position": [
-    2160,
-    1800
+    960,
+    2200
    ]
   },
   {
@@ -2421,8 +2859,8 @@
    "onError": "continueRegularOutput",
    "id": "dbdb2d9e-3d97-5412-bd9f-0d09faf18a05",
    "position": [
-    2400,
-    1800
+    1200,
+    2200
    ]
   },
   {
@@ -2434,8 +2872,8 @@
    },
    "id": "53a81c01-3f9c-543d-b583-b934aa78429c",
    "position": [
-    2640,
-    1800
+    1440,
+    2200
    ]
   },
   {
@@ -2447,8 +2885,8 @@
    },
    "id": "4e7c0833-eee8-58cd-8bfd-80390f2e5ef7",
    "position": [
-    0,
-    2000
+    1680,
+    2200
    ]
   },
   {
@@ -2462,8 +2900,8 @@
    "onError": "continueRegularOutput",
    "id": "dc98869f-8f81-5114-9af1-c68e90943820",
    "position": [
-    240,
-    2000
+    1920,
+    2200
    ]
   },
   {
@@ -2475,8 +2913,8 @@
    },
    "id": "da31e1b4-4654-57cf-8328-dc9acd5a33df",
    "position": [
-    480,
-    2000
+    2160,
+    2200
    ]
   }
  ],
@@ -3200,7 +3638,79 @@
    "main": [
     [
      {
+      "node": "Owner Selected File?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Owner Selected File?": {
+   "main": [
+    [
+     {
+      "node": "Owner File Link Metadata",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
       "node": "Has Folder?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Owner File Link Metadata": {
+   "main": [
+    [
+     {
+      "node": "Owner File Link",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Owner File Link": {
+   "main": [
+    [
+     {
+      "node": "Owner File Version",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Owner File Version": {
+   "main": [
+    [
+     {
+      "node": "Owner Selected File",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
       "type": "main",
       "index": 0
      }
@@ -3218,7 +3728,25 @@
     ],
     [
      {
+      "node": "Folder Creatable?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Folder Creatable?": {
+   "main": [
+    [
+     {
       "node": "New Folder Context",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Missing Source Identity",
       "type": "main",
       "index": 0
      }
@@ -3230,6 +3758,13 @@
     [
      {
       "node": "Create Project Folder",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
       "type": "main",
       "index": 0
      }
@@ -3582,6 +4117,24 @@
     ]
    ]
   },
+  "Owner Selected File": {
+   "main": [
+    [
+     {
+      "node": "Preparation Step — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Dropbox Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
   "Preparation Step — Input": {
    "main": [
     [
@@ -3615,6 +4168,17 @@
     ]
    ]
   },
+  "Missing Source Identity": {
+   "main": [
+    [
+     {
+      "node": "Preparation Step — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
   "Preparation Step": {
    "main": [
     [
@@ -3637,7 +4201,7 @@
    "main": [
     [
      {
-      "node": "Ensure Prepared Dropbox Folder",
+      "node": "Upload Stage?",
       "type": "main",
       "index": 0
      }
@@ -3645,6 +4209,28 @@
     [
      {
       "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Upload — Input": {
+   "main": [
+    [
+     {
+      "node": "Record Upload — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Upload — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Record Upload",
       "type": "main",
       "index": 0
      }
@@ -3673,6 +4259,64 @@
     ]
    ]
   },
+  "Record Delivery Failure — Input": {
+   "main": [
+    [
+     {
+      "node": "Record Delivery Failure — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Delivery Failure — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Record Delivery Failure",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Upload Stage?": {
+   "main": [
+    [
+     {
+      "node": "Ensure Prepared Dropbox Folder",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Identify Stage?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Identify Stage?": {
+   "main": [
+    [
+     {
+      "node": "Identify Delivered Copy",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Delivery Target",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
   "Ensure Prepared Dropbox Folder": {
    "main": [
     [
@@ -3684,7 +4328,7 @@
     ],
     [
      {
-      "node": "Item Finished",
+      "node": "Delivery Problem",
       "type": "main",
       "index": 0
      }
@@ -3702,7 +4346,7 @@
     ],
     [
      {
-      "node": "Item Finished",
+      "node": "Delivery Problem",
       "type": "main",
       "index": 0
      }
@@ -3720,7 +4364,7 @@
     ],
     [
      {
-      "node": "Item Finished",
+      "node": "Delivery Problem",
       "type": "main",
       "index": 0
      }
@@ -3731,7 +4375,61 @@
    "main": [
     [
      {
-      "node": "Share Verified Video",
+      "node": "Record Upload — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Delivery Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Identify Delivered Copy": {
+   "main": [
+    [
+     {
+      "node": "Record Upload — Input",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Delivery Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Upload": {
+   "main": [
+    [
+     {
+      "node": "Upload Recorded?",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Delivery Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Upload Recorded?": {
+   "main": [
+    [
+     {
+      "node": "Delivery Target",
       "type": "main",
       "index": 0
      }
@@ -3739,6 +4437,24 @@
     [
      {
       "node": "Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Delivery Target": {
+   "main": [
+    [
+     {
+      "node": "Share Verified Video",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Delivery Problem",
       "type": "main",
       "index": 0
      }
@@ -3756,7 +4472,7 @@
     ],
     [
      {
-      "node": "Item Finished",
+      "node": "Delivery Problem",
       "type": "main",
       "index": 0
      }
@@ -3774,7 +4490,7 @@
     ],
     [
      {
-      "node": "Item Finished",
+      "node": "Delivery Problem",
       "type": "main",
       "index": 0
      }
@@ -3792,7 +4508,7 @@
     ],
     [
      {
-      "node": "Item Finished",
+      "node": "Delivery Problem",
       "type": "main",
       "index": 0
      }
@@ -3808,6 +4524,28 @@
       "index": 0
      }
     ],
+    [
+     {
+      "node": "Delivery Problem",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Delivery Problem": {
+   "main": [
+    [
+     {
+      "node": "Record Delivery Failure — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Record Delivery Failure": {
+   "main": [
     [
      {
       "node": "Item Finished",
