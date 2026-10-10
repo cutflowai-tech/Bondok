@@ -4,6 +4,7 @@ Scenarios needing Bondok/Slack or workflow JSON live in test_bondok.py and
 test_workflows.py; they are referenced here by number.
 """
 import json
+import os
 import sqlite3
 import threading
 import unittest
@@ -1840,3 +1841,27 @@ class LegacyDateLoopIncident(OpsCase):
         self.assertEqual(len(set(seen)), 1, seen)
         self.assertLessEqual(seen[-1][1], 2, seen)
         self.assertEqual(json.loads(self.item('1401')['hold'])['kind'], 'unscheduled')
+
+
+class MissingPreparedFileAtSlot(OpsCase):
+    """Round 4: a prepared file removed from storage (e.g. to free disk space) made the item miss its slot silently:
+    the claim refused, the reservation was released and nobody was told."""
+
+    def test_owner_is_told_once_when_the_slot_is_lost(self):
+        self.make_ready('1500', 'Story')
+        at = rules.iso(rules.cairo_local(2026, 10, 12, 14, 0))
+        self.ops.submit(owner_cmd('t', 'request_reschedule', '1500', at=at))
+        self.assertEqual(self.res('1500')['slot'], at)
+        with self.ops.store.read() as c:
+            os.remove(c.execute('SELECT path FROM media WHERE item=?', ('1500',)).fetchone()[0])
+        self.clock.set(rules.instant(at))
+        for _ in range(3):                                        # WF2 runs every minute
+            r = self.ops.claim('1500', 'wf2-test')
+            self.assertFalse(r['claimed'], r)
+            self.clock.advance(60)
+        notes = [json.loads(o['payload'])['text'] for o in self.outbox('slack')]
+        lost = [n for n in notes if 'was not published' in n]
+        self.assertEqual(len(lost), 1, notes)
+        self.assertIn('Prepared file is missing', lost[0])
+        self.assertIn('Nothing was posted', lost[0])
+        self.assertIsNone(self.res('1500'))

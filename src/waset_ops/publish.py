@@ -140,6 +140,12 @@ class PublishMixin:
             problem = self.verification_problem(c, it)
             if problem:
                 self.evaluate(c, item_id, worker)
+                # The slot is lost: say so once (a prepared file removed to free disk space was silent; round 4).
+                nxt = ('it needs a new time from you once it is ready again' if res['owner_pinned'] else
+                       'it will be scheduled again automatically once it is ready')
+                self.notify(c, f"claim-unverified:{it['item_id']}:{res['slot']}",
+                            f"{it['name']} ({it['item_id']}) was not published at {rules.display(slot)}: {problem}. "
+                            f'Nothing was posted; it will be prepared again and {nxt}.', it['item_id'])
                 return self._refuse(c, it, problem)
             fp = self.payload_fp(c, it)
             if res['content_rev'] != it['content_rev'] or res['payload_fp'] != fp:
