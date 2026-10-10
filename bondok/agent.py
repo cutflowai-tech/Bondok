@@ -30,6 +30,27 @@ def _fn(name, desc, props=None, required=None):
 
 
 ITEM = {'item': {'type': 'string', 'description': 'Item id, code (e.g. LIP12) or exact name on the social board'}}
+# Structured meaning the model proposes for every protected call (contract §1, §4). Trusted code checks it against
+# the owner's own words; it never authorizes anything by itself.
+MEANING = {'meaning': {
+    'type': 'object', 'additionalProperties': False,
+    'required': ['speech_act', 'polarity', 'targets_as_said', 'evidence_quote'],
+    'description': "What the owner's latest message means for THIS call.",
+    'properties': {
+        'speech_act': {'type': 'string', 'enum': ['imperative', 'completed_statement', 'bondok_offer', 'question',
+                                                  'plan_or_future', 'conditional', 'quotation', 'acknowledgment',
+                                                  'other'],
+                       'description': 'imperative = the owner tells you to do it now; completed_statement = the '
+                                      'owner states it already happened (e.g. Topaz done, I posted it); '
+                                      'bondok_offer = YOUR suggestion the owner has not asked for (it becomes one '
+                                      'question the owner answers with "اه"/"لا"); anything else is not executed.'},
+        'polarity': {'type': 'string', 'enum': ['positive', 'negative']},
+        'targets_as_said': {'type': 'string', 'description': 'The words the owner used for the item(s), verbatim '
+                                                             '(e.g. "LIP12", "them", "انشرهم"); empty if none.'},
+        'evidence_quote': {'type': 'string', 'description': "Exact words copied from the owner's latest message "
+                                                            'that ask for this action; empty for bondok_offer.'}}}}
+WINDOW = {'on_date': {'type': ['string', 'null'], 'description': 'YYYY-MM-DD Cairo day the owner said ("tomorrow")'},
+          'not_before': {'type': ['string', 'null'], 'description': 'YYYY-MM-DD HH:MM Cairo, "not before ..."'}}
 TOOLS = [
     _fn('find_items', 'Search social-board items by name/code. Read-only.', {'query': {'type': 'string'}}),
     _fn('get_item_status', 'Current authoritative status of one item: readiness, block reason, schedule, '
@@ -38,25 +59,38 @@ TOOLS = [
         {'days': {'type': 'integer'}}),
     _fn('get_system_health', 'Automation health: heartbeats, unknown publications, sync backlog. Read-only.'),
     _fn('get_operation_status', 'Outcome of a previous request or proposal id. Read-only.', {'id': {'type': 'string'}}),
-    _fn('pause_item', 'Owner request: pause publication of an item.', {**ITEM, 'reason': {'type': 'string'}}),
-    _fn('resume_item', 'Owner request: resume a paused/skipped item.', ITEM),
-    _fn('skip_item', 'Owner request: skip an item.', {**ITEM, 'reason': {'type': 'string'}}),
+    _fn('pause_item', 'Owner request: pause publication of an item.', {**ITEM, 'reason': {'type': 'string'}, **MEANING}),
+    _fn('resume_item', 'Owner request: resume a paused/skipped item (with any day constraint the owner said).',
+        {**ITEM, **WINDOW, **MEANING}),
+    _fn('skip_item', 'Owner request: skip an item.', {**ITEM, 'reason': {'type': 'string'}, **MEANING}),
     _fn('request_recheck', 'Owner request: re-check the selected file and prepared video.', ITEM),
-    _fn('request_reschedule', 'Owner request: move an item to a Cairo time on the agreed grid.',
-        {**ITEM, 'cairo_time': {'type': 'string', 'description': 'YYYY-MM-DD HH:MM Africa/Cairo'}}),
-    _fn('request_publish', 'Owner request: schedule a ready item at the earliest free valid slot.', ITEM),
+    _fn('request_reschedule', 'Owner request: publish an item at an exact Cairo time the owner said (may be off the '
+        'usual grid).', {**ITEM, 'cairo_time': {'type': 'string', 'description': 'YYYY-MM-DD HH:MM Africa/Cairo'},
+                         **MEANING}),
+    _fn('request_publish', 'Owner request: schedule an item at the earliest free valid slot (inside any day '
+        'constraint the owner said, e.g. tomorrow).', {**ITEM, **WINDOW, **MEANING}),
+    _fn('set_window', 'Owner constraint without a publish request, e.g. "not before tomorrow".',
+        {**ITEM, **WINDOW, **MEANING}),
     _fn('change_format', 'Owner request: change Story<->Post. Never use on your own initiative.',
-        {**ITEM, 'format': {'type': 'string', 'enum': ['Post', 'Story']}}),
-    _fn('replace_source', 'Owner request: use a different Dropbox file link.', {**ITEM, 'url': {'type': 'string'}}),
-    _fn('update_caption', 'Owner supplied caption text for a Post.', {**ITEM, 'text': {'type': 'string'}}),
-    _fn('approve_existing_caption', 'Owner approves the caption already on the item.', ITEM),
+        {**ITEM, 'format': {'type': 'string', 'enum': ['Post', 'Story']}, **MEANING}),
+    _fn('replace_source', 'Owner request: use a different Dropbox file link.',
+        {**ITEM, 'url': {'type': 'string'}, **MEANING}),
+    _fn('update_caption', 'Owner supplied caption text for a Post (pass the text exactly as typed).',
+        {**ITEM, 'text': {'type': 'string'}, **MEANING}),
+    _fn('approve_existing_caption', 'Owner approves the caption already on the item.', {**ITEM, **MEANING}),
+    _fn('approve_caption_draft', 'Owner approves the caption draft waiting for approval on the item.',
+        {**ITEM, **MEANING}),
     _fn('approve_all_existing_captions', 'Owner wants to review/approve all captions imported from the old system '
         'in one proposal (lists every caption; nothing changes until approved).'),
     _fn('draft_caption', 'Submit a caption you drafted; it goes to the owner for approval.',
         {**ITEM, 'text': {'type': 'string'}}),
-    _fn('confirm_topaz', 'Owner states Topaz processing is done for the currently selected file.', ITEM),
+    _fn('confirm_topaz', 'Owner states Topaz processing is done for the currently selected file.', {**ITEM, **MEANING}),
     _fn('resolve_publication', 'Owner reports the manual Instagram check of an uncertain publication.',
-        {**ITEM, 'published': {'type': 'boolean'}, 'media_id': {'type': ['string', 'null']}}),
+        {**ITEM, 'published': {'type': 'boolean'}, 'media_id': {'type': ['string', 'null']}, **MEANING}),
+    _fn('report_published', 'Owner says they posted the item themselves on the studio Instagram account.',
+        {**ITEM, 'destination': {'type': 'string', 'enum': ['studio_account', 'other', 'unclear']}, **MEANING}),
+    _fn('request_rework', 'Owner sends the item back to the editor for a new edit (never a resume).',
+        {**ITEM, 'reason': {'type': 'string'}, **MEANING}),
 ]
 TOOL_NAMES = {t['name'] for t in TOOLS}
 
@@ -135,6 +169,7 @@ class Agent:
         if name == 'find_items':
             r = self.bridge.resolve(args.get('query'))
             if 'item_id' in r:
+                self._shown(r['item_id'], ctx)
                 return {'matches': [ops.item_status(r['item_id'])]}
             return r
         if name == 'get_item_status':
@@ -142,6 +177,7 @@ class Agent:
             if 'item_id' not in r:
                 return r
             status = ops.item_status(r['item_id'])
+            self._shown(r['item_id'], ctx)
             if self.monday:
                 try:
                     board = self.monday.item(r['item_id'])     # membership verified before contents
@@ -163,14 +199,19 @@ class Agent:
                 return dict(p) if p else {'error': 'unknown proposal'}
             return ops.command_status(ref) or {'error': 'unknown request id'}
         return self.bridge.run(name, args, actor=ctx['actor'], event_id=ctx['event_id'], text=ctx['text'],
-                               thread=ctx['thread'])
+                               thread=ctx['thread'], turn=ctx.get('turn'))
+
+    def _shown(self, item_id, ctx):
+        with self.bridge.ops.store.read() as c:
+            it = self.bridge.ops.item(c, item_id)
+        self.bridge.remember_shown(ctx['thread'], item_id, it['asset_key'])
 
     # ------------------------------------------------------------------ conversation
-    def answer(self, text, *, actor, thread, event_id, history=()):
+    def answer(self, text, *, actor, thread, event_id, history=(), turn=None):
         """Bounded tool loop. Returns (reply, outcomes). Outcomes are rendered by
         trusted code; the model's own summary never stands in for them."""
-        ctx = {'actor': actor, 'thread': thread, 'event_id': event_id, 'text': text}
-        convo = list(history)[-HISTORY:] + [{'role': 'user', 'content': f'[{"owner" if actor == self.bridge.owner else "member"}] ' + text[:6000]}]
+        ctx = {'actor': actor, 'thread': thread, 'event_id': event_id, 'text': text, 'turn': turn}
+        convo = list(history)[-HISTORY:] + [{'role': 'user', 'content': speaker(actor, self.bridge.owner) + text[:6000]}]
         outcomes = []
         for _ in range(MAX_STEPS):
             try:
@@ -207,6 +248,11 @@ class Agent:
         return 'I reached the step limit for this request; split it into smaller requests.', outcomes
 
 
+def speaker(actor, owner) -> str:
+    """Label every user turn so earlier member words never read as the owner's (R5 B5)."""
+    return '[owner] ' if actor == owner else '[member] '
+
+
 def render_outcome(o) -> str:
     """Trusted, templated acknowledgement. 'accepted' is never shown as 'done'."""
     r = o['result']
@@ -223,6 +269,10 @@ def render_outcome(o) -> str:
     elif st == 'awaiting_approval':
         return (f"📝 Proposal {r['proposal_id']} — not executed yet\n{r.get('summary', '')}\n"
                 f"To approve reply in this thread: `اعتمد {r['proposal_id']}` (valid {r.get('expires_in_minutes', 30)} min)")
+    elif st == 'needs_confirmation':
+        return '❓ ' + r['question'] + ' (رد بـ «اه» عشان أنفذ، أو «لا»)'
+    elif st == 'needs_clarification' and r.get('question'):
+        return '❓ ' + r['question']
     elif st == 'needs_clarification' and r.get('error'):
         return '❓ ' + r['error']
     elif st == 'needs_clarification':

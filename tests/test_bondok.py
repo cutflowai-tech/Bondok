@@ -17,6 +17,11 @@ from bridge import explicit  # noqa: E402
 OWNER = 'U-OWNER'
 
 
+def M(quote, speech='imperative', targets=''):
+    """The structured meaning the model proposes with a protected call (contract §1, §4)."""
+    return {'speech_act': speech, 'polarity': 'positive', 'targets_as_said': targets, 'evidence_quote': quote}
+
+
 class FakeModel:
     """Scripted Responses-API outputs; counts calls."""
     model = 'fake'
@@ -71,23 +76,26 @@ class ExplicitIntent(unittest.TestCase):
 
 
 class Scenario17ModelCannotChangeFormat(BondokCase):
-    def test_model_initiated_conversion_becomes_proposal(self):
+    def test_model_initiated_conversion_becomes_a_question(self):
+        # R5: Bondok's own suggestion is one question in the thread (contract §4), answered by "اه".
         self.observe(monday_item('300', fmt='Story', code='LIP3'))
-        model = FakeModel([{'tool': 'change_format', 'args': {'item': '300', 'format': 'Post'}},
+        model = FakeModel([{'tool': 'change_format', 'args': {'item': '300', 'format': 'Post',
+                                                              'meaning': M('', 'bondok_offer')}},
                            {'say': 'اقترحت تحويلها لبوست'}])
         reply = self.msg(self.core(model), 'الستوري دي طويلة، تقترح ايه؟')
         self.assertEqual(self.item('300')['format'], 'Story')
-        self.assertIn('Proposal B-', reply)
-        pid = reply.split('Proposal ')[1].split(' ')[0]
-        # The approval is deterministic: no model call.
+        self.assertIn('❓', reply)
+        self.assertIn('Post', reply)
+        # The answer is deterministic: no model call.
         core = self.core(FakeModel(fail=True))
-        out = self.msg(core, f'اعتمد {pid}', ts='1700000000.000200', thread='1700000000.000100')
-        self.assertIn('Executed', out)
+        out = self.msg(core, 'اه', ts='1700000000.000200', thread='1700000000.000100')
+        self.assertIn('Done: change format', out)
         self.assertEqual(self.item('300')['format'], 'Post')
 
     def test_explicit_owner_instruction_executes_once(self):
         self.observe(monday_item('301', fmt='Story', code='KE4'))
-        model = FakeModel([{'tool': 'change_format', 'args': {'item': 'KE4', 'format': 'Post'}}, {'say': 'تم'}])
+        model = FakeModel([{'tool': 'change_format', 'args': {'item': 'KE4', 'format': 'Post',
+                                                              'meaning': M('حوّل KE4 لبوست')}}, {'say': 'تم'}])
         reply = self.msg(self.core(model), 'حوّل KE4 لبوست')
         self.assertIn('Done: change format', reply)
         self.assertEqual(self.item('301')['format'], 'Post')
@@ -102,7 +110,8 @@ class Scenario17ModelCannotChangeFormat(BondokCase):
 class Scenario07SlackDuplicates(BondokCase):
     def test_same_event_twice_runs_effect_once(self):
         self.make_ready('310', 'Story')
-        script = [{'tool': 'pause_item', 'args': {'item': '310', 'reason': 'hold'}}, {'say': 'وقفته'}]
+        script = [{'tool': 'pause_item', 'args': {'item': '310', 'reason': 'hold', 'meaning': M('وقف 310')}},
+                  {'say': 'وقفته'}]
         core = self.core(FakeModel(script * 2))
         first = self.msg(core, 'وقف 310')
         second = self.msg(core, 'وقف 310')            # Slack redelivery: same ts
@@ -274,10 +283,6 @@ class ModelCreditsAndConversation(BondokCase):
         self.assertNotIn('B-XXXXXXXX', reply)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class ExplicitIntentFailsClosed(unittest.TestCase):
     """Audit C1/C2: questions, negations and words that merely contain a keyword are not owner instructions."""
 
@@ -339,10 +344,10 @@ class UncertainOutcomeNeedsApproval(BondokCase):
         self.make_ready('350', 'Story')
         with self.ops.store.tx() as c:
             c.execute("UPDATE ops_items SET publication='outcome_unknown' WHERE item_id='350'")
-        core = self.core(FakeModel([{'tool': 'resolve_publication', 'args': {'item': '350', 'published': False}},
-                                    {'say': 'تمام'}]))
+        core = self.core(FakeModel([{'tool': 'resolve_publication', 'args': {
+            'item': '350', 'published': False, 'meaning': M('350 مش منشور', 'completed_statement')}}, {'say': 'تمام'}]))
         reply = self.msg(core, '350 مش منشور، رجعه للجدول')
-        self.assertIn('Proposal', reply)
+        self.assertIn('❓', reply)                     # R5: one confirmation question ("اه"), not a proposal id
         self.assertEqual(self.item('350')['publication'], 'outcome_unknown')
 
 
@@ -370,7 +375,8 @@ class SlackAuditHigh(BondokCase):
 
     def test_actions_taken_before_model_failure_are_reported(self):              # H1
         self.make_ready('700', 'Story')
-        core = self.core(FailAfter([{'tools': [('pause_item', {'item': '700', 'reason': 'x'})]}], fail_at=2))
+        core = self.core(FailAfter([{'tools': [('pause_item', {'item': '700', 'reason': 'x',
+                                                                'meaning': M('وقف 700')})]}], fail_at=2))
         reply = self.msg(core, 'وقف 700')
         self.assertEqual(self.item('700')['owner_state'], 'paused')
         self.assertNotIn('معملتش أي حاجة', reply)
@@ -447,9 +453,10 @@ class TopazFromSlackBinding(BondokCase):
         self.duration('720', 30.0, 1)
         self.select('720', 2)                                  # editor uploaded v2, WF1 selected it
         self.duration('720', 30.0, 2)
-        core = self.core(FakeModel([{'tool': 'confirm_topaz', 'args': {'item': '720'}}, {'say': 'تمام'}]))
+        core = self.core(FakeModel([{'tool': 'confirm_topaz', 'args': {
+            'item': '720', 'meaning': M('توباز خلص للفيديو 720', 'completed_statement')}}, {'say': 'تمام'}]))
         reply = self.msg(core, 'توباز خلص للفيديو 720')
-        self.assertIn('Proposal', reply)
+        self.assertIn('❓', reply)                     # R5: one question naming the file, answered by "اه"
         self.assertIn('video_v2.mp4', reply)
         self.assertIsNone(self.item('720')['topaz_asset'])
 
@@ -458,7 +465,8 @@ class TopazFromSlackBinding(BondokCase):
         self.select('721', 1)
         self.duration('721', 30.0, 1)
         self.clock.advance(7 * 3600)
-        core = self.core(FakeModel([{'tool': 'confirm_topaz', 'args': {'item': '721'}}, {'say': 'تمام'}]))
+        core = self.core(FakeModel([{'tool': 'confirm_topaz', 'args': {
+            'item': '721', 'meaning': M('توباز خلص للفيديو 721', 'completed_statement')}}, {'say': 'تمام'}]))
         self.msg(core, 'توباز خلص للفيديو 721')
         self.assertEqual(self.item('721')['topaz_asset'], 'id:FILE1@rev1')
 
@@ -503,10 +511,16 @@ class SlackAuditMedium(BondokCase):
             n = c.execute("SELECT COUNT(*) FROM ops_proposals WHERE kind='approve_captions'").fetchone()[0]
         self.assertEqual(n, 1)
 
-    def test_reject_only_in_its_thread(self):
+    def test_answer_only_in_its_thread(self):
+        # R5: "اه" answers only the open question of its own thread (contract §4).
         self.observe(monday_item('750', fmt='Story'))
-        core = self.core(FakeModel([{'tool': 'skip_item', 'args': {'item': '750'}}, {'say': 'ok'}]))
+        core = self.core(FakeModel([{'tool': 'skip_item', 'args': {'item': '750', 'reason': 'x',
+                                                                   'meaning': M('', 'bondok_offer')}}, {'say': 'ok'}]))
         reply = self.msg(core, 'ايه رأيك نوقفه خالص', ts='1700000000.000100')
-        pid = reply.split('Proposal ')[1].split(' ')[0]
-        out = self.msg(core, f'ارفض {pid}', ts='1700000001.000100', thread='1700000099.000100')
-        self.assertIn('not executed', out)
+        self.assertIn('❓', reply)
+        self.msg(core, 'اه', ts='1700000001.000100', thread='1700000099.000100')
+        self.assertEqual(self.item('750')['owner_state'], 'active')
+
+
+if __name__ == '__main__':
+    unittest.main()
