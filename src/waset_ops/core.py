@@ -351,6 +351,12 @@ class CoreMixin:
             why = (loads(f['evidence'], {}) or {}).get('error', '') if f else ''
             label, action = 'review', ('Instagram rejected this publication' + (': ' + str(why)[:300] if why else '')
                                        + '. Nothing was published. Fix the cause, then tell Bondok to publish it again.')
+        elif hold and hold.get('kind') == 'external_posted' and it['owner_state'] in ('paused', 'skipped'):
+            # R5 LOW-13: "may already be on Instagram" outranks the owner's pause in the display (the open question
+            # stays visible); the pause itself is kept and the explanation says so. Display only: never a Resume.
+            label, action = 'review', (hold.get('reason', 'Waiting for an owner decision in Slack') +
+                                       f" The item stays {it['owner_state']} as you set it; answering this question "
+                                       'does not resume it.')
         elif it['owner_state'] == 'skipped':
             label = 'skipped'
         elif it['owner_state'] == 'paused':

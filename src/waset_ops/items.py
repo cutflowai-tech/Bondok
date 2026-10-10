@@ -1128,8 +1128,10 @@ class ItemsMixin:
                             # waits, and after a rejected/failed draft at most daily (a changed brief) (audit perf).
                             'needs_caption': it['format'] == 'Post' and it['caption_state'] in ('missing',) and
                                              not c.execute("SELECT 1 FROM ops_caption_drafts WHERE item_id=? AND "
-                                                           "(state='pending_approval' OR updated>?)",
-                                                           (it['item_id'], now - 86400)).fetchone(),
+                                                           "(state='pending_approval' OR (state='no_brief' AND "
+                                                           "updated>?) OR (state!='no_brief' AND updated>?))",
+                                                           (it['item_id'], now - self.NO_BRIEF_RECHECK,
+                                                            now - 86400)).fetchone(),
                             'version': it['version']})
         urgent = [x for x in out if x['priority'] == 0]
         rest = [x for x in out if x['priority'] == 1]

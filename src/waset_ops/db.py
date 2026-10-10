@@ -130,7 +130,7 @@ CREATE TABLE IF NOT EXISTS ops_editor_tasks (
 
 CREATE TABLE IF NOT EXISTS ops_caption_drafts (
   input_hash TEXT PRIMARY KEY, item_id TEXT NOT NULL, text TEXT, model TEXT,
-  state TEXT NOT NULL,  -- pending_approval|approved|rejected|invalid|superseded
+  state TEXT NOT NULL,  -- pending_approval|approved|rejected|invalid|superseded|no_brief
   reason TEXT, proposal_id TEXT, created REAL, updated REAL
 );
 

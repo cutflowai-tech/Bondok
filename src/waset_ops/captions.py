@@ -20,23 +20,40 @@ def caption_input_hash(item_id, title, brief) -> str:
 
 
 class CaptionMixin:
+    NO_BRIEF_RECHECK = 6 * 3600         # a brief added later is found within six hours (R5 M18)
+
     def caption_needed(self, item_id, title, brief) -> dict:
         h = caption_input_hash(item_id, title, brief)
         with self.store.read() as c:
             it = self.item(c, item_id)
             if it['format'] != 'Post' or it['caption_state'] in ('approved', 'pending_approval', 'legacy_unapproved'):
                 return {'needed': False, 'input_hash': h, 'reason': 'caption_state=' + str(it['caption_state'])}
-            if not (brief or '').strip():
-                return {'needed': False, 'input_hash': h, 'reason': 'no client brief'}
+            usable = bool((brief or '').strip())
             prior = c.execute('SELECT state FROM ops_caption_drafts WHERE input_hash=?', (h,)).fetchone()
-            if prior:
+            if usable and prior:
                 return {'needed': False, 'input_hash': h, 'reason': 'draft already ' + prior['state']}
-        return {'needed': True, 'input_hash': h}
+        if usable:
+            return {'needed': True, 'input_hash': h}
+        # R5 M18: remember that this input had no brief, so WF1 does not read the source item again on every
+        # visit (bounded by NO_BRIEF_RECHECK), and tell the owner once why no caption draft appears.
+        now = self.now()
+        with self.store.tx() as c:
+            c.execute("INSERT INTO ops_caption_drafts VALUES(?,?,NULL,NULL,'no_brief','no client brief',NULL,?,?) "
+                      "ON CONFLICT(input_hash) DO UPDATE SET updated=excluded.updated WHERE state='no_brief'",
+                      (h, str(item_id), now, now))
+            self.notify(c, f'no-brief:{item_id}', f"{it['name']} ({item_id}) is a Post without a caption, and its "
+                        'source item has no client brief (no update with a script or notes), so Bondok cannot '
+                        'draft one. Write the caption on the board, or add the brief to the source item; it is '
+                        'checked again every 6 hours.', str(item_id))
+        return {'needed': False, 'input_hash': h, 'reason': 'no client brief'}
 
     def op_caption_draft(self, c, cmd: Command):
         a = cmd.args
         it = self.item(c, cmd.item_id)
         prior = c.execute('SELECT * FROM ops_caption_drafts WHERE input_hash=?', (a['input_hash'],)).fetchone()
+        if prior and prior['state'] == 'no_brief':          # a draft written anyway (e.g. asked for in Slack)
+            c.execute('DELETE FROM ops_caption_drafts WHERE input_hash=?', (a['input_hash'],))
+            prior = None
         if prior:
             return {'draft_state': prior['state'], 'duplicate_draft': True}
         text = (a.get('text') or '').strip()
