@@ -1104,16 +1104,81 @@
    "id": "c57cd805-75df-5409-8d05-95833ee72be0"
   },
   {
+   "name": "Source Revision Result",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "return [{json:{sourceAsset:($json.id&&$json.rev&&!$json.error)?$json.id+'@'+$json.rev:'unverifiable'}}];"
+   },
+   "id": "636de745-a207-5a4e-9509-7bbbb6cad472",
+   "position": [
+    2400,
+    800
+   ]
+  },
+  {
+   "name": "Verify Delivered Copy",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.5,
+   "position": [
+    2600,
+    1300
+   ],
+   "parameters": {
+    "url": "https://api.dropboxapi.com/2/sharing/get_shared_link_metadata",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "genericCredentialType",
+    "genericAuthType": "oAuth2Api",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({url:String($('Claim Publication').item.json.payload.video_url||'').replace(/([?&])raw=1(&|$)/,(m,a,b)=>b?a:'')}) }}"
+   },
+   "onError": "continueErrorOutput",
+   "retryOnFail": true,
+   "maxTries": 3,
+   "waitBetweenTries": 2000,
+   "credentials": {
+    "oAuth2Api": {
+     "id": "<REDACTED>",
+     "name": "Unnamed credential 2"
+    }
+   },
+   "id": "10bf0ae2-52ce-53a0-b39d-4ec7762d989b"
+  },
+  {
+   "name": "Delivered Revision Result",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const s=$('Source Revision Result').item.json;\nreturn [{json:{sourceAsset:s.sourceAsset,deliveredAsset:($json.rev&&!$json.error)?($json.id||'')+'@'+$json.rev:'unverifiable'}}];"
+   },
+   "id": "09141562-7887-5a78-8329-2abc815388f2",
+   "position": [
+    0,
+    1000
+   ]
+  },
+  {
    "name": "Commit Publication — Input",
    "type": "n8n-nodes-base.code",
    "typeVersion": 2,
    "parameters": {
-    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,\nsourceAsset:($json.id&&$json.rev)?$json.id+'@'+$json.rev:'unverifiable',containerStatus:$('Container Status').item.json.status_code};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/commit\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
+    "jsCode": "const body={attemptId:$('Claim Publication').item.json.attempt_id,\nworker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,\nsourceAsset:$json.sourceAsset,deliveredAsset:$json.deliveredAsset,containerStatus:$('Container Status').item.json.status_code};\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/commit\",body})).toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(command.length>120000)throw new Error('Helper payload too large ('+command.length+' bytes); refusing to truncate');\nreturn [{json:{command}}];"
    },
    "id": "95fbede0-1a29-573c-baf0-4dc46b673dc7",
    "position": [
-    2400,
-    800
+    240,
+    1000
    ]
   },
   {
@@ -1126,8 +1191,8 @@
    },
    "id": "6d25082c-519c-5ce1-9a47-7e72f35af35d",
    "position": [
-    2640,
-    800
+    480,
+    1000
    ]
   },
   {
@@ -1140,7 +1205,7 @@
    "onError": "continueErrorOutput",
    "id": "f12479d3-8bdc-52ed-8755-e341f4aa9c06",
    "position": [
-    0,
+    720,
     1000
    ]
   },
@@ -1174,7 +1239,7 @@
    },
    "id": "ec54c5a7-f4b6-5767-9dc6-1a6d2f98a1aa",
    "position": [
-    240,
+    960,
     1000
    ]
   },
@@ -1223,7 +1288,7 @@
    },
    "id": "edaa0146-ac04-551f-aed1-459ecddba074",
    "position": [
-    720,
+    1440,
     1000
    ]
   },
@@ -1237,7 +1302,7 @@
    },
    "id": "c2747acc-a97f-5fd1-ab18-ba1dd2d89d8b",
    "position": [
-    960,
+    1680,
     1000
    ]
   },
@@ -1250,7 +1315,7 @@
    },
    "id": "e2f8528f-bd6d-5c12-adcf-b8b011f78e1f",
    "position": [
-    1200,
+    1920,
     1000
    ]
   },
@@ -1284,7 +1349,7 @@
    },
    "id": "ab320b0b-4512-55a3-91c6-6ad2e7eb55cc",
    "position": [
-    1440,
+    2160,
     1000
    ]
   },
@@ -1329,7 +1394,7 @@
    },
    "id": "a625ecdc-1db8-5669-89aa-0e52684eba32",
    "position": [
-    1920,
+    2640,
     1000
    ]
   },
@@ -1343,8 +1408,8 @@
    },
    "id": "16eb0357-d61e-58f3-adc1-99391b4c0741",
    "position": [
-    2160,
-    1000
+    0,
+    1200
    ]
   },
   {
@@ -1356,8 +1421,8 @@
    },
    "id": "fa49fcfe-53fd-5c92-8a3e-35e25e1358ae",
    "position": [
-    2400,
-    1000
+    240,
+    1200
    ]
   }
  ],
@@ -2111,11 +2176,51 @@
    "main": [
     [
      {
-      "node": "Commit Publication — Input",
+      "node": "Source Revision Result",
       "type": "main",
       "index": 0
      }
     ],
+    [
+     {
+      "node": "Source Revision Result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Source Revision Result": {
+   "main": [
+    [
+     {
+      "node": "Verify Delivered Copy",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Verify Delivered Copy": {
+   "main": [
+    [
+     {
+      "node": "Delivered Revision Result",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Delivered Revision Result",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Delivered Revision Result": {
+   "main": [
     [
      {
       "node": "Commit Publication — Input",

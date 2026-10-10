@@ -3,21 +3,29 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import board, rules
+from . import board, media, rules
 from .core import BONDOK, MONDAY, OWNER, PRE_COMMIT, STALE_SNAPSHOT_SECONDS, Command, Rejected, fingerprint
 from .db import audit, dumps, loads
 
 PROTECTED_PUBLICATION = ('published', 'outcome_unknown', 'in_progress')
 RELIST_READY_SECONDS = 30 * 60          # metadata-only revision check for ready items
-INFRA_RECHECK_SECONDS = 20 * 60
+INFRA_RECHECK_SECONDS = 20 * 60         # first retry after a temporary problem; doubles per consecutive failure
+INFRA_MAX_BACKOFF = 6 * 3600            # ... up to this interval (R5 M10)
+INFRA_ESCALATE_AFTER = 6                # consecutive temporary failures before one escalation notice
+MAX_DELIVERY_ATTEMPTS = 3               # failed deliveries (145 MB uploads) per prepared file before escalation (R5 M9)
+MAX_IDENTIFY_ATTEMPTS = 2               # legacy deliveries: tries to bind the existing Dropbox copy (R5 M17)
+RECHECK_POLL_SECONDS = 600              # a running recheck expects its result on the next cycle
+PREPARED_FOLDER = '/Social Media/Prepared'
 FRESH_READ_SECONDS = 120              # non-WF1 callers read the board right before observing
 TIME_KEYS = ('publish_at', 'post_date', 'post_time')
 RESUMABLE_HOLDS = ('resume', 'rejected_edit', 'publish_retry_limit')
 BACKOFF_STEPS = (600, 1200, 2400, 3600) # waiting/blocked items: fair, bounded backoff
+OWNER_SELECTED, AUTOMATIC = 'owner_selected_file', 'automatic_folder_selection'
 
 
 def _h(x) -> str:
@@ -602,8 +610,29 @@ class ItemsMixin:
                          asset_key=None, file_id=None, file_rev=None, content_hash=None, verification_id=None,
                          readiness='checking', block_kind=None, block_reason=None, block_key=None,
                          waiting_since=self.now())
+        # R5 B3: the explicit selection mode and its reason are persisted; the owner's exact file outranks the
+        # project folder until the owner selects another one.
+        now = self.now()
+        c.execute('INSERT INTO ops_checks(item_id,kind,key,requested,requested_by,state,result,updated) '
+                  "VALUES(?,'selection',?,?,?,'active',?,?) ON CONFLICT(item_id,kind) DO UPDATE SET key=excluded.key, "
+                  'requested=excluded.requested, requested_by=excluded.requested_by, state=excluded.state, '
+                  'result=excluded.result, updated=excluded.updated',
+                  (it['item_id'], OWNER_SELECTED, now, cmd.actor, dumps({
+                      'mode': OWNER_SELECTED, 'url': url, 'by': cmd.actor, 'at': now,
+                      'reason': 'Owner selected this file (' + ('board Dropbox Link' if cmd.actor_kind == MONDAY
+                                                                else 'Slack') + ')'}), now))
         self.request_check(c, it['item_id'], cmd.actor, 'source_replaced')
         return {'accepted': True, 'message': 'New source recorded; the actual file will be checked before scheduling.'}
+
+    def selection(self, c, it) -> dict:
+        """Source selection mode (R5 B3): the owner's exact file (board Dropbox Link or Slack replace_source) or the
+        automatic choice from the project folder."""
+        if it.get('source_override_url'):
+            r = c.execute("SELECT result FROM ops_checks WHERE item_id=? AND kind='selection'", (it['item_id'],)).fetchone()
+            rec = loads(r['result'], {}) if r else {}
+            return {'mode': OWNER_SELECTED, 'url': it['source_override_url'], 'file_id': rec.get('file_id'),
+                    'reason': rec.get('reason') or 'Owner selected this file'}
+        return {'mode': AUTOMATIC, 'url': None}
 
     def op_set_folder(self, c, cmd: Command):
         url = dropbox_url(cmd.args.get('url'))
@@ -714,7 +743,9 @@ class ItemsMixin:
     def op_request_recheck(self, c, cmd: Command):
         it = self.item(c, cmd.item_id)
         chk = c.execute("SELECT * FROM ops_checks WHERE item_id=? AND kind='media'", (it['item_id'],)).fetchone()
-        if chk and chk['state'] == 'running':
+        # A running check finishes with a typed result (R5 A9); one left running for a day (item paused meanwhile)
+        # does not swallow a new request.
+        if chk and chk['state'] == 'running' and self.now() - (chk['updated'] or 0) < 86400:
             return {'_state': 'accepted', 'already_running': True,
                     'message': 'The same check is already running; its result will be reported when it finishes.'}
         self.request_check(c, it['item_id'], cmd.actor, 'explicit_recheck')
@@ -727,6 +758,33 @@ class ItemsMixin:
             return None
         r = c.execute('SELECT * FROM media WHERE id=?', (media_id,)).fetchone()
         return dict(r) if r else None
+
+    def data_roots(self) -> list:
+        """Data roots of THIS runtime: the directory of the operational store (n8n: WASET_SOCIAL_DATA_DIR; Bondok:
+        its bind mount of the same volume), plus WASET_SOCIAL_DATA_DIR when set elsewhere (R5 A4)."""
+        roots = [self.store.path.parent]
+        env = os.environ.get('WASET_SOCIAL_DATA_DIR')
+        if env and Path(env) not in roots:
+            roots.append(Path(env))
+        return roots
+
+    def local_media(self, m):
+        return media.local_file(m, self.data_roots())
+
+    def delivered_identity(self, c, it) -> str | None:
+        """'<Dropbox id>@<rev>' of the delivered copy bound to the item's verification, None when not bound (R5 M17)."""
+        m = self.media_row(c, it.get('verification_id'))
+        d = (loads(m['metadata'], {}) or {}).get('delivered') if m else None
+        return f"{d['id']}@{d['rev']}" if d and d.get('id') and d.get('rev') else None
+
+    def drop_delivery(self, c, media_id):
+        """The delivered copy no longer matches: forget it so the verified file is delivered again (R5 M17)."""
+        m = self.media_row(c, media_id)
+        if m:
+            info = loads(m['metadata'], {}) or {}
+            for k in ('url', 'delivered', 'delivery'):
+                info.pop(k, None)
+            c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), media_id))
 
     def verification_problem(self, c, it) -> str | None:
         m = self.media_row(c, it.get('verification_id'))
@@ -744,7 +802,10 @@ class ItemsMixin:
             return bad
         if not info.get('url'):
             return 'Verified file has no delivery link yet'
-        if not Path(m['path']).exists():
+        # The local file is a cache in the runtime's own data root (R5 A4). Publication uses the delivered Dropbox
+        # copy; once that copy's identity is bound (and rechecked at the commitment point), a missing local cache is
+        # not a lost delivery (contract §6). Without a bound identity the local file is still required.
+        if self.local_media(m) is None and not info.get('delivered'):
             return 'Prepared file is missing from storage'
         return None
 
@@ -810,16 +871,27 @@ class ItemsMixin:
                     continue
                 chk = checks.get(it['item_id'])
                 requested = chk and chk['state'] == 'requested'
-                last = (loads(it['observed'], {}) or {}).get('_last_prep') or 0
-                requested = requested or ((loads(it['observed'], {}) or {}).get('_nudge') or 0) > last
+                obs = loads(it['observed'], {}) or {}
+                last = obs.get('_last_prep') or 0
+                requested = requested or (obs.get('_nudge') or 0) > last
                 if requested:
                     due = 0
+                elif chk and chk['state'] == 'running':
+                    due = last + RECHECK_POLL_SECONDS          # a recheck's result is expected (R5 A9)
                 elif it['readiness'] == 'ready':
                     due = last + RELIST_READY_SECONDS
                 elif it['infra_issue']:
-                    due = last + INFRA_RECHECK_SECONDS     # temporary problem: retry, but don't crowd the queue
+                    # Temporary problem: retried with a growing interval, escalated once (R5 M10).
+                    n = max(1, int(obs.get('_infra_failures') or 1))
+                    due = last + min(INFRA_RECHECK_SECONDS * 2 ** (n - 1), INFRA_MAX_BACKOFF)
+                elif it['readiness'] == 'blocked' and (it['block_key'] or '').startswith('config:'):
+                    # Permanent link/folder/configuration problem: no timer-driven retries; the next visit follows
+                    # changed evidence (Code, link, folder, format edits), an explicit recheck or an owner action.
+                    if obs.get('_block_evidence') == self._evidence(it):
+                        continue
+                    due = 0
                 elif it['readiness'] == 'blocked':
-                    n = (loads(it['observed'], {}) or {}).get('_blocked_cycles', 0)
+                    n = obs.get('_blocked_cycles', 0)
                     due = last + BACKOFF_STEPS[min(n, len(BACKOFF_STEPS) - 1)]
                 else:
                     due = last
@@ -829,10 +901,14 @@ class ItemsMixin:
                     rot = rules.rotation_key(it['format'], it['code'], it['name'], it['variety'])
                 except rules.RuleError:
                     rot = 'INVALID'
+                sel = self.selection(c, it)
                 out.append({'item_id': it['item_id'], 'rotation': rot, 'priority': 0 if requested else 1, '_last': last,
                             '_pending': it['readiness'] == 'checking' or bool(it['infra_issue']),
                             'waiting_since': it['waiting_since'] or it['created'], 'format': it['format'],
                             'code': it['code'], 'name': it['name'], 'source_item_id': it['source_item_id'],
+                            # A folder is only created for a valid Code (R5-LOW-06).
+                            'code_valid': self.safe_style(it['code']) is not None,
+                            'selection_mode': sel['mode'], 'selected_url': sel['url'],
                             'folder_url': it['folder_url'], 'file_url': it['source_override_url'] or it['file_url'],
                             # A brief is fetched (Monday request) only when a draft could follow: never while one
                             # waits, and after a rejected/failed draft at most daily (a changed brief) (audit perf).
@@ -859,11 +935,52 @@ class ItemsMixin:
             x.pop('_pending', None)
         return picked
 
-    def _touch_prep(self, c, it, blocked: bool):
-        obs = loads(it['observed'], {}) or {}
+    def _touch_prep(self, c, it, blocked: bool | None):
+        """Record a WF1 visit. blocked=True: the item stays blocked without new evidence (its backoff grows, R5 M13);
+        False: progress (backoff reset); None: visit only."""
+        obs = loads(self.item(c, it['item_id'])['observed'], {}) or {}
         obs['_last_prep'] = self.now()
-        obs['_blocked_cycles'] = (obs.get('_blocked_cycles', 0) + 1) if blocked else 0
+        if blocked is not None:
+            obs['_blocked_cycles'] = (obs.get('_blocked_cycles', 0) + 1) if blocked else 0
         c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
+
+    @staticmethod
+    def _evidence(it) -> str:
+        """Fingerprint of the facts a permanent source problem depends on (R5 M10): a change re-opens the item."""
+        return _h('|'.join(str(it.get(k) or '') for k in ('code', 'folder_url', 'source_override_url', 'file_url',
+                                                            'format')))
+
+    def _check_running(self, c, item_id) -> bool:
+        chk = c.execute("SELECT state FROM ops_checks WHERE item_id=? AND kind='media'", (str(item_id),)).fetchone()
+        return bool(chk and chk['state'] in ('requested', 'running'))
+
+    def _infra(self, c, it, kind, text, actor='service:wf1', count=True) -> int:
+        """Temporary problem of one preparation stage (source, media, delivery): visible on the board, retried with
+        a growing interval, counted across runs (R5 M9/M10/A10). Returns the consecutive-failure count."""
+        cur = self.item(c, it['item_id'])
+        obs = loads(cur['observed'], {}) or {}
+        n = int(obs.get('_infra_failures') or 0) + (1 if count else 0)
+        obs.update(_infra_failures=n, _infra_kind=kind, _last_prep=self.now())
+        c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
+        if cur['infra_issue'] != str(text)[:300]:
+            self.update_item(c, it['item_id'], actor, kind + ' infra issue', infra_issue=str(text)[:300])
+        return n
+
+    def _infra_clear(self, c, it, kind=None, actor='service:wf1'):
+        """The stage that had the temporary problem works again (kind None: every stage)."""
+        cur = self.item(c, it['item_id'])
+        obs = loads(cur['observed'], {}) or {}
+        if kind is not None and obs.get('_infra_kind') not in (None, kind):
+            return cur
+        if obs.get('_infra_err'):
+            self.resolve_finding(c, obs['_infra_err'])
+        if any(k in obs for k in ('_infra_failures', '_infra_kind', '_infra_err')):
+            for k in ('_infra_failures', '_infra_kind', '_infra_err'):
+                obs.pop(k, None)
+            c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
+        if cur['infra_issue']:
+            return self.update_item(c, it['item_id'], actor, 'infra recovered', infra_issue=None)
+        return self.item(c, it['item_id'])
 
     def op_prep_source(self, c, cmd: Command):
         """WF1 resolved (or failed to resolve) the exact selected Dropbox file."""
@@ -874,34 +991,31 @@ class ItemsMixin:
             return {'next': 'none', 'note': 'protected'}
         if a.get('expected_format') and a['expected_format'] != it['format']:
             raise Rejected('Format changed during this run; result discarded', 'stale')
+        sel = self.selection(c, it)
+        got = a.get('selection') or {}
+        if sel['mode'] == OWNER_SELECTED and (got.get('mode') != OWNER_SELECTED or got.get('url') != sel['url']):
+            # R5 B3: the owner chose an exact file. A result from the folder listing (or for an earlier choice) is
+            # refused: the rejected file is never selected again, and nothing about the item changes.
+            self._touch_prep(c, it, None)
+            audit(c, it['item_id'], 'prep_result_refused', cmd.actor, {'why': 'not the owner-selected file',
+                                                                       'selection': got, 'file': a.get('file')})
+            return {'next': 'none', 'refused': 'not_owner_selected',
+                    'reason': 'The owner selected a specific file for this item; this result is for another selection'}
         if a.get('folder_url') and not it['folder_url']:
-            it = self.update_item(c, it['item_id'], cmd.actor, 'folder created', folder_url=a['folder_url'])
+            if self.safe_style(it['code']) is None:
+                # R5-LOW-06: a folder named after a missing/invalid Code (".../null/Story") is shared by unrelated
+                # items; it is never recorded as this item's project folder.
+                audit(c, it['item_id'], 'folder_refused', cmd.actor, {'folder_url': a['folder_url'], 'code': it['code']})
+            else:
+                it = self.update_item(c, it['item_id'], cmd.actor, 'folder created', folder_url=a['folder_url'])
         err = a.get('error')
         if err:
-            kind = a.get('error_kind', 'infra')
-            self._touch_prep(c, it, True)
-            if kind != 'infra' and it['readiness'] == 'blocked' and it['block_key'] == kind + ':' + _h(err) \
-                    and it['block_reason'] == str(err)[:500]:
-                return {'next': 'none', 'blocked': kind, 'unchanged': True}     # same problem as last time
-            if kind == 'infra':
-                # Temporary provider/storage problem: keep evidence and reservations.
-                self.update_item(c, it['item_id'], cmd.actor, 'infra issue', infra_issue=str(err)[:300])
-                return {'next': 'none', 'infra': True}
-            key = kind + ':' + _h(err)
-            self.update_item(c, it['item_id'], cmd.actor, 'source problem', readiness='blocked',
-                             block_kind='editor' if kind == 'editor' else 'config', block_key=key,
-                             block_reason=str(err)[:500], infra_issue=None)
-            self.release(c, self.item(c, it['item_id']), 'source problem')
-            self.project(c, it['item_id'])
-            if kind == 'editor':
-                self.editor_task(c, it['item_id'], key, str(err))
-            return {'next': 'none', 'blocked': kind}
+            return self._source_error(c, it, cmd, str(err), a.get('error_kind') or 'infra')
         f = a['file']
         for k in ('id', 'rev', 'content_hash'):
             if not f.get(k):
                 raise Rejected('Dropbox version metadata is incomplete', 'invalid')
         asset = f['id'] + '@' + f['rev']
-        self._touch_prep(c, it, False)
         changed = asset != it['asset_key'] or f['content_hash'] != it['content_hash']
         if changed:
             att = self.active_attempt(c, it['item_id'])
@@ -922,11 +1036,17 @@ class ItemsMixin:
             it = self.update_item(c, it['item_id'], cmd.actor, 'source file changed', asset_key=asset, file_id=f['id'],
                                   file_rev=f['rev'], content_hash=f['content_hash'], file_name=f.get('name'),
                                   file_url=a.get('url'), verification_id=None, readiness='checking',
-                                  block_kind=None, block_reason=None, block_key=None, infra_issue=None)
+                                  block_kind=None, block_reason=None, block_key=None)
+            it = self._infra_clear(c, it, None, cmd.actor)          # new evidence: earlier failures do not count
         elif a.get('url') and a['url'] != it['file_url']:
-            it = self.update_item(c, it['item_id'], cmd.actor, 'share link', file_url=a['url'], infra_issue=None)
-        elif it['infra_issue']:
-            it = self.update_item(c, it['item_id'], cmd.actor, 'infra recovered', infra_issue=None)
+            it = self.update_item(c, it['item_id'], cmd.actor, 'share link', file_url=a['url'])
+        it = self._infra_clear(c, it, 'source', cmd.actor)
+        if sel['mode'] == OWNER_SELECTED and sel.get('file_id') != f['id']:
+            r = c.execute("SELECT result FROM ops_checks WHERE item_id=? AND kind='selection'", (it['item_id'],)).fetchone()
+            if r:                                            # the exact file the owner's link resolved to (audit)
+                c.execute("UPDATE ops_checks SET result=?, updated=? WHERE item_id=? AND kind='selection'",
+                          (dumps({**(loads(r['result'], {}) or {}), 'file_id': f['id'], 'resolved_at': self.now()}),
+                           self.now(), it['item_id']))
         chk = c.execute("SELECT * FROM ops_checks WHERE item_id=? AND kind='media'", (it['item_id'],)).fetchone()
         # A recheck stays in progress until its verdict is consumed: the detached job reports on a later
         # cycle, and a ready item must not return 'unchanged' meanwhile (audit MP1).
@@ -944,17 +1064,24 @@ class ItemsMixin:
             # Blocked under an older duration policy; the same measurement now passes (automatic trim).
             it = self.update_item(c, it['item_id'], cmd.actor, 'story duration accepted (automatic trim)',
                                   readiness='checking', block_kind=None, block_reason=None, block_key=None)
-        if it['readiness'] == 'blocked' and (it['block_key'] or '').startswith('duplicate:') and not changed \
-                and not recheck:
-            return {'next': 'none', **self.evaluate(c, it['item_id'], cmd.actor)}   # cleared once the other item is gone
-        if it['readiness'] == 'ready' and not changed and not recheck:
-            return {'next': 'none', 'unchanged': True}
-        if it['readiness'] == 'blocked' and not changed and not recheck and it['block_kind'] != 'infra':
-            return {'next': 'none', 'unchanged': True, 'blocked': it['block_reason']}
         body = {'itemId': it['item_id'], 'format': it['format'], 'sourceUrl': a.get('url') or it['file_url'],
                 'fileId': f['id'], 'revision': f['rev'], 'contentHash': f['content_hash'], 'assetKey': asset,
                 'topazed': it['topaz_asset'] == asset, 'recheck': recheck}
+        if it['readiness'] == 'blocked' and (it['block_key'] or '').startswith('duplicate:') and not changed \
+                and not recheck:
+            self._touch_prep(c, it, True)
+            return {'next': 'none', **self.evaluate(c, it['item_id'], cmd.actor)}   # cleared once the other item is gone
+        if it['readiness'] == 'ready' and not changed and not recheck:
+            self._touch_prep(c, it, False)
+            if self._needs_delivery_identity(c, it):
+                # Verified before delivered identities were recorded: bind the existing Dropbox copy (R5 M17).
+                return {'next': 'prepare', 'media': body}
+            return {'next': 'none', 'unchanged': True}
+        if it['readiness'] == 'blocked' and not changed and not recheck and it['block_kind'] != 'infra':
+            self._touch_prep(c, it, True)                       # unchanged block: the backoff grows (R5 M13)
+            return {'next': 'none', 'unchanged': True, 'blocked': it['block_reason']}
         if it['format'] == 'Story' and not self._duration_ok(c, it['item_id'], asset, f['content_hash']):
+            self._touch_prep(c, it, False)
             return {'next': 'preflight', 'media': body}
         if it['topaz_asset'] != asset:
             trim = self._story_trim(c, it)
@@ -966,16 +1093,66 @@ class ItemsMixin:
             self.editor_task(c, it['item_id'], 'topaz:' + asset,
                              'Apply Topaz, export at least 1080p short edge and under 300 MB, then confirm '
                              'Topazed on the social board for the selected file version.' + note)
-            self._finish_check(c, it['item_id'], 'blocked: Topaz confirmation missing')
+            self._finish_check(c, it['item_id'], 'blocked: Topaz confirmation missing', 'blocked')
+            self._touch_prep(c, it, True)
             return {'next': 'none', 'blocked': 'topaz'}
+        self._touch_prep(c, it, False)
         return {'next': 'prepare', 'media': body}
+
+    def _source_error(self, c, it, cmd, err, kind):
+        """WF1 could not resolve the source. 'infra' is temporary (retried with a growing interval, escalated once);
+        'config'/'editor' are permanent for the current evidence (R5 M10)."""
+        if kind == 'infra':
+            n = self._infra(c, it, 'source', err, cmd.actor)
+            if n >= INFRA_ESCALATE_AFTER:
+                fp = 'prep_infra:' + _h(err)
+                obs = loads(self.item(c, it['item_id'])['observed'], {}) or {}
+                obs['_infra_err'] = fp
+                c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
+                self.finding(c, fp, it['item_id'], 'prep_infra',
+                             f"Preparation of {it['name']} ({it['item_id']}) keeps failing ({n} attempts): {err[:300]}. "
+                             f'It is retried at most every {INFRA_MAX_BACKOFF // 3600} hours; nothing was rejected. '
+                             'If Dropbox access was changed, fix it or ask Bondok to recheck the item.')
+                # A pending recheck ends with this typed result instead of waiting for a recovery (R5 A9).
+                self._finish_check(c, it['item_id'], 'could not run (temporary problem, automatic retries '
+                                   'continue): ' + err[:200], 'temporary_failure')
+            return {'next': 'none', 'infra': True, 'failures': n}
+        key = kind + ':' + _h(err)
+        self._touch_prep(c, it, True)
+        if not (it['readiness'] == 'blocked' and it['block_key'] == key and it['block_reason'] == err[:500]):
+            it = self.update_item(c, it['item_id'], cmd.actor, 'source problem', readiness='blocked',
+                                  block_kind='editor' if kind == 'editor' else 'config', block_key=key,
+                                  block_reason=err[:500])
+            fresh = True
+        else:
+            fresh = False                                       # same problem as last time
+        it = self._infra_clear(c, it, None, cmd.actor)
+        obs = loads(it['observed'], {}) or {}
+        obs['_block_evidence'] = self._evidence(it)     # a permanent problem waits for changed evidence
+        c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), it['item_id']))
+        if not fresh:
+            self._finish_check(c, it['item_id'], 'blocked: ' + err[:200], 'blocked')
+            return {'next': 'none', 'blocked': kind, 'unchanged': True}
+        self.release(c, self.item(c, it['item_id']), 'source problem')
+        self.project(c, it['item_id'])
+        if kind == 'editor':
+            self.editor_task(c, it['item_id'], key, err)
+        self._finish_check(c, it['item_id'], 'blocked: ' + err[:200], 'blocked')
+        return {'next': 'none', 'blocked': kind}
+
+    def _needs_delivery_identity(self, c, it) -> bool:
+        m = self.media_row(c, it.get('verification_id'))
+        info = loads(m['metadata'], {}) if m else {}
+        return bool(m and info.get('url') and not info.get('delivered') and
+                    int(info.get('identifyAttempts') or 0) < MAX_IDENTIFY_ATTEMPTS and self.local_media(m) is not None)
 
     def _duration_ok(self, c, item_id, asset, content_hash) -> bool:
         r = c.execute("SELECT * FROM ops_checks WHERE item_id=? AND kind='duration'", (str(item_id),)).fetchone()
         res = loads(r['result'], {}) if r else {}
         # Re-evaluated against the current policy (a stored verdict from an older policy is not final).
-        return bool(r and r['key'] == asset + '|' + content_hash and
-                    rules.story_source_failure(res.get('duration')) is None)
+        d = res.get('duration')
+        return bool(r and r['key'] == asset + '|' + content_hash and rules.story_source_failure(d) is None and
+                    float(d) >= media.IG_MIN_SECONDS)
 
     def _story_trim(self, c, it):
         """(source seconds, target seconds) when the current Story file gets the automatic end trim."""
@@ -988,6 +1165,48 @@ class ItemsMixin:
         t = rules.story_trim_target(d)
         return (float(d), t) if t else None
 
+    def _job_failure(self, c, it, cmd, r, recheck, stage) -> dict | None:
+        """Typed outcome of a media job that did not produce a usable result (R5 A10). None: not a failure."""
+        cls = r.get('failureClass')
+        reason = r.get('reason') or 'Media preparation failed'
+        if r.get('retryable'):
+            # Temporary (transport, tool, killed worker) or local disk: retried within the job's budget.
+            self._infra(c, it, 'media', reason, cmd.actor, count=cls != 'capacity')
+            if recheck:
+                self._finish_check(c, it['item_id'], 'could not complete (temporary problem; automatic retries '
+                                   'continue): ' + reason[:200], 'temporary_failure')
+            return {'next': 'none', 'infra': True, 'attempts': r.get('attempts')}
+        if cls == 'exhausted':
+            # The retry budget is used up: one escalation, then wait for a new file revision or an explicit recheck.
+            key = 'prep_exhausted:' + str(it['asset_key'])
+            first = it.get('block_key') != key
+            self.update_item(c, it['item_id'], cmd.actor, 'preparation escalated', readiness='blocked',
+                             block_kind='review', block_key=key, verification_id=None,
+                             block_reason=(reason + '. Nothing was rejected; ask Bondok to recheck it, or upload a new '
+                                           'version.')[:500])
+            self._infra_clear(c, it, None, cmd.actor)
+            self.release(c, self.item(c, it['item_id']), 'preparation escalated')
+            self.project(c, it['item_id'])
+            if first:
+                self.notify(c, f"prep-exhausted:{it['item_id']}:{it['asset_key']}:{int(self.now())}",
+                            f"Preparation of {it['name']} ({it['item_id']}) stopped retrying after repeated temporary "
+                            f"failures: {reason[:300]}. Nothing was published. Ask Bondok to recheck it when the cause "
+                            'is fixed.', it['item_id'])
+            self._finish_check(c, it['item_id'], 'escalated: ' + reason[:200], 'escalated')
+            return {'next': 'none', 'blocked': 'exhausted', 'reason': reason}
+        if stage == 'media' and not r.get('ready'):
+            # A permanent file defect or a measured verdict: item-local block and one editor task.
+            key = 'media:' + it['asset_key'] + ':' + _h(reason)
+            self.update_item(c, it['item_id'], cmd.actor, 'media failed', readiness='blocked', block_kind='editor',
+                             block_key=key, block_reason=reason, verification_id=None)
+            self._infra_clear(c, it, None, cmd.actor)
+            self.release(c, self.item(c, it['item_id']), 'media failed')
+            self.project(c, it['item_id'])
+            self.editor_task(c, it['item_id'], key, reason)
+            self._finish_check(c, it['item_id'], 'blocked: ' + reason, 'blocked')
+            return {'next': 'none', 'blocked': reason}
+        return None
+
     def op_prep_preflight(self, c, cmd: Command):
         a = cmd.args
         self.run_check(c, 'wf1', a.get('run_id'), a.get('fence'))
@@ -997,24 +1216,31 @@ class ItemsMixin:
             return {'next': 'none', 'pending': True}
         if r.get('assetKey') != it['asset_key'] or r.get('contentHash') != it['content_hash']:
             raise Rejected('Duration result is for an older file version; discarded', 'stale')
-        if r.get('retryable'):
-            self.update_item(c, it['item_id'], cmd.actor, 'preflight infra', infra_issue=r.get('reason', '')[:300])
-            return {'next': 'none', 'infra': True}
-        bad = rules.story_source_failure(r.get('duration')) if it['format'] == 'Story' else None
+        out = self._job_failure(c, it, cmd, r, self._check_running(c, it['item_id']), 'preflight')
+        if out:
+            return out
+        self._infra_clear(c, it, 'media', cmd.actor)
+        dur = r.get('duration')
+        # The duration policy applies to a measured duration; an unmeasurable file is a defect with its own cause.
+        policy = rules.story_source_failure(dur) if it['format'] == 'Story' and dur is not None else None
+        bad = policy or (r.get('reason') or 'The file could not be checked' if r.get('ready') is False else None)
         key = it['asset_key'] + '|' + it['content_hash']
         c.execute("INSERT OR REPLACE INTO ops_checks(item_id,kind,key,requested,requested_by,state,result,updated) "
                   "VALUES(?,?,?,?,?,?,?,?)", (it['item_id'], 'duration', key, self.now(), cmd.actor, 'done',
-                                              dumps({'ok': bad is None, 'duration': r.get('duration')}), self.now()))
+                                              dumps({'ok': bad is None, 'duration': dur}), self.now()))
         if bad:
-            bkey = 'story_duration:' + it['asset_key']
-            self.update_item(c, it['item_id'], cmd.actor, 'story too long', readiness='blocked', block_kind='content',
-                             block_key=bkey, block_reason=bad, verification_id=None, infra_issue=None)
-            self.release(c, self.item(c, it['item_id']), 'story too long', keep_request=False)
+            if policy:                                         # duration policy: shorter edit (or Post) needed
+                bkey, kind = 'story_duration:' + it['asset_key'], 'content'
+            else:                                              # file defect / platform minimum (R5 A10, LOW-15)
+                bkey, kind = 'media:' + it['asset_key'] + ':' + _h(bad), 'editor'
+            self.update_item(c, it['item_id'], cmd.actor, 'story source rejected', readiness='blocked',
+                             block_kind=kind, block_key=bkey, block_reason=bad, verification_id=None, infra_issue=None)
+            self.release(c, self.item(c, it['item_id']), 'story source rejected', keep_request=False)
             self.project(c, it['item_id'])
             self.editor_task(c, it['item_id'], bkey, bad)
-            self._finish_check(c, it['item_id'], 'blocked: ' + bad)
-            return {'next': 'none', 'blocked': 'story_duration', 'duration': r.get('duration')}
-        return {'next': 'continue', 'duration': r.get('duration')}
+            self._finish_check(c, it['item_id'], 'blocked: ' + bad, 'blocked')
+            return {'next': 'none', 'blocked': 'story_duration' if policy else 'media', 'duration': dur}
+        return {'next': 'continue', 'duration': dur}
 
     def op_prep_media(self, c, cmd: Command):
         a = cmd.args
@@ -1025,55 +1251,175 @@ class ItemsMixin:
             return {'next': 'none', 'pending': True}
         if r.get('assetKey', it['asset_key']) != it['asset_key'] or r.get('format', it['format']) != it['format']:
             raise Rejected('Media result is for an older file/format; discarded', 'stale')
-        if r.get('retryable'):
-            self.update_item(c, it['item_id'], cmd.actor, 'media infra', infra_issue=r.get('reason', '')[:300])
-            return {'next': 'none', 'infra': True}
-        if not r.get('ready'):
-            reason = r.get('reason') or 'Media preparation failed'
-            key = 'media:' + it['asset_key'] + ':' + _h(reason)
-            self.update_item(c, it['item_id'], cmd.actor, 'media failed', readiness='blocked', block_kind='editor',
-                             block_key=key, block_reason=reason, verification_id=None, infra_issue=None)
-            self.release(c, self.item(c, it['item_id']), 'media failed')
-            self.project(c, it['item_id'])
-            self.editor_task(c, it['item_id'], key, reason)
-            self._finish_check(c, it['item_id'], 'blocked: ' + reason)
-            return {'next': 'none', 'blocked': reason}
+        recheck = self._check_running(c, it['item_id'])
+        out = self._job_failure(c, it, cmd, r, recheck, 'media')
+        if out:
+            return out
         m = self.media_row(c, r['mediaId'])
         if not m or m['item'] != it['item_id']:
             raise Rejected('Prepared media record not found', 'invalid')
-        info = loads(m['metadata'], {})
+        it = self._infra_clear(c, it, 'media', cmd.actor)
+        if (it['block_key'] or '').startswith('prep_exhausted:'):
+            it = self.update_item(c, it['item_id'], cmd.actor, 'preparation recovered', readiness='checking',
+                                  block_kind=None, block_reason=None, block_key=None)
+        info = loads(m['metadata'], {}) or {}
+        dv = info.get('delivery') or {}
+        if recheck and dv.get('failures'):
+            # An explicit recheck gives delivery a fresh, bounded budget (R5 M9).
+            dv.update(failures=0, nextAt=0, round=int(dv.get('round') or 0) + 1)
+            info['delivery'] = dv
+            c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), m['id']))
+            if (it['block_key'] or '').startswith('delivery:'):
+                it = self.update_item(c, it['item_id'], cmd.actor, 'delivery retried', readiness='checking',
+                                      block_kind=None, block_reason=None, block_key=None)
+        path = self.delivery_path(it, m['id'])
         if info.get('url'):
+            if it['verification_id'] == m['id'] and it['readiness'] == 'ready' and self._needs_delivery_identity(c, it):
+                # Verified and delivered before delivered identities were recorded: bind the existing Dropbox copy
+                # (best effort, bounded); the item stays ready meanwhile (R5 M17).
+                return {'next': 'identify', 'mediaId': m['id'], 'deliveryPath': path}
             return self._verified(c, it, r['mediaId'], cmd.actor)
-        return {'next': 'upload', 'mediaId': r['mediaId'], 'filePath': m['path']}
+        if dv.get('failures', 0) >= MAX_DELIVERY_ATTEMPTS:
+            return {'next': 'none', 'blocked': 'delivery'}
+        if dv.get('nextAt', 0) > self.now():
+            return {'next': 'none', 'waiting': 'delivery retry', 'retryAt': dv['nextAt']}
+        if dv.get('stage') == 'uploaded' and dv.get('path'):
+            # The upload was confirmed earlier; only sharing/registration is repeated (R5 M9).
+            return {'next': 'share', 'mediaId': m['id'], 'deliveryPath': dv['path']}
+        local = self.local_media(m)
+        return {'next': 'upload', 'mediaId': m['id'], 'filePath': str(local or m['path']), 'deliveryPath': path}
+
+    @staticmethod
+    def delivery_path(it, media_id) -> str:
+        return f"{PREPARED_FOLDER}/{it['item_id']}-{media_id}.mp4"
 
     def op_prep_delivered(self, c, cmd: Command):
+        """Delivery of the verified file to Dropbox (the copy Instagram fetches): a recorded upload (with its Dropbox
+        identity), a registered share link, or a failure at one stage (R5 M9, M17)."""
         a = cmd.args
         self.run_check(c, 'wf1', a.get('run_id'), a.get('fence'))
         it = self.item(c, cmd.item_id)
-        url = dropbox_url(a['url'])
         m = self.media_row(c, a['mediaId'])
         if not m or m['item'] != it['item_id']:
             raise Rejected('Prepared media record not found', 'invalid')
-        info = loads(m['metadata'], {})
+        info = loads(m['metadata'], {}) or {}
         if info.get('assetKey') != it['asset_key'] or info.get('format') != it['format']:
             raise Rejected('Delivered file is for an older version; discarded', 'stale')
+        stage = a.get('stage') or 'shared'
+        if a.get('error'):
+            return self._delivery_failed(c, it, cmd, m, info, stage, str(a['error']), a.get('error_kind') or 'infra')
+        if stage in ('uploaded', 'identified'):
+            return self._delivery_uploaded(c, it, cmd, m, info, stage, a.get('upload') or {}, a.get('local_hash'))
+        url = dropbox_url(a['url'])
         info['url'] = url
+        dv = info.pop('delivery', None) or {}
+        if dv.get('stage') == 'uploaded':
+            info['delivered'] = {k: dv[k] for k in ('id', 'rev', 'content_hash', 'path', 'size', 'at') if k in dv}
         c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), a['mediaId']))
         return self._verified(c, it, a['mediaId'], cmd.actor)
+
+    def _delivery_uploaded(self, c, it, cmd, m, info, stage, up, local_hash):
+        for k in ('id', 'rev', 'content_hash', 'path_lower'):
+            if not up.get(k):
+                raise Rejected('Dropbox upload metadata is incomplete', 'invalid')
+        expect = info.get('dropboxHash') or local_hash
+        rec = {'id': up['id'], 'rev': up['rev'], 'content_hash': up['content_hash'], 'path': up['path_lower'],
+               'size': up.get('size'), 'at': self.now()}
+        if stage == 'identified':
+            info['identifyAttempts'] = int(info.get('identifyAttempts') or 0) + 1
+            if not expect:
+                c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), m['id']))
+                return {'next': 'none', 'identified': False, 'reason': 'local file hash unavailable'}
+            if up['content_hash'] != expect:
+                # The copy Instagram would fetch is not the verified file: deliver the verified file again before
+                # anything is published (R5 M17).
+                for k in ('url', 'delivered', 'delivery'):
+                    info.pop(k, None)
+                c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), m['id']))
+                if it['verification_id'] == m['id']:
+                    self.release(c, it, 'delivered copy differs from the verified file')
+                    self.update_item(c, it['item_id'], cmd.actor, 'delivered copy differs', verification_id=None,
+                                     readiness='checking')
+                    self.notify(c, f"delivered-mismatch:{it['item_id']}:{m['id']}",
+                                f"{it['name']} ({it['item_id']}): the delivered copy in Dropbox differs from the "
+                                'verified file; it will be delivered again before it is scheduled.', it['item_id'])
+                return {'next': 'none', 'identified': False, 'mismatch': True}
+            info['delivered'] = rec
+            info.setdefault('dropboxHash', expect)
+            c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), m['id']))
+            audit(c, it['item_id'], 'delivered_identity_bound', cmd.actor, {'media': m['id'], 'rev': up['rev']})
+            return {'next': 'done', 'identified': True}
+        if expect and up['content_hash'] != expect:
+            return self._delivery_failed(c, it, cmd, m, info, 'upload', 'The uploaded copy does not match the prepared '
+                                         'file (Dropbox content hash differs)', 'infra')
+        dv = info.get('delivery') or {}
+        info['delivery'] = {**dv, 'stage': 'uploaded', **rec}
+        if expect:
+            info.setdefault('dropboxHash', expect)
+        c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), m['id']))
+        return {'next': 'share', 'mediaId': m['id'], 'deliveryPath': up['path_lower']}
+
+    def _delivery_failed(self, c, it, cmd, m, info, stage, err, kind):
+        if stage == 'identify':
+            # Binding an earlier delivery is best effort: it never blocks the item; after the allowed attempts the
+            # delivery keeps its earlier (unbound) status.
+            info['identifyAttempts'] = int(info.get('identifyAttempts') or 0) + 1
+            c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), m['id']))
+            audit(c, it['item_id'], 'delivered_identity_unavailable', cmd.actor, {'media': m['id'], 'error': err[:200]})
+            return {'next': 'none', 'identified': False}
+        dv = info.get('delivery') or {}
+        n = int(dv.get('failures') or 0) + 1
+        if stage == 'read':
+            # The local prepared file is gone or unreadable: prepare it again. The count survives the new media row
+            # (item observation), so a file that can never be read escalates instead of looping.
+            n = self._infra(c, it, 'delivery', 'The prepared file could not be read for delivery; it will be '
+                            'prepared again (' + err[:150] + ')', cmd.actor)
+            if n < MAX_DELIVERY_ATTEMPTS:
+                if it['verification_id'] != m['id']:
+                    c.execute('DELETE FROM media WHERE id=?', (m['id'],))
+                return {'next': 'none', 'reprepare': True}
+        dv.update(failures=n, lastStage=stage, lastError=err[:300],
+                  nextAt=self.now() + min(INFRA_RECHECK_SECONDS * 2 ** (n - 1), INFRA_MAX_BACKOFF))
+        info['delivery'] = dv
+        c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), m['id']))
+        text = f'Delivery of the prepared file to Dropbox failed at {stage}: {err[:200]}'
+        if kind == 'config' or n >= MAX_DELIVERY_ATTEMPTS:
+            key = 'delivery:' + m['id']
+            self.update_item(c, it['item_id'], cmd.actor, 'delivery escalated', readiness='blocked',
+                             block_kind='review', block_key=key,
+                             block_reason=(text + f' ({n} attempt(s)). Nothing was published; ask Bondok to recheck it '
+                                           'once Dropbox is fixed.')[:500])
+            self._infra_clear(c, it, None, cmd.actor)
+            self.release(c, self.item(c, it['item_id']), 'delivery escalated')
+            self.project(c, it['item_id'])
+            self.notify(c, f"delivery-escalated:{it['item_id']}:{m['id']}:{int(dv.get('round') or 0)}",
+                        f"{it['name']} ({it['item_id']}): the prepared video could not be delivered to Dropbox "
+                        f"({n} attempt(s); last at {stage}: {err[:200]}). Nothing was published. Ask Bondok to "
+                        'recheck it once Dropbox is fixed.', it['item_id'])
+            self._finish_check(c, it['item_id'], 'escalated: ' + text, 'escalated')
+            return {'next': 'none', 'blocked': 'delivery', 'stage': stage}
+        self._infra(c, it, 'delivery', text, cmd.actor)
+        return {'next': 'none', 'infra': True, 'stage': stage, 'retryAt': dv['nextAt']}
 
     def _verified(self, c, it, media_id, actor):
         if (it['verification_id'] or None) != media_id:
             c.execute('UPDATE ops_items SET content_rev=content_rev+1 WHERE item_id=?', (it['item_id'],))
         self.update_item(c, it['item_id'], actor, 'verified', verification_id=media_id, infra_issue=None)
-        self._finish_check(c, it['item_id'], 'passed')
+        self._infra_clear(c, it, None, actor)
+        if (self.item(c, it['item_id'])['block_key'] or '').startswith(('delivery:', 'prep_exhausted:')):
+            self.update_item(c, it['item_id'], actor, 'delivery recovered', readiness='checking', block_kind=None,
+                             block_reason=None, block_key=None)
+        self._finish_check(c, it['item_id'], 'passed', 'passed')
         out = self.evaluate(c, it['item_id'], actor)
         return {'next': 'done', **out}
 
-    def _finish_check(self, c, item_id, outcome):
+    def _finish_check(self, c, item_id, outcome, kind=None):
+        """A recheck always ends with one typed result (R5 A9): passed | blocked | temporary_failure | escalated."""
         chk = c.execute("SELECT * FROM ops_checks WHERE item_id=? AND kind='media'", (str(item_id),)).fetchone()
         if chk and chk['state'] in ('running', 'requested'):
+            kind = kind or ('passed' if outcome == 'passed' else 'blocked' if outcome.startswith('blocked') else 'done')
             c.execute("UPDATE ops_checks SET state='done', result=?, updated=? WHERE item_id=? AND kind='media'",
-                      (dumps({'outcome': outcome, 'at': self.now()}), self.now(), str(item_id)))
+                      (dumps({'outcome': outcome, 'kind': kind, 'at': self.now()}), self.now(), str(item_id)))
             if chk['requested_by'] and chk['key'] == 'explicit_recheck':
                 it = self.item(c, item_id)
                 self.notify(c, f'recheck:{item_id}:{int(self.now())}',
@@ -1085,12 +1431,15 @@ class ItemsMixin:
         if not it['source_item_id']:
             # No projects-board item, so no editor subitem is possible; the board's Action required shows it.
             return False
+        owner = self.selection(c, it)['mode'] == OWNER_SELECTED
         body = (f"Social delivery {it['code']} / {it['format']} — item {item_id}\nIssue: {reason}\n"
                 f"Selected file: {it.get('file_name') or 'none'} ({it.get('asset_key') or 'no version'})\n"
                 'Requirements: Topaz processed, short edge ≥1080 px, file under 300 MB'
                 + ('; Story strictly under 60 seconds' if it['format'] == 'Story' else '') +
-                f"\nUpload to: {it.get('folder_url') or 'the project folder'}\n"
-                'After upload, confirm Topazed on the social board only when Source asset version matches the file.')
+                (f"\nThis file was selected by the owner (Dropbox Link on the social board); a corrected file is used "
+                 'once the owner selects it there.' if owner else
+                 f"\nUpload to: {it.get('folder_url') or 'the project folder'}") +
+                '\nAfter upload, confirm Topazed on the social board only when Source asset version matches the file.')
         bh = _h(body)
         r = c.execute('SELECT * FROM ops_editor_tasks WHERE item_id=? AND issue_key=?', (str(item_id), issue_key)).fetchone()
         if r and r['body_hash'] == bh:

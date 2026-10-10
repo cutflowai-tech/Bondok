@@ -154,6 +154,45 @@ SNAPSHOT_NEXT = ('query($c:String!){next_items_page(cursor:$c,limit:500){cursor 
                  'column_values(ids:' + SOCIAL_COLS + '){id text value}}}}')
 COMPACT = ("const compact=i=>({id:i.id,name:i.name,group:i.group||null,column_values:(i.column_values||[])"
            ".filter(c=>c.text||c.value).map(c=>({id:c.id,text:c.text,value:c.value}))});")
+MISSING_CODE = ('Code is missing or invalid on the social board, so no project folder can be created. Add the Code '
+                '(for example LIP12) or a Dropbox link to the item')
+# One classification for every Dropbox failure in WF1 (selection and delivery): 'config' = permanent for the current
+# evidence (the item waits for a changed link/folder/Code or an explicit recheck), 'infra' = temporary (bounded
+# retries, then one escalation). R5 M10.
+DROPBOX_CLASSIFY = r"""
+const classify=(raw,j)=>{
+const e=(raw&&typeof raw==='object')?raw:{};
+// n8n may carry the message as a plain string, and appends " [line N]" to Code node errors.
+const msg=String((typeof raw==='string'&&raw)||e.message||e.description||j.error_summary||j.message||'Dropbox request failed')
+  .replace(/\s*\[line [^\]]*\]\s*$/,'');
+// Typed failures raised by our own Code nodes: "[config] text" / "[editor] text" (permanent, item-local).
+const typed=msg.match(/^\s*(?:Error:\s*)?\[(config|editor)\]\s*([\s\S]*)$/);
+if(typed)return {text:typed[2].trim().slice(0,400),kind:typed[1]};
+// Status from structured HTTP fields or n8n's "409 - {...}" / "status code 503" forms only: a number
+// elsewhere in free text (an item name like "Calli 403", an address) says nothing (audit MP4).
+const code=String(e.httpCode||e.statusCode||e.status||(e.response&&e.response.status)||j.statusCode||
+  (msg.match(/^\s*([45]\d\d) - /)||msg.match(/status code ([45]\d\d)\b/)||[])[1]||'');
+const blob=msg+' '+String(e.description||'');
+// A bare Dropbox error tag thrown by a Code node (e.g. "path/not_found/..") is Dropbox's own answer.
+const bare=(msg.trim().match(/^([a-z_]+(?:\/[a-z_]+)*)\/*(?:\.\.?)?$/)||[])[1]||'';
+// Owner-readable text instead of raw API JSON; the Dropbox error tag is kept in brackets.
+const tag=String(e.error_summary||j.error_summary||(blob.match(/"error_summary"\s*:\s*"([^"]+)"/)||[])[1]||bare||'').replace(/\/+(\.\.?)?$/,'');
+const PERMANENT=/^(path\/(not_found|malformed_path|no_write_permission|insufficient_space|conflict|disallowed_name)|path_lookup\/(not_found|malformed_path)|shared_link_(not_found|access_denied|is_directory)|unsupported_link_type|email_not_verified)/;
+// Only a Dropbox 4xx about the request itself (or a bare permanent tag) blocks the content. 401/403 (expired or
+// revoked token, app permission) affect every item, 408/429 are temporary, and no status at all is a system problem.
+const credential=(code==='401'||code==='403')&&!/^shared_link/.test(tag);
+const config=!credential&&((/^4/.test(code)&&!['408','429'].includes(code))||(!code&&!!bare&&PERMANENT.test(tag)));
+const known={'shared_link_not_found':'The Dropbox link on the board no longer works. Replace the folder link on the board.',
+'shared_link_access_denied':'Dropbox refused access to the link on the board. Check the link\'s sharing settings.',
+'path/not_found':'The Dropbox folder or file was not found. Check the folder link on the board.',
+'path/malformed_path':'The Dropbox path is invalid. Check the folder link on the board.',
+'path/no_write_permission':'The connected Dropbox account may not write to this folder.',
+'path/insufficient_space':'The connected Dropbox account is full.'};
+const head=tag.split('/')[0],text=known[tag]||known[head]||null;
+const out=config?(text||('Dropbox rejected the request'+(tag?'':': '+msg.slice(0,200))))+(tag?' (Dropbox: '+tag+')':'')
+  :'Temporary Dropbox problem'+(code?' ('+code+')':'')+': '+msg.slice(0,200);
+return {text:out.slice(0,400),kind:config?'config':'infra'};};
+"""
 
 
 def social_snapshot(f: Flow, prefix: str):
@@ -339,14 +378,30 @@ reason:'Container status '+($json.status_code||'unknown')+' after '+$json.attemp
     verify = f.reuse('Verify Source Revision')
     f.nodes[verify]['parameters']['jsonBody'] = ("={{ JSON.stringify({path:String($('Claim Publication').item.json"
                                                  ".source_asset).split('@')[0]}) }}")
+    src_res = f.code('Source Revision Result', "return [{json:{sourceAsset:($json.id&&$json.rev&&!$json.error)?"
+                                               "$json.id+'@'+$json.rev:'unverifiable'}}];")
+    # R5 M17: the delivered copy (the shared link Instagram fetched) must still be the Dropbox object bound when it
+    # was delivered. Read through the same link; `rev` is always reported, `id` when Dropbox includes it.
+    dverify = f.reuse('Verify Source Revision', 'Verify Delivered Copy')
+    f.nodes[dverify]['parameters']['url'] = 'https://api.dropboxapi.com/2/sharing/get_shared_link_metadata'
+    f.nodes[dverify]['parameters']['jsonBody'] = (
+        "={{ JSON.stringify({url:String($('Claim Publication').item.json.payload.video_url||'')"
+        ".replace(/([?&])raw=1(&|$)/,(m,a,b)=>b?a:'')}) }}")
+    del_res = f.code('Delivered Revision Result', "const s=$('Source Revision Result').item.json;\n"
+                                                  "return [{json:{sourceAsset:s.sourceAsset,deliveredAsset:($json.rev&&"
+                                                  "!$json.error)?($json.id||'')+'@'+$json.rev:'unverifiable'}}];")
     commit_in, commit = f.helper('Commit Publication', '/v2/publish/commit', r"""{attemptId:$('Claim Publication').item.json.attempt_id,
 worker:$('Configuration').first().json.worker,fence:$('Claim Publication').item.json.fence,
-sourceAsset:($json.id&&$json.rev)?$json.id+'@'+$json.rev:'unverifiable',containerStatus:$('Container Status').item.json.status_code}""",
+sourceAsset:$json.sourceAsset,deliveredAsset:$json.deliveredAsset,containerStatus:$('Container Status').item.json.status_code}""",
                                  on_error='continueErrorOutput')
     committed = f.cond('Committed?', '$json.committed===true')
     f.link(finished, verify, 0)
-    f.chain(verify, commit_in)
-    f.link(verify, commit_in, 1)       # Dropbox unavailable -> commit refuses ('unverifiable')
+    f.link(verify, src_res, 0)
+    f.link(verify, src_res, 1)         # Dropbox unavailable -> commit refuses ('unverifiable')
+    f.link(src_res, dverify)
+    f.link(dverify, del_res, 0)
+    f.link(dverify, del_res, 1)
+    f.link(del_res, commit_in)
     f.link(commit, committed)
     f.link(commit, done, 1)
     f.link(committed, done, 1)
@@ -478,8 +533,12 @@ const txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();
 const val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};
 const source=$('Source Snapshot').first().json.items.find(s=>String(s.id)===String(x.source_item_id))||null;
 const srcLink=source?val(source,'link_mm06bswn')?.url:null;
-const folder=x.folder_url||[x.file_url,srcLink].find(u=>u&&u.includes('/scl/fo/'))||'';
-return [{json:{...x,itemId:x.item_id,source,folderUrl:folder||[x.file_url,srcLink].find(u=>u&&/dropbox/.test(u))||'',valid:true}}];""")
+// R5 B3: a file the owner selected (Dropbox Link / Slack) outranks the project folder: it is resolved through its
+// own link and the folder is never listed for this item.
+const owner=x.selection_mode==='owner_selected_file'&&!!x.selected_url;
+const folder=owner?'':(x.folder_url||[x.file_url,srcLink].find(u=>u&&u.includes('/scl/fo/'))||'');
+return [{json:{...x,itemId:x.item_id,source,ownerSelected:owner,selectedUrl:owner?x.selected_url:null,
+folderUrl:owner?'':(folder||[x.file_url,srcLink].find(u=>u&&/dropbox/.test(u))||''),valid:true}}];""")
     f.link(loop, ctx, 1)
     finished = f.code('Item Finished', 'return [{json:{done:true}}];')
     f.link(finished, loop)
@@ -533,8 +592,20 @@ error:$json.error?String($json.error.message||$json.error).slice(0,300):(t?null:
               'Files Page Request', 'List Files', 'Collect Files', 'More Dropbox Files?', 'Candidates',
               'Existing File Link', 'File Share Context', 'File Link Exists?', 'Share Final File', 'New File Link'):
         f.reuse(n)
+    # R5-LOW-06: never a folder named after a missing Code ('/Social Media/Production/null/Story' was shared by
+    # unrelated items). Same Code pattern as rules.CODE_RE.
     f.nodes['New Folder Context']['parameters']['jsCode'] = (
-        "const x=$('Item Context').item.json;return [{json:{...x,folderCreated:true,folderPath:$('Configuration').first().json.folderRoot+'/'+String(x.code).replace(/[^A-Za-z0-9#_-]/g,'_')+'/'+x.format}}];")
+        "const x=$('Item Context').item.json;\n"
+        "if(!/^\\s*[a-z]{2,3}\\s*[#_\\- ]?\\s*\\d+/i.test(String(x.code??'')))throw new Error('[config] " + MISSING_CODE +
+        "');\n"
+        "return [{json:{...x,folderCreated:true,folderPath:$('Configuration').first().json.folderRoot+'/'+String(x.code).replace(/[^A-Za-z0-9#_-]/g,'_')+'/'+x.format}}];")
+    # A shared link outside the connected Dropbox has no path: permanent for this link (R5 M10), not 'temporary'.
+    plan = f.nodes['Plan Listing']['parameters']['jsCode']
+    f.nodes['Plan Listing']['parameters']['jsCode'] = plan.replace(
+        "throw new Error('Dropbox link is unavailable')",
+        "throw new Error('[config] The Dropbox link on the board is not in the connected Dropbox account or is no "
+        "longer shared; replace the link or share it from that account')")
+    assert '[config] The Dropbox link on the board' in f.nodes['Plan Listing']['parameters']['jsCode']
     f.nodes['Candidates']['parameters']['jsCode'] = f.nodes['Candidates']['parameters']['jsCode'].replace(
         "note: 'Needs review: folder \"' + folderName + '\" does not match item' } }];",
         "note: 'Folder \"' + folderName + '\" does not match this item', errorKind: 'config' } }];").replace(
@@ -545,9 +616,39 @@ error:$json.error?String($json.error.message||$json.error).slice(0,300):(t?null:
                                   "return [{json:{...$('Folder Context').item.json,file,ok:!!file,note:c.note||'No final video found in the project folder',errorKind:c.errorKind||'editor'}}];",
                   on_error='continueErrorOutput')
     found = f.reuse('Final File Found?')
-    f.link(cont, has_folder)
+    # R5 B3: owner-selected file -> exact file through its own link (metadata + version), never the folder listing.
+    owner_q = f.cond('Owner Selected File?', '$json.ownerSelected===true&&!!$json.selectedUrl')
+    o_meta = f.reuse('Folder Metadata', 'Owner File Link Metadata')
+    f.nodes[o_meta]['parameters']['jsonBody'] = "={{ JSON.stringify({url:$('Item Context').item.json.selectedUrl}) }}"
+    o_link = f.code('Owner File Link', r"""
+const m=$json;
+// A folder link, or a link to a file outside the connected Dropbox, cannot be bound to one file version: a
+// permanent configuration problem for this link (never a reason to fall back to the folder).
+if(m['.tag']!=='file')throw new Error('[config] The Dropbox link selected for this item is not a file; select the exact video file');
+if(!m.path_lower)throw new Error('[config] The Dropbox file selected for this item is not in the connected Dropbox account; share it from that account or select another file');
+return [{json:{path:m.path_lower,linkId:m.id||null}}];""", on_error='continueErrorOutput')
+    o_ver = f.reuse('Folder Metadata', 'Owner File Version')
+    f.nodes[o_ver]['parameters']['url'] = 'https://api.dropboxapi.com/2/files/get_metadata'
+    f.nodes[o_ver]['parameters']['jsonBody'] = '={{ JSON.stringify({path:$json.path}) }}'
+    o_sel = f.code('Owner Selected File', r"""
+const ctx=$('Item Context').item.json,link=$('Owner File Link Metadata').item.json,m=$json;
+if(m['.tag']&&m['.tag']!=='file')throw new Error('[config] The Dropbox link selected for this item is not a file; select the exact video file');
+if(!m.id||!m.rev||!m.content_hash)throw new Error('[config] Dropbox did not report the exact version of the selected file; select it again');
+if(link.id&&link.id!==m.id)throw new Error('[config] The selected Dropbox link no longer points to the same file; select the file again');
+if(!/\.(mp4|mov|m4v)$/i.test(m.name||''))throw new Error('[config] The selected Dropbox file is not an MP4/MOV video ('+String(m.name||'').slice(0,80)+')');
+return [{json:{file:{id:m.id,rev:m.rev,content_hash:m.content_hash,name:m.name,path:m.path_lower},url:ctx.selectedUrl,ok:true}}];""",
+                   on_error='continueErrorOutput')
+    f.link(cont, owner_q)
+    f.link(owner_q, o_meta, 0)
+    f.link(owner_q, has_folder, 1)
+    f.chain(o_meta, o_link, o_ver, o_sel)
+    # R5-LOW-06: no folder is created for an item without a valid Code.
+    creatable = f.cond('Folder Creatable?', '$json.code_valid!==false')
+    missing = f.code('Missing Source Identity', "return [{json:{ok:false,errorKind:'config',note:'" + MISSING_CODE + "'}}];")
     f.link(has_folder, 'Folder Context', 0)
-    f.link(has_folder, 'New Folder Context', 1)
+    f.link(has_folder, creatable, 1)
+    f.link(creatable, 'New Folder Context', 0)
+    f.link(creatable, missing, 1)
     f.chain('New Folder Context', 'Create Project Folder', 'Check Folder Creation', 'Share New Folder',
             'Find Folder Link', 'New Folder Ready', 'Folder Context', 'Folder Metadata', 'Plan Listing',
             'Files Page Request', 'List Files', 'Collect Files', 'More Dropbox Files?')
@@ -559,38 +660,21 @@ error:$json.error?String($json.error.message||$json.error).slice(0,300):(t?null:
     f.link('File Link Exists?', 'Share Final File', 1)
     f.chain('Share Final File', 'New File Link')
 
-    problem = f.code('Dropbox Problem', r"""
-const raw=$json.error;const e=(raw&&typeof raw==='object')?raw:{};
-// n8n error outputs may carry the message as a plain string; keep it.
-const msg=String((typeof raw==='string'&&raw)||e.message||e.description||$json.error_summary||$json.message||'Dropbox request failed');
-// Status from structured HTTP fields or n8n's "409 - {...}" / "status code 503" forms only: a number
-// elsewhere in free text (an item name like "Calli 403", an address) says nothing (audit MP4).
-const code=String(e.httpCode||e.statusCode||e.status||(e.response&&e.response.status)||$json.statusCode||
-  (msg.match(/^\s*([45]\d\d) - /)||msg.match(/status code ([45]\d\d)\b/)||[])[1]||'');
-const blob=msg+' '+String(e.description||'');
-// Owner-readable text instead of raw API JSON; the Dropbox error tag is kept in brackets.
-const tag=String(e.error_summary||$json.error_summary||(blob.match(/"error_summary"\s*:\s*"([^"]+)"/)||[])[1]||'').replace(/\/+(\.\.)?$/,'');
-// Only a Dropbox 4xx about the request itself blocks the content. 401/403 (expired or revoked token,
-// app permission) affect every item, 408/429 are temporary, and no status at all is a system problem.
-const credential=(code==='401'||code==='403')&&!/^shared_link/.test(tag);
-const config=/^4/.test(code)&&!['408','429'].includes(code)&&!credential;
-const known={'shared_link_not_found':'The Dropbox link on the board no longer works. Replace the folder link on the board.',
-'shared_link_access_denied':'Dropbox refused access to the link on the board. Check the link\'s sharing settings.',
-'path/not_found':'The Dropbox folder or file was not found. Check the folder link on the board.',
-'path/malformed_path':'The Dropbox path is invalid. Check the folder link on the board.'};
-const head=tag.split('/')[0],text=known[tag]||known[head]||null;
-const out=config?(text||('Dropbox rejected the request'+(tag?'':': '+msg.slice(0,200))))+(tag?' (Dropbox: '+tag+')':'')
-  :'Temporary Dropbox problem'+(code?' ('+code+')':'')+': '+msg.slice(0,200);
-return [{json:{error:out.slice(0,400),errorKind:config?'config':'infra'}}];""")
-    for n in ('Create Project Folder', 'Check Folder Creation', 'Share New Folder', 'Find Folder Link',
-              'New Folder Ready', 'Folder Metadata', 'Plan Listing', 'List Files', 'Collect Files', 'Candidates',
-              'Existing File Link', 'File Share Context', 'Share Final File', 'New File Link', sel):
+    problem = f.code('Dropbox Problem', DROPBOX_CLASSIFY + r"""
+const r=classify($json.error,$json);
+return [{json:{error:r.text,errorKind:r.kind}}];""")
+    for n in ('New Folder Context', 'Create Project Folder', 'Check Folder Creation', 'Share New Folder',
+              'Find Folder Link', 'New Folder Ready', 'Folder Metadata', 'Plan Listing', 'List Files', 'Collect Files',
+              'Candidates', 'Existing File Link', 'File Share Context', 'Share Final File', 'New File Link', sel,
+              o_meta, o_link, o_ver, o_sel):
         f.link(n, problem, 1)
     step_in, step = f.helper('Preparation Step', '/v2/prep/step', r"""(()=>{
 const ctx=$('Item Context').item.json,cfg=$('Configuration').first().json,run=$('Run Start').first().json;
 let fc={};try{fc=$('Folder Context').item.json}catch{}
+// The selection mode this run used (R5 B3): the handler refuses a result that is not the owner-selected file.
 const base={requestId:cfg.runId+':'+ctx.itemId,itemId:ctx.itemId,runId:cfg.runId,fence:run.fence,expectedFormat:ctx.format,
-folderUrl:fc.folderCreated?fc.folderUrl:null};
+folderUrl:fc.folderCreated?fc.folderUrl:null,
+selection:{mode:ctx.selection_mode||'automatic_folder_selection',url:ctx.selected_url||null}};
 if($json.file&&$json.ok!==false&&$json.url)return {...base,file:{id:$json.file.id,rev:$json.file.rev,content_hash:$json.file.content_hash,name:$json.file.name},url:$json.url};
 if($json.ok===false)return {...base,error:$json.note,errorKind:$json.errorKind||'editor'};
 return {...base,error:$json.error||'Dropbox selection failed',errorKind:$json.errorKind||'infra'};})()""",
@@ -599,21 +683,45 @@ return {...base,error:$json.error||'Dropbox selection failed',errorKind:$json.er
     f.link('File Link Exists?', step_in, 0)
     f.link('New File Link', step_in)
     f.link(problem, step_in)
+    f.link(o_sel, step_in)
+    f.link(missing, step_in)
     f.link(step, finished, 1)
 
-    upload = f.cond('Upload Needed?', "$json.state==='completed'&&$json.next==='upload'")
+    # Delivery of the verified file (the copy Instagram fetches). Every stage reports to the handler: a confirmed
+    # upload is recorded with its Dropbox identity (R5 M17) and is not repeated when sharing fails; failures are
+    # recorded with their stage and bounded (R5 M9).
+    upload = f.cond('Upload Needed?', "$json.state==='completed'&&['upload','share','identify'].includes($json.next)")
     f.link(step, upload)
     f.link(upload, finished, 1)
+    up_stage = f.cond('Upload Stage?', "$json.next==='upload'")
+    id_stage = f.cond('Identify Stage?', "$json.next==='identify'")
     ens = f.reuse('Ensure Prepared Dropbox Folder')
     chk = f.code('Prepared Folder Checked', "if($json.error_summary&&!$json.error_summary.startsWith('path/conflict/folder'))throw new Error($json.error_summary);return [{json:$('Preparation Step').item.json}];",
                  on_error='continueErrorOutput')
     rd = f.reuse('Read Verified Video from n8n Disk')
     up = f.reuse('Upload Verified 1080 Video')
     f.nodes[up]['parameters']['headerParameters']['parameters'][0]['value'] = (
-        "={{ JSON.stringify({path:'/Social Media/Prepared/'+$('Item Context').item.json.itemId+'-'+"
-        "$('Preparation Step').item.json.mediaId+'.mp4',mode:'overwrite',autorename:false,mute:true}) }}")
+        "={{ JSON.stringify({path:$('Preparation Step').item.json.deliveryPath,mode:'overwrite',autorename:false,"
+        "mute:true}) }}")
+    ident = f.reuse('Folder Metadata', 'Identify Delivered Copy')
+    f.nodes[ident]['parameters']['url'] = 'https://api.dropboxapi.com/2/files/get_metadata'
+    f.nodes[ident]['parameters']['jsonBody'] = "={{ JSON.stringify({path:$('Preparation Step').item.json.deliveryPath}) }}"
+    rec_in, rec = f.helper('Record Upload', '/v2/prep/delivered', r"""(()=>{const s=$('Preparation Step').item.json;
+const stage=s.next==='identify'?'identified':'uploaded';
+return {requestId:$('Configuration').first().json.runId+':'+$('Item Context').item.json.itemId+':'+stage,
+itemId:$('Item Context').item.json.itemId,runId:$('Configuration').first().json.runId,fence:$('Run Start').first().json.fence,
+mediaId:s.mediaId,stage,upload:{id:$json.id,rev:$json.rev,content_hash:$json.content_hash,path_lower:$json.path_lower,size:$json.size}};})()""",
+                           on_error='continueErrorOutput')
+    recorded = f.cond('Upload Recorded?', "$json.state==='completed'&&$json.next==='share'")
+    target = f.code('Delivery Target', "const p=$json.deliveryPath||$('Preparation Step').item.json.deliveryPath;\n"
+                                       "if(!p)throw new Error('Delivery path missing');return [{json:{path:p}}];",
+                    on_error='continueErrorOutput')
     share = f.reuse('Share Verified Video')
+    f.nodes[share]['parameters']['jsonBody'] = (
+        "={{ JSON.stringify({path:$('Delivery Target').item.json.path,settings:{requested_visibility:'public'} }) }}")
     fshare = f.reuse('Find Verified Share')
+    f.nodes[fshare]['parameters']['jsonBody'] = (
+        "={{ JSON.stringify({path:$('Delivery Target').item.json.path,direct_only:true}) }}")
     link = f.code('Verified Delivery Link', r"""
 const s=$('Share Verified Video').item.json;let link=s.url||s.error?.shared_link_already_exists?.metadata?.url||$json.links?.[0]?.url;
 if(!link)throw new Error('Verified video delivery link missing');
@@ -621,11 +729,35 @@ link=link.replace(/[?&](dl|raw)=\d+/g,'').replace(/\?&/,'?');link+=(link.include
 return [{json:{url:link}}];""", on_error='continueErrorOutput')
     del_in, dl = f.helper('Register Verified Delivery', '/v2/prep/delivered', r"""{requestId:$('Configuration').first().json.runId+':'+$('Item Context').item.json.itemId+':delivered',
 itemId:$('Item Context').item.json.itemId,runId:$('Configuration').first().json.runId,fence:$('Run Start').first().json.fence,
-mediaId:$('Preparation Step').item.json.mediaId,url:$json.url}""", on_error='continueErrorOutput')
-    f.link(upload, ens, 0)
-    f.chain(ens, chk, rd, up, share, fshare, link, del_in)
-    for n in (ens, chk, rd, up, share, fshare, link, dl):
-        f.link(n, finished, 1)
+mediaId:$('Preparation Step').item.json.mediaId,stage:'shared',url:$json.url}""", on_error='continueErrorOutput')
+    d_problem = f.code('Delivery Problem', DROPBOX_CLASSIFY + r"""
+const STAGES={'Ensure Prepared Dropbox Folder':'folder','Prepared Folder Checked':'folder',
+'Read Verified Video from n8n Disk':'read','Upload Verified 1080 Video':'upload','Identify Delivered Copy':'identify',
+'Record Upload':'record','Delivery Target':'share','Share Verified Video':'share','Find Verified Share':'share',
+'Verified Delivery Link':'share','Register Verified Delivery':'register'};
+let prev='';try{prev=$prevNode.name}catch(e){}
+const r=classify($json.error,$json);
+const local=/ENOENT|no such file/i.test(JSON.stringify($json.error||''));
+return [{json:{error:r.text,errorKind:r.kind,stage:$json.stage||STAGES[prev]||(local?'read':'unknown')}}];""")
+    fail_in, fail = f.helper('Record Delivery Failure', '/v2/prep/delivered', r"""(()=>{const s=$('Preparation Step').item.json;
+return {requestId:$('Configuration').first().json.runId+':'+$('Item Context').item.json.itemId+':delivery-failed:'+$json.stage,
+itemId:$('Item Context').item.json.itemId,runId:$('Configuration').first().json.runId,fence:$('Run Start').first().json.fence,
+mediaId:s.mediaId,stage:$json.stage,error:$json.error,errorKind:$json.errorKind};})()""", fail=False)
+    f.link(upload, up_stage, 0)
+    f.link(up_stage, ens, 0)
+    f.link(up_stage, id_stage, 1)
+    f.link(id_stage, ident, 0)
+    f.link(id_stage, target, 1)                        # 'share': the upload was confirmed earlier
+    f.chain(ens, chk, rd, up, rec_in)
+    f.link(ident, rec_in)
+    f.link(rec, recorded)
+    f.link(recorded, target, 0)
+    f.link(recorded, finished, 1)
+    f.chain(target, share, fshare, link, del_in)
+    for n in (ens, chk, rd, up, ident, rec, target, share, fshare, link, dl):
+        f.link(n, d_problem, 1)
+    f.chain(d_problem, fail_in)
+    f.link(fail, finished)
     f.link(dl, finished)
 
     # editor tasks: durable (item, issue) identity; only material changes

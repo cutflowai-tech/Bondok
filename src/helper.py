@@ -76,7 +76,7 @@ def prep_step(o, b):
     handler transactions, never inside one."""
     base = {'run_id': b['runId'], 'fence': b.get('fence'), 'expected_format': b.get('expectedFormat')}
     args = {**base, 'file': b.get('file') or {}, 'url': b.get('url'), 'folder_url': b.get('folderUrl'),
-            'error': b.get('error'), 'error_kind': b.get('errorKind')}
+            'error': b.get('error'), 'error_kind': b.get('errorKind'), 'selection': b.get('selection')}
     rid = str(b['requestId'])
     r = o.submit(Command(rid + ':source', 'prep_source', 'service:wf1', 'service:wf1', b['itemId'], args))
     for step in range(3):
@@ -100,6 +100,23 @@ def prep_step(o, b):
         return o.submit(Command(rid + ':media', 'prep_media', 'service:wf1', 'service:wf1', b['itemId'],
                                 {**base, 'result': res}))
     return r
+
+
+def delivered_args(o, b):
+    """WF1 delivery stage report: an upload/identification with its Dropbox metadata, the registered share link, or
+    a failure at one stage (R5 M9/M17). The local file's Dropbox content hash is computed here, outside any
+    handler transaction, when the prepared file's record does not carry it yet."""
+    args = {'run_id': b['runId'], 'fence': b.get('fence'), 'mediaId': b['mediaId'], 'url': b.get('url'),
+            'stage': b.get('stage'), 'error': b.get('error'), 'error_kind': b.get('errorKind'),
+            'upload': b.get('upload')}
+    if b.get('upload') and b.get('stage') in ('uploaded', 'identified'):
+        with o.store.read() as c:
+            m = o.media_row(c, b['mediaId'])
+        info = json.loads(m['metadata'] or '{}') if m else {}
+        if m and not info.get('dropboxHash'):
+            local = o.local_media(m)
+            args['local_hash'] = media.dropbox_hash(local) if local else None
+    return {k: v for k, v in args.items() if v is not None}
 
 
 def action(path, b):
@@ -126,8 +143,7 @@ def action(path, b):
     if path == '/v2/prep/step':
         return prep_step(o, b)
     if path == '/v2/prep/delivered':
-        return cmd(o, b, 'prep_delivered', b['itemId'], {'run_id': b['runId'], 'fence': b.get('fence'),
-                                                          'mediaId': b['mediaId'], 'url': b['url']}, 'wf1')
+        return cmd(o, b, 'prep_delivered', b['itemId'], delivered_args(o, b), 'wf1')
     if path == '/v2/caption/needed':
         return o.caption_needed(b['itemId'], b.get('title'), b.get('brief'))
     if path == '/v2/caption/draft':
@@ -149,7 +165,7 @@ def action(path, b):
         return o.renew(b['attemptId'], b['worker'], b['fence'])
     if path == '/v2/publish/commit':
         return o.commit(b['attemptId'], b['worker'], b['fence'], source_asset=b.get('sourceAsset'),
-                        container_status=b.get('containerStatus'))
+                        container_status=b.get('containerStatus'), delivered_asset=b.get('deliveredAsset'))
     if path == '/v2/publish/result':
         return o.result(b['attemptId'], b['worker'], media_id=b.get('mediaId'), error=b.get('error'),
                         http_status=b.get('httpStatus'), definitive=bool(b.get('definitive')))

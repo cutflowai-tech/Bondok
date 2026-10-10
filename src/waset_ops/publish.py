@@ -239,7 +239,8 @@ class PublishMixin:
             return {'ok': True}
 
     # ------------------------------------------------------------------ commitment point
-    def commit(self, attempt_id, worker, fence, *, source_asset=None, container_status=None) -> dict:
+    def commit(self, attempt_id, worker, fence, *, source_asset=None, container_status=None,
+               delivered_asset=None) -> dict:
         now, now_dt = self.now(), self.now_dt()
         with self.store.tx() as c:
             a = self._attempt(c, attempt_id, worker, fence, ('container_created',))
@@ -266,6 +267,20 @@ class PublishMixin:
                 problems.append('Dropbox file version could not be checked (temporary)')
             if changed:
                 problems.append('Dropbox file version changed after verification')
+            # R5 M17: the delivered copy (what Instagram fetched) must still be the bound Dropbox object. Checked only
+            # when its identity was recorded at delivery; earlier deliveries keep the previous behaviour.
+            delivered = self.delivered_identity(c, it)
+            d_changed = False
+            if delivered and delivered_asset not in (None, 'unverifiable'):
+                # '<id>@<rev>' read from the share link now; Dropbox documents `rev` as always present and `id` as
+                # optional, so the id is compared only when reported.
+                seen_id, _, seen_rev = str(delivered_asset).rpartition('@')
+                want_id, _, want_rev = delivered.rpartition('@')
+                d_changed = seen_rev != want_rev or bool(seen_id and seen_id != want_id)
+            if delivered and delivered_asset == 'unverifiable':
+                problems.append('Delivered Dropbox copy could not be checked (temporary)')
+            if d_changed:
+                problems.append('Delivered Dropbox copy changed after verification')
             if self.verification_problem(c, it):
                 problems.append(self.verification_problem(c, it))
             dup = self.duplicate_of(c, it)
@@ -278,6 +293,16 @@ class PublishMixin:
                 c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
                           (dumps({'refused': problems}), now, attempt_id))
                 audit(c, a['item_id'], 'commit_refused', worker, {'attempt': attempt_id, 'problems': problems})
+                if d_changed and not changed:
+                    self.drop_delivery(c, it['verification_id'])        # deliver the verified file again
+                    self.request_check(c, it['item_id'], worker, 'delivered_copy_changed_before_publish')
+                    self.release(c, it, 'delivered copy changed before publish', keep_request=True)
+                    self.update_item(c, it['item_id'], worker, 'delivered copy changed before publish',
+                                     readiness='checking', verification_id=None)
+                    self.notify(c, 'delivered-changed:' + attempt_id, f"Publication of {it['name']} ({it['item_id']}) "
+                                f'at {rules.display(slot)} was stopped: the delivered copy in Dropbox (what Instagram '
+                                'fetches) changed after it was verified. Nothing was published; the verified file will '
+                                'be delivered again before it is scheduled.', it['item_id'])
                 if changed:
                     self.request_check(c, it['item_id'], worker, 'source_changed_before_publish')
                     # The verified media no longer matches Dropbox: drop the authorization so the next run
