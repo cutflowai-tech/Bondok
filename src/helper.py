@@ -21,7 +21,6 @@ is not started (runs and the supervisor are deferred, queues answer empty, claim
 started before the fence, and attempts already claimed, may finish and report results.
 """
 import base64
-import fcntl
 import json
 import os
 import re
@@ -44,7 +43,7 @@ INBOX_STALE_SECONDS = 3600
 BODY_FILE = re.compile(r'inbox/[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.json')
 FENCE_FILE = 'deploy-fence.json'
 # Results of work already in flight, and read-only routes: allowed while the deployment fence is up.
-FENCE_ALLOWED = {'/v2/health', '/v2/monitor/inspect', '/v2/deploy/drain', '/v2/run/finish', '/v2/run/fail',
+FENCE_ALLOWED = {'/v2/health', '/v2/monitor/inspect', '/v2/run/finish', '/v2/run/fail',
                  '/v2/publish/container', '/v2/publish/renew', '/v2/publish/commit', '/v2/publish/result',
                  '/v2/publish/evidence', '/v2/publish/reconcile', '/v2/publish/abandon', '/v2/outbox/ack',
                  '/v2/import/record'}
@@ -109,44 +108,6 @@ def in_flight_run(o, ctx, fence) -> bool:
         r = c.execute('SELECT * FROM ops_runs WHERE kind=?', (kind,)).fetchone()
     return bool(r and r['run_id'] == run_id and (run_fence is None or r['fence'] == int(run_fence)) and
                 (r['lease_until'] or 0) > time.time() and (r['started'] or 0) < float(fence.get('since') or 0))
-
-
-def media_jobs_running() -> int:
-    """Detached media jobs hold one capacity lock each; probe without waiting."""
-    n = 0
-    for slot in range(getattr(media, 'CAPACITY', 2)):
-        p = ROOT / f'media-capacity-{slot}.lock'
-        try:
-            fd = os.open(p, os.O_RDONLY)
-        except OSError:
-            continue
-        try:
-            fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        except BlockingIOError:
-            n += 1
-        finally:
-            os.close(fd)
-    return n
-
-
-def drain_status(o) -> dict:
-    """Read-only: is any writer still working? Used by deploy/deploy.py before it switches code."""
-    now = time.time()
-    with o.store.read() as c:
-        runs = [dict(r) for r in c.execute('SELECT kind, run_id, fence, lease_until, started FROM ops_runs '
-                                           'WHERE lease_until > ?', (now,))]
-        attempts = [dict(r) for r in c.execute("SELECT id, item_id, stage, lease_until FROM ops_attempts WHERE stage "
-                                               "IN ('claimed','container_created','committed')")]
-        outbox = c.execute("SELECT COUNT(*) FROM ops_outbox WHERE state='in_flight' AND lease_until > ?",
-                           (now,)).fetchone()[0]
-    live = [a for a in attempts if (a['lease_until'] or 0) > now]
-    jobs = media_jobs_running()
-    return {'fenced': deploy_fence() is not None, 'fence': deploy_fence(),
-            'drained': not runs and not live and not outbox and not jobs,
-            'blocking': {'runs': runs, 'attempts': live, 'outbox_in_flight': outbox, 'media_jobs': jobs},
-            # Leases already expired: the worker is gone; the new code reconciles them (never "canceled").
-            'unresolved_attempts': [a for a in attempts if (a['lease_until'] or 0) <= now], 'as_of': now}
 
 
 def sweep_inbox():
@@ -272,8 +233,6 @@ def action(path, b):
     if path == '/v2/run/fail':
         return o.run_fail(b['kind'], str(b['runId']), b.get('reason') or 'reported by the workflow',
                           step=b.get('step'), fence=b.get('fence'))
-    if path == '/v2/deploy/drain':
-        return drain_status(o)
     if path == '/v2/import/plan':
         return o.import_plan(b['sources'], b['social'])
     if path == '/v2/import/record':
