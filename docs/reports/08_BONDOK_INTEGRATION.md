@@ -149,7 +149,7 @@ These follow from current behaviour. They are not a design.
 2. Where is `WASET_SOCIAL_DATA_DIR` on the server, is `state.sqlite` backed up, and who may read or edit it?
 3. How do items get onto board 5105608159 besides WF1's import: manual entry, a Monday automation, or one of the 15 inaccessible workflows (e.g. `7D6DDdNoLDw3syFM`)? Can *Available in MCP* be enabled on those 15?
 4. Was the WF3 run 51712 that moved all 25 Scheduled items to Needs Review intended, and is "duration/Topaz/resolution/size checks incomplete" the expected blocking policy for items scheduled before V2?
-5. Is the old publisher ("Old publisher and waiting executions stopped") fully disabled, and does anything else post to IG account 17841479950766455?
+5. Is the old publisher ("Old publisher and waiting executions stopped") fully disabled, and does anything else post to IG account <IG_ACCOUNT>?
 6. Should Facebook Page publishing exist? It is not implemented.
 7. Who should be alerted when runs fail (none are today), and through which channel (Slack, Telegram, email)? Should Bondok be that channel?
 8. What may Bondok do: read-only status, pause/skip/unpause, reschedule, retry preparation, approve Topaz, or trigger a publish? Which actions need a human confirmation?

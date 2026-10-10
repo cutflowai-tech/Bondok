@@ -59,7 +59,7 @@ The social media system is **three active n8n workflows** plus a **Python helper
   - `Monday.com account` (mondayComApi).
   - `Dropbox account` (dropboxOAuth2Api): folder creation and the verified-video upload.
   - `Unnamed credential 2` (generic oAuth2Api) is a **second Dropbox credential**, used for listing, sharing, metadata and revision checks.
-  - `Simplified Custom Auth account` (httpTemplatedCustomAuth) is used for the Instagram Graph API v26.0 calls on IG user `17841479950766455`: Create Container, Check Container, Publish To Instagram, Get Permalink.
+  - `Simplified Custom Auth account` (httpTemplatedCustomAuth) is used for the Instagram Graph API v26.0 calls on IG user `<IG_ACCOUNT>`: Create Container, Check Container, Publish To Instagram, Get Permalink.
   - `OpenRouter account`.
 - LLMs used (OpenRouter, WF1 only): `openai/gpt-5.6-sol` writes Post captions (node `Write Caption`), and `openai/gpt-4.1-mini` reorders styles (node `Light AI — Diversify Styles`).
 - Boards: **5105608159 For Social Media** (target). **5091110326** is the source projects board; WF1 reads it and WF2 writes `Posted` back to it.

@@ -51,13 +51,15 @@ def probe(data_dir):
     try:
         c.execute('PRAGMA query_only=1')
         tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        runs, attempts, outbox, schema, legacy = [], [], 0, 0, []
+        runs, attempts, outbox, schema, legacy, accounts = [], [], 0, 0, [], []
         if 'ops_meta' in tables:
             row = c.execute("SELECT value FROM ops_meta WHERE key='schema_version'").fetchone()
             schema = int(row[0]) if row else 0
         if 'ops_runs' in tables:
             runs = [{'kind': k, 'run_id': r, 'lease_until': u} for k, r, u in
                     c.execute('SELECT kind, run_id, lease_until FROM ops_runs WHERE lease_until > ?', (now,))]
+        if 'ops_reservations' in tables:
+            accounts = [r[0] for r in c.execute('SELECT DISTINCT account FROM ops_reservations ORDER BY 1')]
         if 'ops_attempts' in tables:
             attempts = [{'id': i, 'item_id': it, 'stage': s, 'lease_until': u} for i, it, s, u in c.execute(
                 "SELECT id, item_id, stage, lease_until FROM ops_attempts "
@@ -76,7 +78,7 @@ def probe(data_dir):
             'drained': not runs and not live and not outbox and not jobs,
             'blocking': {'runs': runs, 'attempts': live, 'outbox_in_flight': outbox, 'media_jobs': jobs},
             'unresolved_attempts': [a for a in attempts if (a['lease_until'] or 0) <= now],
-            'legacy_in_flight': legacy}
+            'legacy_in_flight': legacy, 'accounts': accounts}
 
 
 if __name__ == '__main__':

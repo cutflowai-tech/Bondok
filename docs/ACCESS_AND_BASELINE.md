@@ -22,7 +22,7 @@ no Monday item, Slack message, Instagram object or credential was changed.
 | Operational DB | `state.sqlite` (WAL) in the same volume; also bind-mounted into Bondok at `/var/lib/bondok/pipeline` | VERIFIED LIVE | consistent read-only backup via SQLite backup API → `.local-snapshots/` (gitignored) | No backup arrangement found for this file — NOT VERIFIED that one exists |
 | Monday | account "Waset co Studio", user `99154021`, timezone **Africa/Cairo**; board 5105608159 (164 items, 4 groups) | VERIFIED LIVE (MCP read) | read-only snapshot → `.local-snapshots/` | Native board automations/webhooks: not exposed by connector (NOT VERIFIED) |
 | Dropbox | two n8n credentials ("Dropbox account", "Unnamed credential 2") | VERIFIED IN SOURCE | none | namespaces NOT VERIFIED |
-| Instagram | IG user `17841479950766455`, Graph API v26.0 via "Simplified Custom Auth account" | VERIFIED IN SOURCE | none (no API call made) | account identity and permission scopes NOT VERIFIED live |
+| Instagram | IG user `<IG_ACCOUNT>`, Graph API v26.0 via "Simplified Custom Auth account" | VERIFIED IN SOURCE | none (no API call made) | account identity and permission scopes NOT VERIFIED live |
 
 ## Current production state (2026-10-09 ~17:00 UTC)
 

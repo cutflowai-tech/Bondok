@@ -433,7 +433,7 @@
   },
   {
    "parameters": {
-    "url": "https://graph.facebook.com/v26.0/17841479950766455?fields=id",
+    "url": "https://graph.facebook.com/v26.0/<IG_ACCOUNT>?fields=id",
     "authentication": "genericCredentialType",
     "genericAuthType": "httpTemplatedCustomAuth",
     "options": {}
@@ -957,7 +957,7 @@
   {
    "parameters": {
     "method": "POST",
-    "url": "https://graph.facebook.com/v26.0/17841479950766455/media",
+    "url": "https://graph.facebook.com/v26.0/<IG_ACCOUNT>/media",
     "authentication": "genericCredentialType",
     "genericAuthType": "httpTemplatedCustomAuth",
     "sendBody": true,
@@ -1569,7 +1569,7 @@
   {
    "parameters": {
     "method": "POST",
-    "url": "https://graph.facebook.com/v26.0/17841479950766455/media_publish",
+    "url": "https://graph.facebook.com/v26.0/<IG_ACCOUNT>/media_publish",
     "authentication": "genericCredentialType",
     "genericAuthType": "httpTemplatedCustomAuth",
     "sendBody": true,

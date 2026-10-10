@@ -85,7 +85,7 @@ flowchart LR
   H -- "HTTPS GET shared link ?raw=1<br/>(source download)" --> DBX
 
   %% ---------- Instagram ----------
-  IG[("Instagram Graph API v26.0<br/>IG user 17841479950766455")]
+  IG[("Instagram Graph API v26.0<br/>IG user <IG_ACCOUNT>")]
   WF2 -- "POST /media (container), GET status,<br/>POST /media_publish, GET permalink" --> IG
   IG -. "fetches video_url<br/>(public Dropbox raw link)" .-> DBX
 

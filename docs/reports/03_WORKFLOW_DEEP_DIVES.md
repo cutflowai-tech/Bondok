@@ -836,7 +836,7 @@ The failure note is `'Item was canceled, rescheduled, already posted, or its con
 | Input node | Endpoint | Payload |
 |---|---|---|
 | Publication Receipts — Input | `/v1/publish/snapshot` | `{}` |
-| Claim Publication — Input | `/v1/publish/claim` | `{account:'17841479950766455', assetKey:text_mm7yy451, itemId, format, at, mediaId, topazed:(color_mm7xe2j2==='Topazed'), expectedUrl:link_mm7ywc0w.url, sourceProjectId, owner}` |
+| Claim Publication — Input | `/v1/publish/claim` | `{account:'<IG_ACCOUNT>', assetKey:text_mm7yy451, itemId, format, at, mediaId, topazed:(color_mm7xe2j2==='Topazed'), expectedUrl:link_mm7ywc0w.url, sourceProjectId, owner}` |
 | Renew Publication Lease — Input | `/v1/publish/heartbeat` | `{itemId, owner}` |
 | Save Container Receipt — Input | `/v1/publish/checkpoint` | `{itemId, owner, stage:'container_created', data:{containerId}}` |
 | Record Publish Intent — Input | `/v1/publish/checkpoint` | `{itemId, owner, stage:'publish_requested', data:{}}` |
@@ -857,9 +857,9 @@ The following are DELEGATED-TO-HELPER:
 | Endpoint | Node | Credential type | Retry |
 |---|---|---|---|
 | `POST https://api.monday.com/v2` | Social Read Page, Find Source Project, Recheck…, Mark Posted in Monday, Sync Posted to Customer Projects, Read Status Before Review, Save Publication Note | `mondayComApi` | 3× / 2 s on Find Source Project and Recheck only |
-| `POST https://graph.facebook.com/v26.0/17841479950766455/media` | Create Container | `httpTemplatedCustomAuth` | `retryOnFail:false` |
+| `POST https://graph.facebook.com/v26.0/<IG_ACCOUNT>/media` | Create Container | `httpTemplatedCustomAuth` | `retryOnFail:false` |
 | `GET https://graph.facebook.com/v26.0/{containerId}?fields=status_code,status` | Check Container | `httpTemplatedCustomAuth` | 3× / 2 s |
-| `POST https://graph.facebook.com/v26.0/17841479950766455/media_publish` `{creation_id}` | Publish To Instagram | `httpTemplatedCustomAuth` | `retryOnFail:false` |
+| `POST https://graph.facebook.com/v26.0/<IG_ACCOUNT>/media_publish` `{creation_id}` | Publish To Instagram | `httpTemplatedCustomAuth` | `retryOnFail:false` |
 | `GET https://graph.facebook.com/v26.0/{mediaId}?fields=permalink` | Get Permalink | `httpTemplatedCustomAuth` | 3× / 2 s, neverError |
 | `POST https://api.dropboxapi.com/2/files/get_metadata` | Verify Source Revision | generic `oAuth2Api` ("Unnamed credential 2") | 3× / 2 s |
 

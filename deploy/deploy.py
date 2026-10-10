@@ -70,9 +70,9 @@ SQLITE_BACKUP = ('import sqlite3,sys\n'
                  'd=sqlite3.connect(sys.argv[2])\n'
                  's.backup(d)\nd.close()\ns.close()\n')
 HELPER_IMPORT = ('import json,sys\nsys.path.insert(0,sys.argv[1])\n'
-                 'import helper,waset_ops\nfrom waset_ops.db import SCHEMA_VERSION\n'
+                 'import helper,waset_ops\nfrom waset_ops.db import SCHEMA_VERSION\nfrom waset_ops import rules\n'
                  'print(json.dumps({"version":waset_ops.__version__,"schema":SCHEMA_VERSION,'
-                 '"release":helper.release_info(),"file":helper.__file__}))\n')
+                 '"release":helper.release_info(),"file":helper.__file__,"account":rules.ACCOUNT}))\n')
 LIMITS = """Limits (not guaranteed by this tool):
 * A helper process that started before the switch finishes on the old code (the drain waits for every lease,
   not for processes outside the store, e.g. a Code node that has not yet called the helper).
@@ -538,6 +538,12 @@ class Deployer:
             raise Refused(f'staged helper import test failed in its runtime: {p.stderr.strip()[-400:]}') from None
         if (info.get('release') or {}).get('release') != manifest['release'] or info['schema'] != manifest['schema_version']:
             raise Refused(f'staged helper reports {info}, expected release {manifest["release"]}')
+        # R5 LOW-18: the Instagram user id is filled in at build time; it must be the account the live reservations
+        # and publication identities were recorded under, or slots and duplicate checks would silently split.
+        accounts = self.drain_probe(staged_helper / 'drain_probe.py').get('accounts') or []
+        if accounts and info.get('account') not in accounts:
+            raise Refused('the release was built for a different Instagram account than the live reservations '
+                          '(check the private --site file); nothing was changed')
         with tempfile.TemporaryDirectory() as d:          # health of the new code on a copy of today's data
             self.sqlite_backup(self.data / 'state.sqlite', Path(d) / 'state.sqlite')
             arg = base64.b64encode(json.dumps({'path': '/v2/health', 'body': {}}).encode()).decode()

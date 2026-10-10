@@ -1723,7 +1723,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://graph.facebook.com/v26.0/17841479950766455/media",
+        "url": "https://graph.facebook.com/v26.0/<IG_ACCOUNT>/media",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpTemplatedCustomAuth",
         "sendBody": true,
@@ -2021,7 +2021,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "https://graph.facebook.com/v26.0/17841479950766455/media_publish",
+        "url": "https://graph.facebook.com/v26.0/<IG_ACCOUNT>/media_publish",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpTemplatedCustomAuth",
         "sendBody": true,
@@ -2419,7 +2419,7 @@
       "typeVersion": 2,
       "parameters": {
         "mode": "runOnceForAllItems",
-        "jsCode": "const body=JSON.parse(JSON.stringify({account:'17841479950766455',assetKey:($json.item.column_values||[]).find(x=>x.id==='text_mm7yy451')?.text,itemId:$json.itemId,format:$json.format,at:$json.at,mediaId:$json.mediaId,topazed:($json.item.column_values||[]).find(c=>c.id==='color_mm7xe2j2')?.text==='Topazed',expectedUrl:JSON.parse(($json.item.column_values||[]).find(c=>c.id==='link_mm7ywc0w')?.value||'null')?.url,sourceProjectId:$json.sourceProjectId,owner:$json.owner}));const payload=Buffer.from(JSON.stringify({path:\"/v1/publish/claim\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+        "jsCode": "const body=JSON.parse(JSON.stringify({account:'<IG_ACCOUNT>',assetKey:($json.item.column_values||[]).find(x=>x.id==='text_mm7yy451')?.text,itemId:$json.itemId,format:$json.format,at:$json.at,mediaId:$json.mediaId,topazed:($json.item.column_values||[]).find(c=>c.id==='color_mm7xe2j2')?.text==='Topazed',expectedUrl:JSON.parse(($json.item.column_values||[]).find(c=>c.id==='link_mm7ywc0w')?.value||'null')?.url,sourceProjectId:$json.sourceProjectId,owner:$json.owner}));const payload=Buffer.from(JSON.stringify({path:\"/v1/publish/claim\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
       },
       "position": [
         1040,

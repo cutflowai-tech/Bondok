@@ -15,7 +15,8 @@ from zoneinfo import ZoneInfo
 TZ = ZoneInfo('Africa/Cairo')
 UTC = timezone.utc
 
-ACCOUNT = '17841479950766455'          # IG user used by WF2 export (verify live before cutover)
+ACCOUNT = '<IG_ACCOUNT>'               # IG user id: a placeholder in the public repository, filled in by
+                                       # deploy/build_release.py --site (private); unresolved -> not deployable (R5 LOW-18)
 BOARD = '5105608159'                   # For Social Media; Bondok business-tool boundary
 SOURCE_BOARD = '5091110326'            # Source projects; integration-only access
 EDITOR_SUBITEM_BOARD = '5091137380'    # Editor task subitems; integration-only access

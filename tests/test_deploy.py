@@ -65,7 +65,9 @@ class ReleaseFixture(unittest.TestCase):
         # Untracked, gitignored files that must never ship.
         (cls.repo / 'bondok' / '.env').write_text(f'SLACK_BOT_TOKEN={CANARY}\n')
         (cls.repo / 'bondok' / 'scratch.sqlite').write_bytes(b'SQLite format 3\x00' + CANARY.encode())
-        p = build_release(cls.repo, base / 'release')
+        cls.site = base / 'private-site.json'
+        cls.site.write_text(json.dumps({'IG_ACCOUNT': '17800000000000001'}))
+        p = build_release(cls.repo, base / 'release', '--site', str(cls.site))
         if p.returncode:
             raise AssertionError(p.stdout + p.stderr)
         cls.release = Path(p.stdout.strip().splitlines()[-1])
@@ -95,6 +97,20 @@ class R5_LOW19_ReleasePackaging(ReleaseFixture):
         rel = json.loads((self.release / 'helper' / 'RELEASE.json').read_text())
         self.assertEqual(rel['release'], self.manifest['release'])
         self.assertEqual(rel['schema_version'], self.manifest['schema_version'])
+
+    def test_deployment_ids_are_placeholders_filled_only_in_the_release(self):      # R5 LOW-18
+        self.assertIn("ACCOUNT = '<IG_ACCOUNT>'", (self.repo / 'src' / 'waset_ops' / 'rules.py').read_text())
+        for p in self.release.rglob('*'):
+            if p.is_file():
+                self.assertNotIn(b'<IG_ACCOUNT>', p.read_bytes(), p)
+        self.assertIn('17800000000000001', (self.release / 'helper' / 'waset_ops' / 'rules.py').read_text())
+        self.assertIn('/v26.0/17800000000000001/media', next(self.release.glob('workflows/pUIshuf16zIYoYRz*')).read_text())
+        p = build_release(self.repo, Path(self.tmp_cls.name) / 'release-nosite')
+        self.assertEqual(p.returncode, 0, p.stderr)
+        m = json.loads((Path(p.stdout.strip().splitlines()[-1]) / 'MANIFEST.json').read_text())
+        self.assertFalse(m['deployable']['code'])
+        self.assertFalse(m['deployable']['workflows'])
+        self.assertEqual(m['unresolved_placeholders'], ['IG_ACCOUNT'])
 
     def test_redacted_credentials_are_not_deployable(self):
         self.assertTrue(self.manifest['unresolved_credentials'])
@@ -399,6 +415,18 @@ class R5_Deploy_Gates(DeployCase):
             code, out = self.run_tool('code', '--release', str(tampered), expect_live=True)
         self.assertEqual(code, 2, out)
         self.assertIn('publish.py', out)
+        self.assertEqual(self.lay.code_hashes(), before)
+        self.assertFalse((self.lay.data / 'deploy-fence.json').exists())
+
+    def test_release_for_another_instagram_account_refuses_before_any_change(self):      # R5 LOW-18
+        with sqlite3.connect(self.lay.data / 'state.sqlite') as c:
+            c.execute("INSERT INTO ops_items(item_id, name, format) VALUES('9', 'x', 'Story')")
+            c.execute("INSERT INTO ops_reservations(item_id, account, format, slot, content_rev, payload_fp, origin) "
+                      "VALUES('9', '17899999999999999', 'Story', '2026-10-11T11:00:00Z', 1, 'fp', 'auto')")
+        before = self.lay.code_hashes()
+        code, out = self.run_tool('code', '--release', str(self.release), expect_live=True)
+        self.assertEqual(code, 2, out)
+        self.assertIn('Instagram account', out)
         self.assertEqual(self.lay.code_hashes(), before)
         self.assertFalse((self.lay.data / 'deploy-fence.json').exists())
 

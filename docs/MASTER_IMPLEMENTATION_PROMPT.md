@@ -147,7 +147,7 @@ Existing tables: `locks`, `reservations`, `jobs`, `media`, `publications`, `asse
 
 Important existing routes include item invalidation; media preflight/prepare/delivered; schedule reserve/commit/cancel/reconcile; publish snapshot/claim/heartbeat/checkpoint; monitor plan/reserve/log; lock/unlock; health; maintenance. Inspect all implementations and their side effects.
 
-WF1 imports from source board `5091110326`, creates editor tasks as source-project subitems, and prepares media. WF2 publishes Instagram videos: Post is mapped to REELS with feed sharing; Story to STORIES. Its export uses Graph API `v26.0` and IG account ID `17841479950766455`; verify the actual configured account/API support rather than blindly copying or upgrading it. WF2 writes publication evidence to the social board and Posted back to the source project.
+WF1 imports from source board `5091110326`, creates editor tasks as source-project subitems, and prepares media. WF2 publishes Instagram videos: Post is mapped to REELS with feed sharing; Story to STORIES. Its export uses Graph API `v26.0` and IG account ID `<IG_ACCOUNT>`; verify the actual configured account/API support rather than blindly copying or upgrading it. WF2 writes publication evidence to the social board and Posted back to the source project.
 
 Existing integrations may require source board `5091110326` and subitem board `5091137380` access. This must not become unrestricted Bondok access.
 
