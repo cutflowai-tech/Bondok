@@ -5,11 +5,11 @@ Branch `bondok/deep-audit`. Command: `cd tests && python3 -m unittest test_accep
 ## Unit / integration suite
 | Module | Tests | Result |
 |---|---|---|
-| test_acceptance (scenarios, audit regressions, owner journey) | 131 | pass |
+| test_acceptance (scenarios, audit regressions, owner journey) | 138 | pass |
 | test_workflows (graph contracts, generated n8n code incl. WF2 guard, Dropbox classification) | 34 | pass |
 | test_helper_cli (real helper subprocess, real FFmpeg Story trimming, storage failure) | 11 | pass |
-| test_bondok (Slack service: intent, approvals, model failures, watchdog) | 33 | pass |
-| **Total** | **209** | **all pass** (124 before the audit) |
+| test_bondok (Slack service: intent, approvals, model failures, watchdog) | 35 | pass |
+| **Total** | **218** | **all pass** (124 before the audit; 209 after round 3) |
 
 Python 3.14 run; all source parses as Python 3.12 (`ast.parse(feature_version=(3,12))`). Stdlib only in `src/`.
 
@@ -50,3 +50,53 @@ unreserved or unknown-outcome items; commit refused after caption/media/format/s
 active attempt per item; unique slots; published never reverted; legacy receipt present for every committed
 attempt; no unhandled exceptions. (Past reservations kept by published/unknown items, BV-74, are excluded as by
 design.)
+
+## Round 4 (2026-10-10): production re-check, current-state replay, end-to-end publishing
+
+New regression tests (each fails on `45b6418`, the base of the branch, and passes on the branch):
+`LegacyDateLoopIncident` (3), `MissingPreparedFileAtSlot`, `LowDiskAlert`, `MediaNotReadyAtPublish` (2),
+test_bondok `OwnerPublishWordsResume` (2). The production loop tests also fail on every audit commit before
+`8a1457d`.
+
+### Replay of the audit branch on today's production state
+Fresh read-only copy of the production database and board (09:34 UTC), real n8n 2.39.8, mocked Monday/Dropbox/
+Instagram, 4 WF1+WF2 cycles:
+
+| Cycle | Board commands | Version bumps | Reservations | Instagram calls | Group moves | Slack notices |
+|---|---|---|---|---|---|---|
+| 1 | 40 (the 19 cleared pairs, once) | 58 | 23 → 23 | 0 | 0 | 0 |
+| 2 | 0 | 15 | 23 → 23 | 0 | 0 | 0 |
+| 3 | 0 | 14 | 23 → 21 (source changed*) | 0 | 0 | 0 |
+| 4 | 0 | 12 | 21 → 19 (+2 / −4, source changed*) | 0 | 0 | 0 |
+
+Production on the deployed release in the same period: ~330 board commands/hour, +2 versions per churning item per
+cycle. *The Dropbox fixtures date from 2026-10-09; files whose mock content hash differs are (correctly) treated as
+replaced.
+
+### Rollback rehearsal
+The deployed release (`452da98` helper + workflows) run for 3 cycles on the database the audit branch produced:
+no workflow failure, no Instagram call, reservations kept, the BV-77 loop resumes for the ~7 requested-but-unreserved
+items (expected for the old code). Rollback keeps the database (documented rule), so no ACL or data restore is involved.
+
+### End-to-end publishing through real n8n WF2 (Instagram mock, first production slot 2026-10-11 11:00 UTC)
+
+| Scenario | Deployed `452da98` (live) | Audit branch |
+|---|---|---|
+| Normal | 1 container, 1 publication | 1 container, 1 publication |
+| Container status ERROR | **a new container every minute** (13 in 14 min, BV-08) | 3 containers, then held with a notice |
+| Container IN_PROGRESS twice | waits, 1 publication | waits, 1 publication |
+| Container creation HTTP 500 once | retried, 1 publication | retried, 1 publication |
+| Publish HTTP 500 once / always | outcome unknown, never republished, owner asked | same |
+| Publish succeeded, answer lost | reconciled from container status PUBLISHED (+6 min), no duplicate | same |
+| Same, permalink failing | reconciled, no duplicate | same |
+| Publish 400 "media not ready" (9007) | **marked failed, slot lost** | before `78d9af1`: same; now retried in the same slot, 1 publication |
+| Board Paused before the slot | not published | not published |
+| Board "Posted" before the slot | **published again** (BV-04) | held, Slack note |
+| Post link typed before the slot | **published again** (BV-04) | held, Slack note |
+| Dropbox file replaced after scheduling | refused at commit (1 container), no publication | same |
+
+No scenario published an item twice on the audit branch. Harness notes: the mock refuses any Instagram call other
+than container create/status, media_publish and permalink; prepared files are local placeholders (verification
+checks existence); a stale mock from an earlier replay and a shared n8n task-runner port each invalidated one run
+before they were detected — the harness now refuses to start against a foreign mock, gives every replay its own
+runner port, and reports failed workflow runs in every summary.

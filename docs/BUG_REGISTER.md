@@ -11,9 +11,11 @@ work, wrong notification, unnecessary API use. LOW = minor.
 Every fixed bug has a regression test that was run against the code before the fix (separate git worktree)
 and failed there; reproductions came from scratch scripts against the real code (local only).
 
-Production impact was checked read-only on 2026-10-10: 0 reservations, 0 publication attempts, 0 holds,
-0 escalated sync jobs, 0 parked media retries, max item version 6. Publishing had not started, so no bug below
-has caused observable damage yet; "latent" means it would occur once the conditions arise.
+Production impact was checked read-only during rounds 1–3 (2026-10-09 evening to 2026-10-10 early): publishing
+had not started and no bug had caused observable damage ("latent" = would occur once the conditions arise).
+**Round 4 re-check (2026-10-10 09:34 UTC) found BV-16 live in production (see BV-77) and the operational
+findings OPS-1/OPS-2**; the "Production impact" column of earlier rows reflects the round 1–3 check unless
+marked otherwise.
 
 ## CRITICAL
 
@@ -22,7 +24,7 @@ has caused observable damage yet; "latent" means it would occur once the conditi
 | BV-01 | Explicit-owner checks matched substrings anywhere: questions, negations and unrelated words ("Topaz is not done", "postpone", "مش موافق", "look") executed protected actions (Topaz, format, resume, skip, caption approval) | bondok/bridge.py | `1107c7a` | test_bondok `ExplicitIntentFailsClosed` | latent | not deployed |
 | BV-02 | "هو 350 مش منشور؟" resolved an unknown publication as not published and rescheduled it (duplicate post) | bondok/bridge.py, publish.py | `1107c7a` (always an approval) | `UncertainOutcomeNeedsApproval` | latent (0 unknown) | not deployed |
 | BV-03 | A board snapshot read before a WF2 write landed was taken as human edits: reservation released, owner reschedule/caption reverted (old caption marked approved), Dropbox link re-pinned | items._diff, core.outbox_ack | `d18f498`, refined `8a1457d` | `StaleBoardSnapshot`, `RoundTwoRegressions.test_genuine_pause_after_recent_write_is_applied` | latent | not deployed |
-| BV-04 | Board Status=Posted / typed post link mapped to a hold Monday was not permitted to issue: refused, reservation kept, item published again | core.PERMISSIONS, items | `6eb2748` | `PublishingAuditCritical` | latent | not deployed |
+| BV-04 | Board Status=Posted / typed post link mapped to a hold Monday was not permitted to issue: refused, reservation kept, item published again | core.PERMISSIONS, items | `6eb2748` | `PublishingAuditCritical` | latent; **confirmed end-to-end on the deployed release (round 4)**: board "Posted" or a typed post link before the slot → published again | not deployed |
 | BV-05 | resolve_outcome(not_published) picked an old failed attempt of a published item, reset it to not_started and rescheduled it | publish.op_resolve_outcome | `6eb2748` | `PublishingAuditCritical` | latent | not deployed |
 
 ## HIGH
@@ -31,7 +33,7 @@ has caused observable damage yet; "latent" means it would occur once the conditi
 |---|---|---|---|---|---|
 | BV-06 | Items imported as outcome_unknown (board said Publishing) could never be resolved and were invisible to health/WF3 | publish, monitor | `6eb2748` | `PublishingAuditCritical` | no |
 | BV-07 | v1 publication receipts ignored at claim and overwritten at commit (re-publication of v1 posts) — production has 0 such rows | publish.claim | `496255b` | `test_v1_publication_receipt_holds_until_owner_answers` | no |
-| BV-08 | Container ERROR kept the slot: a new Instagram container every minute for 2 h (120 in repro), then repeated at the next slot | publish | `77b363f` | `PublishingAuditHigh` | no |
+| BV-08 | Container ERROR kept the slot: a new Instagram container every minute for 2 h (120 in repro), then repeated at the next slot | publish | `77b363f` | `PublishingAuditHigh` | no; **confirmed end-to-end on the deployed release (round 4)**: 13 containers in 14 minutes |
 | BV-09 | A ready item stayed unscheduled forever after an abandoned pre-commit attempt | publish.due/abandon | `77b363f` | `PublishingAuditHigh` | no |
 | BV-10 | Dropbox unreadable at commit ('unverifiable') handled as "file changed": slot released, verification dropped, misleading notice | publish.commit, WF2 | `77b363f`, `8a1457d` | `PublishingAuditHigh`, `RoundTwoRegressions` | no |
 | BV-11 | rejected_edit / retry holds on active items could only be cleared by pause+resume | items.op_resume | `77b363f` | `PublishingAuditHigh` | no |
@@ -39,7 +41,7 @@ has caused observable damage yet; "latent" means it would occur once the conditi
 | BV-13 | Clearing Publish at was replaced by the legacy Post Date/Time v2 wrote itself: item still published | items._apply_edit | `d49d1bf` | `SchedulingAudit` | no |
 | BV-14 | Pause turned an automatic slot into a sticky owner request; resume could wait forever on an occupied slot | items.op_pause, sched | `d49d1bf` | `SchedulingAudit` | no |
 | BV-15 | Swap proposal from an item with the 'unscheduled' hold could never be approved | sched | `d49d1bf` | `SchedulingAudit` | no |
-| BV-16 | Requested time for a not-ready item re-submitted every poll (version churn, every bound proposal went stale) | items._diff | `d49d1bf`, `8a1457d` | `SchedulingAudit` | no |
+| BV-16 | Requested time for a not-ready item re-submitted every poll (version churn, every bound proposal went stale) | items._diff | `d49d1bf`, `8a1457d` | `SchedulingAudit` | **observed from 2026-10-10 00:21 UTC (BV-77)** |
 | BV-17 | A not-ready item could take a reserved slot through an approved swap and give it away | sched | `d49d1bf` | `SchedulingAudit` | no |
 | BV-18 | Rejected board edits (off-grid time, paused item, invalid link, invalid format) were neither reverted nor explained (revert ran inside the rolled-back command) | items._apply_edit | `d49d1bf`, `8a1457d` | `SchedulingAudit`, `RoundTwoRegressions` | no |
 | BV-19 | WF2 overwrote a person's status (e.g. Paused) typed between WF1 observations: the pause was lost and the item could publish | WF2, core.project | `190de50` (compare-before-write), `8a1457d` | test_workflows `DisplaySyncGuard`, `DisplaySyncGuardCore`; e2e with real n8n | no (WF2 import) |
@@ -111,6 +113,29 @@ publication, published reverted, unknown outcome claimed) failed in any fuzz run
 | BV-75 | MEDIUM | (fuzz round 3) an owner-approved write taken by WF2 before a person edited the same column retried forever after its conflict | `efb72d0` | `FuzzRoundThree` |
 | BV-76 | MEDIUM | (fuzz round 3) a consumed board value (person's "Posted") masked by an older pending value: corrective status write never queued | `efb72d0` | `FuzzRoundThree` |
 | BV-74 | LOW (by design) | (fuzz F9) published / unknown items keep their past reservation row (table growth only) | open | — |
+
+## Round 4 — production re-check, current-state replay, end-to-end publishing (2026-10-10)
+
+Read-only production check at 09:34 UTC, a replay of the audit branch on a fresh copy of the production database
+and board (real n8n, mocked services), and WF2 publishing driven end to end through real n8n against an Instagram
+mock (both the deployed release and the audit branch; see REGRESSION_TEST_RESULTS.md).
+
+| ID | Sev | Bug | Components | Fix | Test (fails before fix) | Production impact | Deploy |
+|---|---|---|---|---|---|---|---|
+| BV-77 | HIGH | Stories imported with a legacy Post Date/Time whose pair a person later changed or cleared on the board (no reservation) were re-submitted on every WF1 cycle: 2 `request_reschedule` commands and 2 version bumps per item per cycle, indefinitely | items._diff / _apply_edit | `8a1457d` (a handled board value is recorded); test `325f46e` | `LegacyDateLoopIncident` (fails on `45b6418` and every commit before `8a1457d`) | **live since 2026-10-10 00:21 UTC**: 28 Stories, ~330 commands/h, item versions up to 204; proposals bound to those items go stale | not deployed |
+| BV-78 | LOW | System-column text v2 did not write was "reverted" every WF1 cycle without any write (v2 never clears values it does not own) | items._apply_edit | `8a1457d`; test `b2c4951` | `LegacyDateLoopIncident.test_foreign_system_text_is_handled_once` | **live**: one item, 6 audit rows/h | not deployed |
+| BV-79 | HIGH | Bondok paused five Stories on an ambiguous "stop all this, it's a waste of time and resources" 50 s after the owner asked to publish them the next day; the owner's "I want you to publish them at their time tomorrow, nothing more" was not an explicit resume (publish verbs were not resume words; "مش اكتر" read as a negation), so it became approval requests that expired | bondok/bridge.py, policy.txt | `2ea6bb4` | test_bondok `OwnerPublishWordsResume` | **observed 2026-10-09 21:22 UTC**: the owner's five Sunday Stories are paused (the deployed Bondok also showed placeholder approval ids, fixed in `45b6418`) | not deployed |
+| BV-80 | MEDIUM | A reserved item whose prepared file is missing at its slot (e.g. deleted to free disk space) lost the slot silently: claim refused, reservation released, nobody told | publish.claim | `2187315` | `MissingPreparedFileAtSlot` | latent; relevant while the disk is full | not deployed |
+| BV-81 | MEDIUM | No alert when low disk space blocks media preparation: only a per-item board note, every cycle | monitor.inspect, rules | `8646598` | `LowDiskAlert` | **live**: preparation blocked since ≈03:00 UTC 2026-10-10, 16 Stories waiting, no Slack alert | not deployed |
+| BV-82 | MEDIUM | `media_publish` answered 400 code 9007 / 2207027 ("The media is not ready for publishing, please wait for a moment") was recorded as a definitive rejection: item failed, slot lost until the owner asked for a retry (found by the end-to-end WF2 test; same in the deployed release) | publish.result | `78d9af1` | `MediaNotReadyAtPublish`; end-to-end: retried in the same slot, 1 publication | latent (both releases) | not deployed |
+| BV-83 | LOW | Repository hygiene: a Monday person id (the owner's fallback assignee) is committed in docs and in the archived v1 workflow export, against the public-repo rule; not a credential | docs/, workflows/original | open (removing it from history needs a force-push: owner decision) | — | none (public since the v2 handoff commit) | — |
+
+### Operational findings (not code defects; owner action)
+
+| ID | Sev | Finding | Recommended containment |
+|---|---|---|---|
+| OPS-1 | HIGH | Server disk 96% used (4.7 GB free of 96 GB at 10:13 UTC). Bondok refuses to start a media download below 6 GB, so no new item can be prepared. The space is used by other systems on the same disk (waset-atlas ≈43 GB, container images ≈18 GB, `/root` ≈11 GB). If the disk fills completely, every database write fails (n8n, Postgres, the operational store) | Free space now (waset-atlas retention, old builds, caches) or enlarge the disk; never delete Bondok's prepared media folder (scheduled videos). Preparation resumes automatically above 6 GB |
+| OPS-2 | HIGH | Sunday 2026-10-11: the three Stories that will publish automatically come from board dates set at 03:21 Cairo; the five Stories the owner chose in Slack are paused (BV-79), unprepared (OPS-1), and three of their slots are taken | Owner decides which Stories publish; until the release is deployed, use Bondok or the board's Paused/Skipped status, never manual posting (BV-04 in the deployed release) |
 
 ## OPEN (not fixed; see POST_RELEASE_IMPROVEMENTS.md)
 
