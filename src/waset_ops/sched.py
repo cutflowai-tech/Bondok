@@ -347,7 +347,9 @@ class SchedMixin:
                                                    'publish it'}))
             self.notify(c, f"unscheduled:{it['item_id']}:{it['version']}", f"{it['name']} ({it['item_id']}) is not "
                         'scheduled because its Publish at was cleared. Set a new time on the board, or tell Bondok to '
-                        'publish it.', it['item_id'])
+                        'publish it.', it['item_id'], digest='unscheduled', line=f"{it['name']} ({it['item_id']})",
+                        head='These items are not scheduled because their Publish at was cleared. Set a new time on '
+                             'the board, or tell Bondok to publish them:\n')
             return {'unscheduled': True,
                     **({'publication': 'stopped_before_commit'} if att else {})}
         owner = cmd.actor_kind in (OWNER, MONDAY)

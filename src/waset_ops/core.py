@@ -624,8 +624,10 @@ class CoreMixin:
                              "((state IN ('pending','failed') AND next_at<=?) OR (state='in_flight' AND lease_until<?) "
                              "OR (state='escalated' AND next_at<=?)) "
                              'ORDER BY id LIMIT ?', (*kinds, now, now, now, limit)).fetchall()
-            out = []
+            out, merged = [], set()
             for r in rows:
+                if r['id'] in merged:
+                    continue                          # merged into an earlier notice of this batch
                 crashed = r['state'] == 'in_flight'
                 if crashed and r['attempts'] + 1 >= OUTBOX_MAX_ATTEMPTS:
                     c.execute("UPDATE ops_outbox SET state='escalated', attempts=attempts+1, next_at=?, "
@@ -635,12 +637,31 @@ class CoreMixin:
                         self.notify(c, f"escalate:{r['id']}", f"Display/sync job keeps stopping its worker "
                                     f"({r['kind']}, item {r['item_id']}); it will be retried hourly.", r['item_id'])
                     continue
+                payload, item = loads(r['payload']), r['item_id']
+                if r['kind'] == 'slack' and (payload or {}).get('digest'):
+                    # Notices of one kind that are waiting together go out as one message (e.g. 19 cleared times
+                    # at once); each merged notice is superseded, the combined text is kept for retries.
+                    more = [m for m in c.execute(
+                        "SELECT id, payload FROM ops_outbox WHERE kind='slack' AND id!=? AND state IN ('pending','failed') "
+                        'AND next_at<=? ORDER BY id', (r['id'], now)).fetchall()
+                        if (loads(m['payload'], {}) or {}).get('digest') == payload['digest']]
+                    if more:
+                        texts = [payload.get('line') or payload['text']] + \
+                            [(loads(m['payload'], {}) or {}).get('line') or loads(m['payload'], {})['text'] for m in more]
+                        payload = {**payload, 'text': payload.get('head', '') + '\n'.join('• ' + t for t in texts),
+                                   'merged': [m['id'] for m in more]}
+                        payload.pop('digest', None)
+                        item = None                   # replies name the items; no single item binding
+                        c.execute('UPDATE ops_outbox SET payload=?, item_id=NULL WHERE id=?', (dumps(payload), r['id']))
+                        merged.update(m['id'] for m in more)
+                        c.execute(f"UPDATE ops_outbox SET state='superseded', last_error=?, updated=? WHERE id IN "
+                                  f"({','.join('?' * len(more))})", (f"merged into {r['id']}", now, *[m['id'] for m in more]))
                 # A worker applies its batch one job after another: the n-th job's lease covers the jobs before
                 # it, so a slow batch is not taken again by the next run (R5 M28).
                 c.execute("UPDATE ops_outbox SET state='in_flight', lease_owner=?, lease_until=?, updated=?, "
                           'attempts=attempts+? WHERE id=?', (worker, now + lease + JOB_SECONDS * len(out), now,
                                                             1 if crashed else 0, r['id']))
-                out.append({'id': r['id'], 'kind': r['kind'], 'item_id': r['item_id'], 'payload': loads(r['payload'])})
+                out.append({'id': r['id'], 'kind': r['kind'], 'item_id': item, 'payload': payload})
             return out
 
     def outbox_ack(self, job_id, worker, ok: bool, error: str | None = None, result=None) -> dict:

@@ -154,6 +154,40 @@ class R5_A16_ClearedTimeIsVisibleAndRecoverable(Base):
                 self.assertIsNotNone(self.res(iid))
                 self.assertIsNone(self.item(iid)['hold'])
 
+    def test_many_cleared_times_reach_slack_as_one_message(self):
+        # Production 2026-10-10: 19 times cleared at once. One message names every item; nothing is lost.
+        ids = [str(40 + i) for i in range(6)]
+        for iid in ids:
+            self.make_ready(iid)
+        self.drain_monday()
+        self.clock.advance(180)
+        boards = []
+        for iid in ids:
+            b = board_from_projection(self.ops, iid)
+            b['column_values'] = [x for x in b['column_values'] if x['id'] != board.COL['publish_at']]
+            boards.append(b)
+        self.observe(*boards)
+        jobs = self.ops.outbox_take(['slack'], 'bondok', 50)
+        cleared = [j for j in jobs if 'Publish at was cleared' in j['payload']['text']]
+        self.assertEqual(len(cleared), 1)
+        for iid in ids:
+            self.assertIn(f'({iid})', cleared[0]['payload']['text'])
+        self.assertIsNone(cleared[0]['item_id'])
+        self.ops.outbox_ack(cleared[0]['id'], 'bondok', False, 'SlackApiError')   # a failed post keeps the list
+        self.clock.advance(3600)
+        again = [j for j in self.ops.outbox_take(['slack'], 'bondok', 50) if j['id'] == cleared[0]['id']]
+        self.assertEqual(again[0]['payload']['text'], cleared[0]['payload']['text'])
+        # A single cleared time keeps its own sentence and binds replies to its item.
+        self.make_ready('49')
+        self.drain_monday()
+        self.clock.advance(180)
+        b = board_from_projection(self.ops, '49')
+        b['column_values'] = [x for x in b['column_values'] if x['id'] != board.COL['publish_at']]
+        self.observe(b)
+        one = [j for j in self.ops.outbox_take(['slack'], 'bondok', 50) if 'cleared' in j['payload']['text']]
+        self.assertEqual([j['item_id'] for j in one], ['49'])
+        self.assertTrue(one[0]['payload']['text'].startswith('Item49'))
+
     def test_cleared_time_is_not_recreated_automatically(self):
         self.make_ready('32')
         self.ops.submit(owner_cmd(self.rid(), 'request_reschedule', '32', at=None))

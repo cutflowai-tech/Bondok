@@ -635,7 +635,10 @@ class ItemsMixin:
         c.execute('INSERT OR REPLACE INTO ops_findings VALUES(?,?,?,?,?,?,?,NULL)',
                   (fp, item_id, kind, detail, now, now, 1 if notify else 0))
         if notify:
-            self.notify(c, 'finding:' + fp + ':' + str(int(now)), detail, item_id)
+            # Findings of one kind raised together reach Slack as one message (e.g. a storage loss affecting
+            # 20 items); a single finding keeps its own sentence.
+            self.notify(c, 'finding:' + fp + ':' + str(int(now)), detail, item_id, digest='finding:' + str(kind),
+                        line=detail, head='Schedule check, ' + str(kind).replace('_', ' ') + ':\n')
         return True
 
     def resolve_finding(self, c, fp):
