@@ -25,19 +25,22 @@ COL = {
     'action': 'long_text_mm7zbtbn', 'system': 'long_text_mm7ysrbz', 'checked': 'date_mm7zd2b9',
     'source_item': 'text_mm7y4h4a', 'asset': 'text_mm7yy451', 'media': 'text_mm7yp8h',
     'processed': 'text_mm7z139h', 'numbers': 'numeric_mm7xade9',
+    'record': 'bondok_record',        # long text created with this id (R2 authority migration; record.py)
 }
 KIND = {
     'status': 'status', 'format': 'status', 'topaz': 'status', 'caption': 'long', 'action': 'long',
     'system': 'long', 'owner': 'people', 'folder': 'link', 'dropbox': 'link', 'video': 'link',
     'post_link': 'link', 'publish_at': 'datetime', 'published_at': 'datetime', 'checked': 'datetime',
-    'post_date': 'date', 'post_time': 'hour', 'numbers': 'text',
+    'post_date': 'date', 'post_time': 'hour', 'numbers': 'text', 'record': 'long',
 }
 HUMAN = ('format', 'caption', 'code', 'variety', 'collab', 'owner', 'notes', 'topaz')
 # System display columns. 'numbers' and legacy columns not listed are never touched.
 SYSTEM = ('status', 'folder', 'action', 'system', 'publish_at', 'post_date', 'post_time', 'media', 'video',
           'measurements', 'processed', 'asset', 'version_check', 'dropbox', 'source_item', 'style',
           'published_at', 'ig_media', 'post_link', 'checked')
-SNAPSHOT_COLUMNS = sorted({COL[k] for k in HUMAN + SYSTEM})
+# Technical record column: system-written business facts (never an owner command; record.py).
+TECH = ('record',)
+SNAPSHOT_COLUMNS = sorted({COL[k] for k in HUMAN + SYSTEM + TECH})
 
 GROUPS = {'Post': 'topics', 'Story': 'group_mm7xagm', 'Posted': 'group_title', 'Skipped': 'group_mm7y8mkr'}
 LABELS = {
@@ -107,7 +110,8 @@ def norm(item: dict, key: str):
 
 
 def snapshot(item: dict) -> dict:
-    out = {k: norm(item, k) for k in HUMAN + SYSTEM}
+    out = {k: norm(item, k) for k in HUMAN + SYSTEM + TECH}
+    out['_has_record'] = _raw(item, 'record') is not None      # the board has the column (written only then)
     out['name'] = item.get('name')
     out['group'] = (item.get('group') or {}).get('id')
     return out

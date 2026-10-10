@@ -4,12 +4,13 @@ from .core import BONDOK, MONDAY, OWNER, Command, CoreMixin, Rejected
 from .items import ItemsMixin
 from .monitor import MonitorMixin
 from .publish import PublishMixin
+from .record import RecordMixin
 from .sched import SchedMixin
 
 __version__ = '1.0.0'
 
 
-class Ops(CaptionMixin, MonitorMixin, PublishMixin, SchedMixin, ItemsMixin, CoreMixin):
+class Ops(CaptionMixin, MonitorMixin, PublishMixin, SchedMixin, RecordMixin, ItemsMixin, CoreMixin):
     """Facade combining all handler responsibilities over one Store."""
 
 

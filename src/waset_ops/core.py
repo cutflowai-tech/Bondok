@@ -472,6 +472,8 @@ class CoreMixin:
         group = desired.pop('_group')
         confirmed = loads(it.get('projected'), {}) or {}
         pending = loads(it.get('pending_projection'), {}) or {}
+        if (loads(it.get('observed'), {}) or {}).get('_record_col'):
+            desired['record'] = self.business_record(c, it, desired)      # R2: business facts kept on Monday
         base = {**confirmed, **pending}
         ours = set(confirmed.get('_ours') or []) | set(pending.get('_ours') or [])
         changes = {}

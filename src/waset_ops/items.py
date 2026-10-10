@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import board, media, rules
+from . import board, media, record, rules
 from .core import BONDOK, MONDAY, OWNER, PRE_COMMIT, STALE_SNAPSHOT_SECONDS, Command, Rejected, fingerprint
 from .db import audit, dumps, loads
 
@@ -244,9 +244,13 @@ class ItemsMixin:
         with self.store.tx() as c:
             it = self.item(c, iid, required=False)
             if it is None:
-                self._bootstrap(c, iid, snap)
+                restored = self._bootstrap(c, iid, snap)
                 created.append(iid)
-                return
+                if not restored:
+                    return
+                # Rebuilt from the board record: what the owner changed on the board since the record was written
+                # (status, time, caption, Topaz ...) is applied as owner edits against what the record says was shown.
+                it = self.item(c, iid)
             edits = self._diff(c, it, snap, floor)
             c.execute('UPDATE ops_items SET name=? WHERE item_id=?', (snap.get('name'), iid))
         for e in edits:
@@ -277,8 +281,13 @@ class ItemsMixin:
                                  'it will not be recreated automatically.')
         return missing
 
-    def _bootstrap(self, c, iid, snap):
-        """Conservative legacy import: never invents verification or receipts."""
+    def _bootstrap(self, c, iid, snap) -> bool:
+        """Conservative legacy import: never invents verification or receipts. An item whose board record is valid
+        is rebuilt from it instead (R2: Monday keeps the business facts); returns True then."""
+        rec = record.parse(snap.get('record'), iid) if snap.get('_has_record') else None
+        if rec:
+            self._restore(c, iid, snap, rec)
+            return True
         now = self.now()
         status = snap.get('status')
         fmt = snap.get('format') if snap.get('format') in rules.FORMATS else None
@@ -308,12 +317,46 @@ class ItemsMixin:
                    publication, 1 if posted else 0, dumps(observed), dumps(projected), now, now, now))
         if snap.get('source_item'):
             c.execute("INSERT OR IGNORE INTO ops_source_map VALUES(?,?, 'active', ?)", (snap['source_item'], iid, now))
+        if snap.get('_has_record'):
+            observed['_record_col'] = True
+            c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(observed), iid))
         audit(c, iid, 'bootstrap', 'service:migration', {'status': status, 'publication': publication,
                                                           'owner_state': owner_state, 'requested': requested})
         if publication == 'outcome_unknown':
             self.notify(c, 'legacy-publishing:' + iid, f'Item {iid} ({snap.get("name")}) showed "Publishing" when the '
                         'new system started. Treated as outcome unknown: it will not be published again until you '
                         'confirm on Instagram and tell Bondok.', iid)
+
+    def _restore(self, c, iid, snap, rec):
+        """Rebuild a store row from the board record. Media is verified again; nothing is published or scheduled
+        from the record alone."""
+        now = self.now()
+        f = self.restore_from_record(c, iid, snap, rec)
+        hold = f['hold']
+        if not f['format'] and not hold:
+            hold = dumps({'kind': 'format_missing', 'reason': 'Format must be Post or Story (owner decision)'})
+        observed = {k: snap.get(k) for k in board.HUMAN}
+        observed['_record_col'] = True
+        projected = {k: snap.get(k) for k in board.SYSTEM}
+        projected.update({'status': rec.get('st'), 'record': snap.get('record'), '_group': snap.get('group')})
+        if f['publication'] == 'not_started':
+            projected['publish_at'] = rec.get('pa')      # a different board time is the owner's change meanwhile
+        # (a published item's time columns are historical evidence the display never changes)
+        c.execute('INSERT INTO ops_items(item_id,name,code,source_item_id,format,caption,caption_state,caption_origin,'
+                  'collab,variety,notes,folder_url,file_url,source_override_url,content_hash,asset_key,topaz_asset,'
+                  'readiness,owner_state,owner_state_reason,hold,requested_at,requested_by,publication,legacy_posted,'
+                  'observed,projected,waiting_since,created,updated) '
+                  'VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                  (iid, snap.get('name'), snap.get('code'), snap.get('source_item'), f['format'], snap.get('caption'),
+                   f['caption_state'], f['caption_origin'], snap.get('collab'), snap.get('variety'), snap.get('notes'),
+                   snap.get('folder'), snap.get('dropbox'), f['source_override_url'], f['content_hash'],
+                   snap.get('asset'), f['topaz_asset'], 'unchecked', f['owner_state'], f['owner_state_reason'], hold,
+                   f['requested_at'], f['requested_by'], f['publication'], f['legacy_posted'], dumps(observed),
+                   dumps(projected), now, now, now))
+        if snap.get('source_item'):
+            c.execute("INSERT OR IGNORE INTO ops_source_map VALUES(?,?, 'active', ?)", (snap['source_item'], iid, now))
+        self.restore_side_effects(c, iid, rec, f)
+        audit(c, iid, 'restore_from_record', 'service:migration', {'record': rec})
 
     def _diff(self, c, it, snap, floor=None) -> list[dict]:
         observed = loads(it['observed'], {}) or {}
@@ -365,6 +408,14 @@ class ItemsMixin:
                     continue                   # the legacy pair names the recorded request: not a new edit
             edits.append({'key': k, 'old': pending.get(k, confirmed.get(k)), 'new': new, 'human': False,
                           'snap': {x: snap.get(x) for x in ('publish_at', 'post_date', 'post_time')}})
+        # R2 record column: a value nobody but the handler writes. A changed or damaged record is restored from
+        # committed state (never an owner command); a board that gains the column gets its first record.
+        had_col, has_col = bool(observed.get('_record_col')), bool(snap.get('_has_record'))
+        observed['_record_col'] = has_col
+        rec_fix = has_col and (not had_col or (
+            snap.get('record') != confirmed.get('record', snap.get('record')) and
+            not ('record' in pending and snap.get('record') == pending.get('record')) and
+            not ('record' in recent and snap.get('record') == recent['record'])))
         times = [e for e in edits if e['key'] in TIME_KEYS]
         if len(times) > 1:
             # One logical date/time change is one scheduling decision (R5 M2); Publish at leads when it changed.
@@ -372,6 +423,8 @@ class ItemsMixin:
             lead['also'] = [e['key'] for e in times if e is not lead]
             edits = [e for e in edits if e is lead or e['key'] not in TIME_KEYS]
         c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(observed), it['item_id']))
+        if rec_fix:
+            self.project(c, it['item_id'], force_keys=('record',) if had_col else ())
         return edits
 
     def _apply_edit(self, iid, e) -> dict:
