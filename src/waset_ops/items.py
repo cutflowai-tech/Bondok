@@ -510,6 +510,10 @@ class ItemsMixin:
                 self.update_item(c, it['item_id'], cmd.actor, 'resume (published)', owner_state='active',
                                  owner_state_reason=None)
             return {'resumed': False, 'message': 'This item is recorded as published; it will not be published again'}
+        if it['publication'] == 'failed':
+            # Explicit owner retry after a definitive rejection (nothing was published) (R5 M7).
+            it = self.update_item(c, it['item_id'], cmd.actor, 'owner retry after rejection', publication='not_started')
+            clearable = True
         if it['owner_state'] == 'active' and not clearable and not win:
             return {'resumed': False, 'message': 'Item is not paused or skipped'}
         # Resume also clears holds that only wait for the owner to say "continue" (audit: a rejected board

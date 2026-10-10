@@ -1970,7 +1970,10 @@ class MediaNotReadyAtPublish(OpsCase):
         self.assertEqual(self.item('982')['publication'], 'outcome_unknown')
         r = self.ops.result(cl['attempt_id'], 'w', error=self.NOT_READY, http_status=400, definitive=True)
         self.assertEqual(r['stage'], 'failed', r)
-        self.assertEqual(self.item('982')['publication'], 'failed')
+        # R5.2 contract (expectation changed, R5 A18): a late refusal resolves the unknown attempt (nothing was
+        # published) and the item is scheduled again with a truthful notice, instead of a dead 'failed' state.
+        self.assertEqual(self.item('982')['publication'], 'not_started')
+        self.assertIsNotNone(self.res('982'))
 
     def test_not_ready_is_bounded_per_slot(self):
         self.make_ready('981', 'Story')

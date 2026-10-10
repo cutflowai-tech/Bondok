@@ -286,6 +286,12 @@ class CoreMixin:
         elif it['publication'] == 'outcome_unknown':
             label, action = 'review', ('Instagram did not confirm this publication. Check the account manually; '
                                        'do not republish until it is resolved in Slack.')
+        elif it['publication'] == 'failed':
+            f = c.execute("SELECT evidence FROM ops_attempts WHERE item_id=? AND stage='failed' ORDER BY updated DESC "
+                          'LIMIT 1', (it['item_id'],)).fetchone()
+            why = (loads(f['evidence'], {}) or {}).get('error', '') if f else ''
+            label, action = 'review', ('Instagram rejected this publication' + (': ' + str(why)[:300] if why else '')
+                                       + '. Nothing was published. Fix the cause, then tell Bondok to publish it again.')
         elif it['owner_state'] == 'skipped':
             label = 'skipped'
         elif it['owner_state'] == 'paused':

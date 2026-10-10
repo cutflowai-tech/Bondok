@@ -368,6 +368,8 @@ def validate_caption(text: str) -> str | None:
         return 'Caption exceeds Instagram 2,200 character limit'
     if len(re.findall(r'(?<!\w)#\w+', text)) > 30:
         return 'Caption has more than 30 hashtags'
+    if len(re.findall(r'(?<![\w.])@[\w.]+', text)) > 20:
+        return 'Caption has more than 20 @mentions (Instagram limit)'
     if '```' in text:
         return 'Caption contains formatting artifacts'
     return None

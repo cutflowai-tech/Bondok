@@ -90,6 +90,9 @@ class SchedMixin:
             return 'caption is not approved'
         if self.active_attempt(c, it['item_id']):
             return 'a publication attempt is active'
+        b = self.breaker(c)
+        if b and b['kind'] in ('auth', 'restricted'):
+            return 'Instagram publishing is paused: ' + b['cause']
         dup = self.duplicate_of(c, it)
         if dup:
             return self.duplicate_reason(dup)
@@ -479,6 +482,9 @@ class SchedMixin:
         constraint given with the instruction) through the normal publisher. Never a direct publish."""
         it = self.item(c, cmd.item_id)
         self._guard_mutable(c, it, allow_paused=True)
+        if it['publication'] == 'failed':
+            # Explicit owner retry after a definitive rejection (nothing was published) (R5 M7).
+            it = self.update_item(c, it['item_id'], cmd.actor, 'owner retry after rejection', publication='not_started')
         win = self.parse_window(cmd.args)
         res = self.reservation(c, it['item_id'])
         if res and self.deadline(c, res) <= self.now_dt():

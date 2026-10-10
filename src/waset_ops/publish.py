@@ -50,7 +50,126 @@ def _media_not_ready(error) -> bool:
     return isinstance(e, dict) and e.get('code') == 9007 and e.get('error_subcode') in (2207027, None)
 
 
+# Provider error classes (Meta Instagram Graph API error reference, read 2026-10-10). A class decides what is known
+# about the request: refused (nothing published) or ambiguous (reconcile before anything else).
+AUTH_CODES = {190, 102, 10, 200}          # invalid/expired token, missing permission (Graph API OAuth/permission)
+RESTRICTED_CODES = {25}                   # 2207050: account restricted, owner must act in the Instagram app
+THROTTLE_CODES = {4, 17, 32, 613}         # request limits: refused before processing
+DAILY_LIMIT_CODES = {9}                   # 2207042: daily publishing limit
+CONTAINER_GONE_SUBCODES = {2207008, 2207020}
+CAPTION_SUBCODES = {2207040, 2207010}    # too many @ tags / caption too long: the owner's caption, not the video
+CONTENT_SUBCODES = {2207026, 2207023, 2207004, 2207005, 2207009, 2207057, 2207028, 2207035, 2207036, 2207037, 2207032}
+CONTENT_CODES = {352, 36000, 36001, 36003}
+FETCH_CODES = {9004}                      # 2207052: media URI could not be fetched
+REFUSED_CLASSES = ('auth', 'restricted', 'throttle', 'daily_limit', 'container_gone', 'content', 'caption', 'fetch',
+                   'rejected')
+BREAKER_PROBE_SECONDS = 15 * 60
+MAX_FAILED_SLOTS = 2                      # Dropbox-unverifiable slots before the owner is asked (R5 A2)
+
+
+def provider_error(error) -> dict:
+    """{'code', 'subcode', 'message', 'type'} from a Graph API error body (JSON text, dict or container status)."""
+    import re
+    if isinstance(error, dict):
+        e = error.get('error', error)
+    else:
+        try:
+            e = json.loads(error) if error else {}
+            e = e.get('error', e) if isinstance(e, dict) else {}
+        except (ValueError, TypeError):
+            e = {'message': str(error or '')}
+    if not isinstance(e, dict):
+        e = {'message': str(e)}
+    msg = str(e.get('message') or e.get('error_user_msg') or '')
+    sub = e.get('error_subcode')
+    if sub is None:
+        m = re.search(r'\b(2207\d{3})\b', msg)
+        sub = int(m[1]) if m else None
+    code = e.get('code')
+    try:
+        code = int(code) if code is not None else None
+        sub = int(sub) if sub is not None else None
+    except (TypeError, ValueError):
+        code = sub = None
+    return {'code': code, 'subcode': sub, 'message': msg[:300], 'type': e.get('type')}
+
+
+def classify(error, http_status=None, status_code=None) -> str:
+    """Provider failure class. Generic/unknown codes (1, 2, -1, -2), 5xx, timeouts and a missing response are
+    'transient' before the commitment point and ambiguous after it (R5 B8)."""
+    e = provider_error(error)
+    code, sub = e['code'], e['subcode']
+    if code == 9007 or sub == 2207027:
+        return 'not_ready'
+    if code in AUTH_CODES or e.get('type') == 'OAuthException':
+        return 'auth'
+    if code in RESTRICTED_CODES or sub == 2207050:
+        return 'restricted'
+    if code in THROTTLE_CODES:
+        return 'throttle'
+    if code in DAILY_LIMIT_CODES or sub == 2207042:
+        return 'daily_limit'
+    if sub in CONTAINER_GONE_SUBCODES or status_code == 'EXPIRED':
+        return 'container_gone'
+    if code in FETCH_CODES or sub == 2207052:
+        return 'fetch'
+    if sub in CAPTION_SUBCODES or code == 36004:
+        return 'caption'
+    if sub in CONTENT_SUBCODES or code in CONTENT_CODES:
+        return 'content'
+    if code == 100:
+        return 'rejected'                 # invalid parameter without a known subcode: refused, owner/config action
+    return 'transient'
+
+
+def summary(error) -> str:
+    e = provider_error(error)
+    tag = '/'.join(str(x) for x in (e['code'], e['subcode']) if x is not None)
+    return (e['message'] or 'no error message') + (f' (Instagram {tag})' if tag else '')
+
+
 class PublishMixin:
+    # ------------------------------------------------------------------ account circuit breaker (R5 A2)
+    def breaker(self, c) -> dict | None:
+        r = c.execute("SELECT value FROM ops_meta WHERE key='breaker:instagram'").fetchone()
+        b = loads(r['value'], None) if r else None
+        if b and b.get('until') and b['until'] <= self.now() and b['kind'] in ('throttle', 'daily_limit'):
+            return None                   # documented rate-limit windows recover by time
+        return b
+
+    def _open_breaker(self, c, kind, cause, until=None):
+        if self.breaker(c):
+            return False
+        b = {'kind': kind, 'cause': cause[:300], 'since': self.now(), 'until': until, 'last_probe': self.now()}
+        c.execute("INSERT OR REPLACE INTO ops_meta VALUES('breaker:instagram',?)", (dumps(b),))
+        what = {'auth': 'Instagram access failed (token or permission)',
+                'restricted': 'The Instagram account is restricted',
+                'throttle': 'Instagram is limiting requests',
+                'daily_limit': 'The daily Instagram publishing limit was reached'}.get(kind, 'Instagram refused requests')
+        after = ('Publishing resumes automatically after ' + rules.display(rules.instant(self.iso_ts(until)))
+                 if until else 'Publishing is paused until Instagram access works again (checked every 15 minutes)')
+        self.notify(c, f"breaker:{kind}:{int(b['since'])}", f'⚠️ {what}: {cause[:300]}. Nothing was published. {after}; '
+                    'scheduled items wait and are rescheduled when it recovers.')
+        audit(c, None, 'breaker_open', 'service:wf2', b)
+        return True
+
+    def provider_probe(self, ok: bool, error=None) -> dict:
+        """WF2's cheap provider read while the breaker is open. Recovery needs demonstrated access, not time."""
+        with self.store.tx() as c:
+            b = self.breaker(c)
+            if not b:
+                return {'open': False}
+            if ok:
+                c.execute("DELETE FROM ops_meta WHERE key='breaker:instagram'")
+                self.notify(c, f"breaker-closed:{int(b['since'])}", '✅ Instagram access is working again; publishing '
+                            'continues and waiting items are scheduled.')
+                audit(c, None, 'breaker_closed', 'service:wf2', b)
+                return {'open': False, 'closed': True}
+            b['last_probe'] = self.now()
+            b['last_probe_error'] = summary(error)[:200] if error else None
+            c.execute("UPDATE ops_meta SET value=? WHERE key='breaker:instagram'", (dumps(b),))
+            return {'open': True}
+
     def due(self, worker: str, limit=5) -> dict:
         """Durable due work. Empty queue -> empty list (no Monday call needed)."""
         now, now_dt = self.now(), self.now_dt()
@@ -80,12 +199,21 @@ class PublishMixin:
                 if att and (att['stage'] not in PRE_COMMIT or (att['lease_until'] or 0) > now):
                     continue
                 work.append({'kind': 'publish', 'item_id': r['item_id'], 'slot': r['slot']})
-            for a in c.execute("SELECT * FROM ops_attempts WHERE stage='outcome_unknown' AND container_id IS NOT NULL "
-                               'AND checks<? AND (next_check IS NULL OR next_check<=?)',
+            for a in c.execute("SELECT * FROM ops_attempts WHERE stage IN ('outcome_unknown','owner_unpublished') AND "
+                               'container_id IS NOT NULL AND checks<? AND (next_check IS NULL OR next_check<=?)',
                                (MAX_RECONCILE_CHECKS, now)).fetchall():
-                work.append({'kind': 'reconcile', 'item_id': a['item_id'], 'attempt_id': a['id'],
-                             'container_id': a['container_id']})
-        return {'work': work[:limit], 'more': len(work) > limit}
+                work.insert(0, {'kind': 'reconcile', 'item_id': a['item_id'], 'attempt_id': a['id'],
+                                'container_id': a['container_id']})
+            b = self.breaker(c)
+            probe = False
+            if b:
+                # Account-level failure: no new containers for anyone; reconciliation continues (R5 A2).
+                work = [w for w in work if w['kind'] != 'publish']
+                probe = self.now() - (b.get('last_probe') or 0) >= BREAKER_PROBE_SECONDS
+        out = {'work': work[:limit], 'more': len(work) > limit}
+        if b:
+            out.update(probe=probe, breaker=b['kind'])
+        return out
 
     # ------------------------------------------------------------------ claim
     def claim(self, item_id, worker, *, source_status=None) -> dict:
@@ -115,6 +243,14 @@ class PublishMixin:
                 self.notify(c, f"v1-receipt:{it['item_id']}", f"Held {it['name']} ({it['item_id']}): {reason}",
                             it['item_id'])
                 return {'claimed': False, 'reason': reason, 'held': True}
+            stale = self.active_attempt(c, item_id)
+            if stale and stale['stage'] == 'claimed' and not stale['container_id'] and (stale['lease_until'] or 0) < now:
+                # The previous worker stopped (or its error output was lost) before saving a container: that was a
+                # failed try and counts towards the slot's limit instead of silently creating another (R5 A2).
+                c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
+                          (dumps({'abandoned': 'worker stopped before an Instagram container was recorded',
+                                  'class': 'transient', 'stage': 'create_container'}), now, stale['id']))
+                audit(c, item_id, 'attempt_abandoned', worker, {'attempt': stale['id'], 'why': 'no container saved'})
             tries = c.execute("SELECT COUNT(*) FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned'",
                               (str(item_id), res['slot'])).fetchone()[0]
             if tries >= MAX_ATTEMPTS_PER_SLOT and not self.active_attempt(c, item_id) and \
@@ -124,6 +260,18 @@ class PublishMixin:
                 # Only Dropbox was unreadable at the commit point: nothing is wrong with the item; stop creating
                 # containers for this slot and take the next one without asking the owner (round-2 review #10).
                 self.release(c, it, 'source unverifiable at publication time')
+                obs = loads(self.item(c, item_id)['observed'], {}) or {}
+                obs['_unverifiable_slots'] = obs.get('_unverifiable_slots', 0) + 1
+                c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), str(item_id)))
+                if obs['_unverifiable_slots'] >= MAX_FAILED_SLOTS:
+                    # Bounded across slots too: no slot-to-slot churn while Dropbox stays unreadable (R5 A2).
+                    reason = (f"Dropbox could not be read at publication time for {obs['_unverifiable_slots']} slots; "
+                              'nothing was published. Check the Dropbox connection, then tell Bondok to resume it.')
+                    self.update_item(c, item_id, worker, 'unverifiable limit',
+                                     hold=dumps({'kind': 'publish_retry_limit', 'reason': reason, 'origin': 'system',
+                                                 'party': 'owner', 'recover': 'resume after the cause is fixed'}))
+                    self.notify(c, f"retry-limit:{item_id}:{res['slot']}", f"{it['name']} ({item_id}): {reason}", item_id)
+                    return {'claimed': False, 'reason': reason, 'held': True}
                 out = self.try_schedule(c, item_id, worker)
                 self.notify(c, f"unverifiable:{it['item_id']}:{res['slot']}", f"{it['name']} ({it['item_id']}) was not "
                             'published because Dropbox could not be read at publication time; nothing was posted. '
@@ -134,12 +282,14 @@ class PublishMixin:
                 # Container errors or commit refusals repeat every minute, each with a new Instagram container.
                 last = c.execute("SELECT evidence FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned' "
                                  'ORDER BY updated DESC LIMIT 1', (str(item_id), res['slot'])).fetchone()
-                why = str((loads(last['evidence'], {}) or {}) if last else '')[:300]
+                ev = (loads(last['evidence'], {}) or {}) if last else {}
+                why = str(ev.get('abandoned') or ev.get('refused') or ev or 'unknown cause')[:300]
                 reason = (f'Publication failed {tries} times at {rules.display(rules.instant(res["slot"]))} '
                           f'({why}). Nothing was published. Tell Bondok to resume it when it should be retried.')
                 self.release(c, it, 'publish retry limit')
                 self.update_item(c, it['item_id'], worker, 'publish retry limit',
-                                 hold=dumps({'kind': 'publish_retry_limit', 'reason': reason}))
+                                 hold=dumps({'kind': 'publish_retry_limit', 'reason': reason, 'origin': 'system',
+                                             'party': 'owner', 'recover': 'resume after the cause is fixed'}))
                 self.notify(c, f"retry-limit:{it['item_id']}:{res['slot']}", f"{it['name']} ({it['item_id']}): {reason}",
                             it['item_id'])
                 return {'claimed': False, 'reason': reason, 'held': True}
@@ -224,14 +374,60 @@ class PublishMixin:
 
     def abandon(self, attempt_id, worker, fence, reason) -> dict:
         """Pre-commit only: the container failed/expired; nothing was published."""
+        return self.precommit_failure(attempt_id, worker, fence, 'container_status', error=reason)
+
+    def precommit_failure(self, attempt_id, worker, fence, stage, *, error=None, http_status=None,
+                          status_code=None) -> dict:
+        """Every failure before the commitment point (create/save/renew/check/verify/commit call) is recorded with
+        its real cause and counted; nothing was published (R5 A2, M6). Account-level causes open the breaker;
+        content defects block the item for the editor; delivery fetch failures re-check the delivered file."""
         with self.store.tx() as c:
             a = self._attempt(c, attempt_id, worker, fence, PRE_COMMIT, lease=False)
+            cls = classify(error, http_status, status_code)
+            text = summary(error)
+            if status_code and status_code not in ('ERROR', 'EXPIRED'):
+                text = f'container status {status_code}: {text}'
             c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
-                      (dumps({'abandoned': str(reason)[:300]}), self.now(), attempt_id))
-            audit(c, a['item_id'], 'attempt_abandoned', worker, {'attempt': attempt_id, 'why': str(reason)[:300]})
-            self.evaluate(c, a['item_id'], worker)
+                      (dumps({'abandoned': f'{stage}: {text}'[:400], 'class': cls, 'stage': stage,
+                              'http_status': http_status, 'status_code': status_code}), self.now(), attempt_id))
+            audit(c, a['item_id'], 'attempt_abandoned', worker, {'attempt': attempt_id, 'stage': stage, 'class': cls})
+            it = self.item(c, a['item_id'])
+            out = {'abandoned': True, 'class': cls}
+            if cls in ('auth', 'restricted'):
+                self._open_breaker(c, cls, text)
+            elif cls == 'throttle':
+                self._open_breaker(c, cls, text, until=self.now() + 3600)
+            elif cls == 'daily_limit':
+                self._open_breaker(c, cls, text, until=self.next_cairo_midnight())
+            elif cls in ('content', 'rejected'):
+                key = 'provider:' + str(provider_error(error)['subcode'] or provider_error(error)['code'] or cls)
+                reason = f'Instagram cannot use this video: {text}. A corrected export is needed.'
+                self.release(c, it, 'provider content error')
+                self.update_item(c, it['item_id'], worker, 'provider content error', readiness='blocked',
+                                 block_kind='editor', block_key=key + ':' + str(it['asset_key']), block_reason=reason[:500])
+                self.editor_task(c, it['item_id'], key + ':' + str(it['asset_key']), reason)
+            elif cls == 'fetch':
+                # Instagram could not download the delivered copy: re-check and re-deliver it (no editor action yet).
+                self.release(c, it, 'delivered file not fetchable')
+                self.update_item(c, it['item_id'], worker, 'delivered file not fetchable', readiness='checking',
+                                 verification_id=None)
+                self.request_check(c, it['item_id'], worker, 'delivery_unfetchable')
             self.project(c, a['item_id'])
-            return {'abandoned': True}
+            if cls == 'caption':
+                reason = f'Instagram refused the caption: {text}. Edit the caption, then tell Bondok to publish it.'
+                self.release(c, it, 'provider caption error')
+                self.update_item(c, it['item_id'], worker, 'provider caption error', publication='failed')
+                self.notify(c, f"caption-refused:{it['item_id']}:{it['content_rev']}", f"{it['name']} ({it['item_id']}): "
+                            + reason, it['item_id'])
+            if cls not in ('content', 'rejected', 'fetch', 'caption'):
+                self.evaluate(c, a['item_id'], worker)
+            return out
+
+    def next_cairo_midnight(self) -> float:
+        from datetime import timedelta
+        local = self.now_dt().astimezone(rules.TZ)
+        nxt = (local + timedelta(days=1)).date()
+        return rules.cairo_local(nxt.year, nxt.month, nxt.day, 0, 5).timestamp()
 
     def renew(self, attempt_id, worker, fence) -> dict:
         with self.store.tx() as c:
@@ -273,6 +469,13 @@ class PublishMixin:
             dup = self.duplicate_of(c, it)
             if dup:
                 problems.append(self.duplicate_reason(dup))          # re-checked at the commitment point (R5 B1)
+            for o in c.execute("SELECT evidence FROM ops_attempts WHERE item_id=? AND stage='owner_unpublished'",
+                               (a['item_id'],)).fetchall():
+                ev = loads(o['evidence'], {}) or {}
+                lc = ev.get('last_check') or {}
+                if not (lc.get('at', 0) >= ev.get('owner_statement_at', 0) and lc.get('status') != 'PUBLISHED'):
+                    problems.append('an earlier attempt was reported not published, but its Instagram container was '
+                                    'not re-checked yet (R5 B9)')
             slot = rules.instant(a['slot'])
             end = self.deadline(c, res) if res and res['slot'] == a['slot'] else slot + rules.LATE_WINDOW
             if not (slot <= now_dt <= end):
@@ -325,56 +528,95 @@ class PublishMixin:
     def result(self, attempt_id, worker, *, media_id=None, error=None, http_status=None, definitive=False) -> dict:
         """Record the provider response for a committed attempt.
 
-        Accepted even if the lease expired: confirmed external evidence is
-        never discarded. Only a definitive provider rejection (HTTP 4xx with a
-        provider error body) counts as not published; anything else is unknown.
+        Accepted even if the lease expired: confirmed external evidence is never discarded. Only a documented
+        refusal (Meta error reference) counts as not published; generic/unknown codes (1, 2, -1), 5xx, timeouts and
+        a missing id stay unknown and are reconciled with the container status (R5 B8).
         """
         with self.store.tx() as c:
-            a = self._attempt(c, attempt_id, None, None, ('committed', 'outcome_unknown'), lease=False)
+            a = self._attempt(c, attempt_id, None, None, ('committed', 'outcome_unknown', 'owner_unpublished'),
+                              lease=False)
             if media_id:
-                return self._published(c, a, worker, {'media_id': str(media_id), 'source': 'media_publish response'})
-            if a['stage'] == 'committed' and definitive and http_status and 400 <= int(http_status) < 500 and \
-                    _media_not_ready(error):
+                return self._published(c, a, worker, {'media_id': str(media_id), 'source': 'media_publish response',
+                                                      'published_at': self.iso_ts(self.now())})
+            cls = classify(error, http_status) if definitive and http_status and 400 <= int(http_status) < 500 \
+                else 'ambiguous'
+            if cls == 'not_ready' and a['stage'] == 'committed':
                 # Refused because the container was not ready: nothing was published and the slot is still valid.
                 # The next run claims again; MAX_ATTEMPTS_PER_SLOT bounds the retries (round 4, end-to-end test).
                 c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
-                          (dumps({'abandoned': 'Instagram: media not ready for publishing (9007)',
+                          (dumps({'abandoned': 'Instagram: media not ready for publishing (9007)', 'class': cls,
                                   'http_status': http_status, 'error': str(error)[:300]}), self.now(), attempt_id))
                 c.execute('DELETE FROM publications WHERE item=? AND owner=?', (a['item_id'], 'ops:' + attempt_id))
                 audit(c, a['item_id'], 'attempt_abandoned', worker, {'attempt': attempt_id, 'why': 'media not ready (9007)'})
                 self.project(c, a['item_id'])
                 return {'stage': 'abandoned', 'retry': 'same slot'}
-            if definitive and http_status and 400 <= int(http_status) < 500:
-                transient = _transient_provider_error(error)
-                c.execute("UPDATE ops_attempts SET stage='failed', evidence=?, updated=? WHERE id=?",
-                          (dumps({'http_status': http_status, 'error': str(error)[:800], 'transient': transient}),
-                           self.now(), attempt_id))
-                # Definitive rejection: nothing was published; drop the rollback guard row.
-                c.execute('DELETE FROM publications WHERE item=? AND owner=?', (a['item_id'], 'ops:' + attempt_id))
-                self.release(c, self.item(c, a['item_id']), 'publication failed')
-                tries = c.execute("SELECT COUNT(*) FROM ops_attempts WHERE item_id=? AND stage='failed' AND "
-                                  "json_extract(evidence,'$.transient')=1", (a['item_id'],)).fetchone()[0]
-                if transient and tries <= MAX_TRANSIENT_RETRIES:
-                    # Rate limit / temporary Meta error: nothing was published; take the next slot (audit P10).
-                    out = self.try_schedule(c, a['item_id'], worker)
-                    it = self.item(c, a['item_id'])
-                    when = rules.display(rules.instant(out['scheduled'])) if out.get('scheduled') else 'the next free slot'
-                    self.notify(c, f'pub-transient:{attempt_id}', f"Instagram had a temporary error for {it['name']} "
-                                f"({it['item_id']}): {str(error)[:200]}. Nothing was published; it will be tried again "
-                                f"at {when}.", it['item_id'])
-                    return {'stage': 'failed', 'retry': out}
-                if self.item(c, a['item_id'])['publication'] == 'published':
-                    # The owner already reported it as published: keep that; this attempt's refusal is evidence only.
-                    return {'stage': 'failed', 'owner_reported_published': True}
-                it = self.update_item(c, a['item_id'], worker, 'publication failed', publication='failed')
-                self.notify(c, f'pub-failed:{attempt_id}', f"Instagram rejected {it['name']} ({it['item_id']}): "
-                            f"{str(error)[:300]}. Nothing was published. Tell Bondok to retry when fixed.", it['item_id'])
-                return {'stage': 'failed'}
-            self._unknown(c, a, f'Publish request ended without confirmation (HTTP {http_status}): {str(error)[:300]}')
+            if cls in REFUSED_CLASSES or cls == 'not_ready':
+                # (a late 9007 for an attempt that already became unknown: refused, nothing was published)
+                return self._refused(c, a, worker, cls, error, http_status)
+            if a['stage'] == 'owner_unpublished':
+                ev = {**(loads(a['evidence'], {}) or {}), 'late_answer': {'http_status': http_status,
+                                                                          'error': str(error)[:300]}}
+                c.execute('UPDATE ops_attempts SET evidence=?, updated=? WHERE id=?', (dumps(ev), self.now(), attempt_id))
+                return {'stage': 'owner_unpublished'}
+            self._unknown(c, a, f'Publish request ended without confirmation (HTTP {http_status}): {summary(error)}')
             return {'stage': 'outcome_unknown'}
 
+    def _refused(self, c, a, worker, cls, error, http_status) -> dict:
+        """Documented refusal of media_publish: nothing was published. A late refusal also resolves an attempt
+        that had become unknown (R5 A18); the owner is told what actually happens next."""
+        text = summary(error)
+        c.execute("UPDATE ops_attempts SET stage='failed', evidence=?, updated=? WHERE id=?",
+                  (dumps({**(loads(a['evidence'], {}) or {}), 'http_status': http_status, 'error': str(error)[:800],
+                          'class': cls, 'transient': cls in ('throttle', 'daily_limit', 'container_gone',
+                                                             'not_ready')}),
+                   self.now(), a['id']))
+        c.execute('DELETE FROM publications WHERE item=? AND owner=?', (a['item_id'], 'ops:' + a['id']))
+        it = self.item(c, a['item_id'])
+        if it['publication'] == 'published':
+            # The owner already reported it as published: keep that; this refusal is evidence only.
+            return {'stage': 'failed', 'owner_reported_published': True}
+        self.release(c, it, 'publication refused')
+        if it['publication'] in ('outcome_unknown', 'in_progress'):
+            it = self.update_item(c, it['item_id'], worker, 'refusal resolves the attempt', publication='not_started')
+        if cls in ('auth', 'restricted'):
+            self._open_breaker(c, cls, text)
+            return {'stage': 'failed', 'breaker': cls}
+        if cls in ('throttle', 'daily_limit', 'container_gone', 'not_ready'):
+            if cls == 'throttle':
+                self._open_breaker(c, cls, text, until=self.now() + 3600)
+            elif cls == 'daily_limit':
+                self._open_breaker(c, cls, text, until=self.next_cairo_midnight())
+            tries = c.execute("SELECT COUNT(*) FROM ops_attempts WHERE item_id=? AND stage='failed' AND "
+                              "json_extract(evidence,'$.transient')=1", (it['item_id'],)).fetchone()[0]
+            if tries <= MAX_TRANSIENT_RETRIES:
+                out = self.try_schedule(c, it['item_id'], worker)
+                nxt = (f"it is now scheduled for {rules.display(rules.instant(out['scheduled']))}."
+                       if out.get('scheduled') else f"it is not scheduled yet ({out.get('waiting')}).")
+                self.notify(c, f"pub-transient:{a['id']}", f"Instagram had a temporary error for {it['name']} "
+                            f"({it['item_id']}): {text}. Nothing was published; {nxt}", it['item_id'])
+                return {'stage': 'failed', 'retry': out}
+        if cls == 'content':
+            reason = f'Instagram cannot use this video: {text}. A corrected export is needed.'
+            key = f"provider:{provider_error(error)['subcode'] or cls}:{it['asset_key']}"
+            self.update_item(c, it['item_id'], worker, 'provider content error', readiness='blocked',
+                             block_kind='editor', block_key=key, block_reason=reason[:500])
+            self.editor_task(c, it['item_id'], key, reason)
+            return {'stage': 'failed', 'blocked': 'content'}
+        if cls == 'fetch':
+            self.update_item(c, it['item_id'], worker, 'delivered file not fetchable', readiness='checking',
+                             verification_id=None)
+            self.request_check(c, it['item_id'], worker, 'delivery_unfetchable')
+            self.notify(c, f"pub-fetch:{a['id']}", f"Instagram could not download the prepared video of {it['name']} "
+                        f"({it['item_id']}): {text}. Nothing was published; the video is delivered again and the item "
+                        'is scheduled once it is verified.', it['item_id'])
+            return {'stage': 'failed', 'redeliver': True}
+        it = self.update_item(c, it['item_id'], worker, 'publication failed', publication='failed')
+        self.notify(c, f"pub-failed:{a['id']}", f"Instagram rejected {it['name']} ({it['item_id']}): {text}. Nothing "
+                    'was published. Fix the cause, then tell Bondok to publish it again.', it['item_id'])
+        return {'stage': 'failed'}
+
     def _unknown(self, c, a, why):
-        if a['stage'] == 'outcome_unknown':
+        if a['stage'] in ('outcome_unknown', 'owner_unpublished'):
             return
         c.execute("UPDATE ops_attempts SET stage='outcome_unknown', evidence=?, next_check=?, updated=? WHERE id=?",
                   (dumps({'why': why}), self.now() + RECONCILE_INTERVALS[0], self.now(), a['id']))
@@ -412,25 +654,48 @@ class PublishMixin:
             return {'ok': True}
 
     def reconcile(self, attempt_id, container_status=None, error=None) -> dict:
-        """Check one specific unknown attempt using its container status.
-        PUBLISHED is positive evidence. Anything else leaves it unknown; an
-        empty or failed query never means "not published"."""
+        """Check one specific uncertain attempt with its container status. PUBLISHED is positive evidence and wins
+        over an earlier owner "not published" (R5 B9). EXPIRED/ERROR mean the container was never published.
+        Anything else stays uncertain; an empty or failed query never means "not published"."""
         with self.store.tx() as c:
-            a = self._attempt(c, attempt_id, None, None, ('outcome_unknown',), lease=False)
+            a = self._attempt(c, attempt_id, None, None, ('outcome_unknown', 'owner_unpublished'), lease=False)
+            ev = loads(a['evidence'], {}) or {}
             if container_status == 'PUBLISHED':
-                return self._published(c, a, 'service:wf2', {'container_status': 'PUBLISHED',
-                                                             'source': 'container status reconciliation'})
+                said = a['stage'] == 'owner_unpublished'
+                out = self._published(c, a, 'service:wf2', {'container_status': 'PUBLISHED',
+                                                            'source': 'container status reconciliation'})
+                if said:
+                    it = self.item(c, a['item_id'])
+                    self.notify(c, f"published-after-all:{a['id']}", f"{it['name']} ({it['item_id']}) was published "
+                                'after all: Instagram shows the earlier attempt as PUBLISHED although it was reported '
+                                'not published. It will not be published again.', it['item_id'])
+                return out
             checks = a['checks'] + 1
+            ev['last_check'] = {'status': container_status, 'error': (error or '')[:200], 'at': self.now()}
+            if container_status in ('EXPIRED', 'ERROR'):
+                # The container can no longer be published and was not: definitive non-publication.
+                c.execute("UPDATE ops_attempts SET stage='failed', checks=?, evidence=?, updated=? WHERE id=?",
+                          (checks, dumps({**ev, 'outcome': 'not_published (container ' + container_status + ')'}),
+                           self.now(), attempt_id))
+                c.execute('DELETE FROM publications WHERE item=? AND owner=?', (a['item_id'], 'ops:' + attempt_id))
+                it = self.item(c, a['item_id'])
+                if a['stage'] == 'outcome_unknown' and it['publication'] == 'outcome_unknown':
+                    it = self.update_item(c, it['item_id'], 'service:wf2', 'container never published',
+                                          publication='not_started')
+                    out = self.try_schedule(c, it['item_id'], 'service:wf2')
+                    nxt = (f"it is now scheduled for {rules.display(rules.instant(out['scheduled']))}."
+                           if out.get('scheduled') else f"it is not scheduled yet ({out.get('waiting')}).")
+                    self.notify(c, f"unknown-resolved:{attempt_id}", f"Instagram confirms {it['name']} ({it['item_id']}) "
+                                f'was not published (container {container_status}); {nxt}', it['item_id'])
+                return {'stage': 'failed', 'checks': checks}
             nxt = self.now() + RECONCILE_INTERVALS[min(checks, len(RECONCILE_INTERVALS) - 1)]
-            ev = {**(loads(a['evidence'], {}) or {}), 'last_check': {'status': container_status,
-                                                                     'error': (error or '')[:200]}}
             c.execute('UPDATE ops_attempts SET checks=?, next_check=?, evidence=?, updated=? WHERE id=?',
                       (checks, nxt, dumps(ev), self.now(), attempt_id))
-            if checks >= MAX_RECONCILE_CHECKS:
+            if checks >= MAX_RECONCILE_CHECKS and a['stage'] == 'outcome_unknown':
                 self.notify(c, f'unknown-exhausted:{attempt_id}', f"Automatic checks could not confirm publication of "
                             f"item {a['item_id']} (container status {container_status}). Manual verification is "
                             'required; it stays blocked from republishing.', a['item_id'])
-            return {'stage': 'outcome_unknown', 'checks': checks}
+            return {'stage': a['stage'], 'checks': checks}
 
     def op_report_published(self, c, cmd: Command):
         """The owner reports the item as published (board Posted, a typed post link/media id, or Slack).
@@ -519,9 +784,16 @@ class PublishMixin:
         if outcome == 'published':
             return self._published(c, a, cmd.actor, {'media_id': cmd.args.get('media_id'),
                                                      'source': 'owner manual verification'})
-        c.execute("UPDATE ops_attempts SET stage='failed', evidence=?, updated=? WHERE id=?",
-                  (dumps({**(loads(a['evidence'], {}) or {}), 'resolved_by': cmd.actor,
-                          'outcome': 'not_published'}), self.now(), a['id']))
+        ev = {**(loads(a['evidence'], {}) or {}), 'resolved_by': cmd.actor, 'outcome': 'not_published',
+              'owner_statement_at': self.now()}
+        if a['container_id'] and a['stage'] == 'outcome_unknown':
+            # The owner's statement is recorded, the container keeps being checked: a later PUBLISHED still wins and
+            # a new attempt cannot commit before the old container was re-checked (R5 B9).
+            c.execute("UPDATE ops_attempts SET stage='owner_unpublished', evidence=?, next_check=?, updated=? WHERE id=?",
+                      (dumps(ev), self.now(), self.now(), a['id']))
+        else:
+            c.execute("UPDATE ops_attempts SET stage='failed', evidence=?, updated=? WHERE id=?",
+                      (dumps(ev), self.now(), a['id']))
         c.execute('DELETE FROM publications WHERE item=? AND owner=?', (it['item_id'], 'ops:' + a['id']))
         self.release(c, it, 'resolved not published')
         self.update_item(c, it['item_id'], cmd.actor, 'resolved not published', publication='not_started')
