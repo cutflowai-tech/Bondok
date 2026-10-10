@@ -39,6 +39,17 @@ def _transient_provider_error(error) -> bool:
     return isinstance(e, dict) and e.get('code') in TRANSIENT_CODES
 
 
+def _media_not_ready(error) -> bool:
+    """9007 / 2207027: Instagram refused media_publish because the container was not ready yet. The request was
+    explicitly refused (nothing posted), so publishing the same slot again is safe."""
+    try:
+        e = json.loads(error) if isinstance(error, str) else (error or {})
+    except ValueError:
+        return False
+    e = e.get('error', e) if isinstance(e, dict) else {}
+    return isinstance(e, dict) and e.get('code') == 9007 and e.get('error_subcode') in (2207027, None)
+
+
 class PublishMixin:
     def due(self, worker: str, limit=5) -> dict:
         """Durable due work. Empty queue -> empty list (no Monday call needed)."""
@@ -308,6 +319,16 @@ class PublishMixin:
             a = self._attempt(c, attempt_id, None, None, ('committed', 'outcome_unknown'), lease=False)
             if media_id:
                 return self._published(c, a, worker, {'media_id': str(media_id), 'source': 'media_publish response'})
+            if definitive and http_status and 400 <= int(http_status) < 500 and _media_not_ready(error):
+                # Refused because the container was not ready: nothing was published and the slot is still valid.
+                # The next run claims again; MAX_ATTEMPTS_PER_SLOT bounds the retries (round 4, end-to-end test).
+                c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
+                          (dumps({'abandoned': 'Instagram: media not ready for publishing (9007)',
+                                  'http_status': http_status, 'error': str(error)[:300]}), self.now(), attempt_id))
+                c.execute('DELETE FROM publications WHERE item=? AND owner=?', (a['item_id'], 'ops:' + attempt_id))
+                audit(c, a['item_id'], 'attempt_abandoned', worker, {'attempt': attempt_id, 'why': 'media not ready (9007)'})
+                self.project(c, a['item_id'])
+                return {'stage': 'abandoned', 'retry': 'same slot'}
             if definitive and http_status and 400 <= int(http_status) < 500:
                 transient = _transient_provider_error(error)
                 c.execute("UPDATE ops_attempts SET stage='failed', evidence=?, updated=? WHERE id=?",

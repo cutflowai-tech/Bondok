@@ -1907,3 +1907,45 @@ class LowDiskAlert(OpsCase):
             self.ops.repair()
         with self.ops.store.read() as c:
             self.assertIsNotNone(c.execute("SELECT resolved FROM ops_findings WHERE fingerprint='low_disk'").fetchone()[0])
+
+
+class MediaNotReadyAtPublish(OpsCase):
+    """Round 4 (end-to-end WF2 test): Instagram answering media_publish with 9007 / 2207027 "The media is not ready for
+    publishing, please wait for a moment" explicitly refused the request, yet the item was marked failed and missed its
+    slot until the owner asked for a retry. Nothing was published, so the same slot is retried (bounded per slot)."""
+
+    NOT_READY = json.dumps({'error': {'message': 'The media is not ready for publishing, please wait for a moment',
+                                      'type': 'OAuthException', 'code': 9007, 'error_subcode': 2207027}})
+
+    def attempt(self, iid, minute):
+        self.clock.set(rules.instant(self.res(iid)['slot']) + timedelta(minutes=minute))
+        cl = self.ops.claim(iid, 'w')
+        self.assertTrue(cl['claimed'], cl)
+        self.ops.container(cl['attempt_id'], 'w', cl['fence'], f'C{minute}')
+        self.assertTrue(self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['committed'])
+        return cl
+
+    def test_not_ready_retries_the_same_slot_and_then_publishes(self):
+        self.make_ready('980', 'Story')
+        slot = self.res('980')['slot']
+        cl = self.attempt('980', 0)
+        self.ops.result(cl['attempt_id'], 'w', error=self.NOT_READY, http_status=400, definitive=True)
+        self.assertEqual(self.item('980')['publication'], 'not_started')
+        self.assertEqual(self.res('980')['slot'], slot)                     # still this slot
+        with self.ops.store.read() as c:
+            self.assertIsNone(c.execute("SELECT 1 FROM publications WHERE item='980'").fetchone())   # no stale receipt
+        cl = self.attempt('980', 2)                                           # next WF2 run, same slot
+        self.ops.result(cl['attempt_id'], 'w', media_id='M1')
+        self.assertEqual(self.item('980')['publication'], 'published')
+        notes = [json.loads(o['payload'])['text'] for o in self.outbox('slack')]
+        self.assertFalse(any('Instagram rejected' in n for n in notes), notes)
+
+    def test_not_ready_is_bounded_per_slot(self):
+        self.make_ready('981', 'Story')
+        for minute in range(3):
+            cl = self.attempt('981', minute * 2)
+            self.ops.result(cl['attempt_id'], 'w', error=self.NOT_READY, http_status=400, definitive=True)
+        self.clock.advance(120)
+        r = self.ops.claim('981', 'w')
+        self.assertFalse(r['claimed'], r)
+        self.assertEqual(json.loads(self.item('981')['hold'])['kind'], 'publish_retry_limit')
