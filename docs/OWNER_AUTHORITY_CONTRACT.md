@@ -27,7 +27,7 @@ proposal" rule of `ARCHITECTURE_AND_OWNERSHIP.md`.
 
 | Column | Owner meaning | Automation writes |
 |---|---|---|
-| Status | `Paused`, `Skipped`, `Posted` are owner controls. Changing a Paused/Skipped item to any other label resumes it. | System labels only (Scheduled, Publishing, Waiting for Editor, ...), never over an owner value it has not observed (compare-before-write, including an empty cell) |
+| Status | `Paused`, `Skipped`, `Posted` are owner controls. Changing a Paused/Skipped item to any other label resumes it. `Scheduled` typed by the owner is an order to publish: at the time on the board, else the next free slot; media safety and reservation conflicts still apply and the Action column says why it is not scheduled yet (owner decision 2026-10-11). | System labels only (Scheduled, Publishing, Waiting for Editor, ...), never over an owner value it has not observed (compare-before-write, including an empty cell) |
 | Publish at | Requested publication time (Cairo display), on or off the slot grid | The confirmed slot; never over a newer owner value |
 | Post Date / Post Time | Legacy request (used only when Publish at is empty) | Mirror of the confirmed slot |
 | Topazed | `Topazed` = Topaz done for the file shown in *Source asset version* at the time of the change | `Not yet` when the confirmed file is no longer the selected one; `Topazed` to mirror a Slack confirmation |

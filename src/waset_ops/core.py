@@ -200,7 +200,7 @@ class CoreMixin:
         'confirm_topaz': {OWNER, MONDAY},
         'request_reschedule': {OWNER, MONDAY},
         'request_recheck': {OWNER, MONDAY, BONDOK, 'service:wf3'},
-        'request_publish': {OWNER},
+        'request_publish': {OWNER, MONDAY},  # Slack "publish it" / the owner's Scheduled on the board
         'set_window': {OWNER},
         'request_rework': {OWNER},
         'approve_caption_draft': {OWNER},

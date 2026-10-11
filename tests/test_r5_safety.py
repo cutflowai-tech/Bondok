@@ -1,9 +1,9 @@
-import json
 """Round 5 release-critical traces (docs/AUDIT_ROUND5_2026-10-10.md), one class per register entry.
 
 Each test reproduces the original counterexample against the handler and asserts the owner-visible outcome
 required by docs/OWNER_AUTHORITY_CONTRACT.md. Synthetic data only.
 """
+import json
 import unittest
 from datetime import timedelta
 

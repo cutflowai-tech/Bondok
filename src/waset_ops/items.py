@@ -519,8 +519,24 @@ class ItemsMixin:
             if it['owner_state'] in ('paused', 'skipped'):
                 # The owner changed Paused/Skipped to another label: that is the decision to resume (contract §3).
                 return run('resume', {'source': 'board', 'from_label': new})
-            return self._revert(iid, k, 'Status shows the system state; use Paused/Skipped/Posted, Publish at, '
-                                        'or ask Bondok')
+            if new == board.LABELS['scheduled']:
+                # Owner decision 2026-10-11: "Scheduled" typed by the owner is an order to publish - at the time on
+                # the board, else the next free slot. Media safety and reservation conflicts still apply (another
+                # reserved item is never displaced); the board says why when it cannot be scheduled yet.
+                snap = e.get('snap') or {}
+                try:
+                    at = board.requested_instant(snap) if any(snap.values()) else None
+                except Exception:   # noqa: BLE001 - an unreadable time is reported, not guessed
+                    return self._revert(iid, k, 'The time on the board could not be read; use Publish at (Cairo time)')
+                r = run('request_reschedule', {'at': rules.iso(at)}) if at else \
+                    run('request_publish', {'source': 'board status'})
+                if r.get('state') == 'accepted':
+                    with self.store.tx() as c:
+                        self.set_notice(c, iid, 'Your Scheduled order is recorded: ' + str(r.get('message') or '') +
+                                        ' It will be scheduled as soon as the video is ready.')
+                return r
+            return self._revert(iid, k, 'Status shows the system state; use Scheduled, Paused, Skipped, Posted, '
+                                        'Publish at, or ask Bondok')
         if k == 'publish_at' and not new:
             # Clearing Publish at unschedules; legacy Post Date/Time never stand in for it (contract, audit S2).
             return run('request_reschedule', {'at': None})
