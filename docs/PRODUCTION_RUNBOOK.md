@@ -60,6 +60,13 @@ Imports WF1/WF2/WF3 as drafts with credentials resolved from the private config,
 artifact and refuses if a live workflow drifted since the last recorded import. Activation is not changed.
 C3: publish the imported versions in n8n (WF2 first is not required; WF1, WF2, WF3 in any order after C1).
 
+**C1 → C3 is one publication cutover (release review 2026-10-12).** The new helper's `commit` no longer reaches
+the commitment point by itself; it returns the Monday intent write that only the new WF2 performs and acknowledges
+(`/v2/publish/intent`, ADR decision 4). Between C1 and the activation of the new WF2, the old WF2 receives
+`committed: false` and publishes nothing (fail-closed, no duplicate risk). Do C1–C3 in one sitting, inside the
+preflight's "no reserved slot within 30 minutes" window, and check that the first due item after C3 shows
+`Publishing now: attempt …` in System update before it is posted.
+
 ## 4. Monday record column (C4) **[AUTH]**
 
 Create a long-text column titled `Bondok record` with the explicit column id `bondok_record` (monday
@@ -72,7 +79,8 @@ should not edit it (an edit is restored and never obeyed). Rebuild-from-board is
 
 * `deploy.py status`: recorded release = `<id>`, no fence. Helper `/v2/health`: ok, schema 1, release id.
 * WF1: next runs complete (`run_completed` heartbeat), several different eligible items progress.
-* WF2: runs every minute, due queue matches the reservations, display jobs drain.
+* WF2: runs every minute, due queue matches the reservations, display jobs drain; a publication shows the intent
+  (Status `Publishing`, System update `Publishing now: attempt …`) before the post appears.
 * WF3: `:05/:35` runs complete; findings are factual (no stale "outcome unknown" after an owner report).
 * Slack: an authorized, non-effectful check only (e.g. ask Bondok to show an existing draft again); no command.
 * Publication: verify the **next normal owner-approved publication** when it happens (attempt published,
@@ -82,7 +90,9 @@ should not edit it (an edit is restored and never obeyed). Rebuild-from-board is
 
 * Automatic inside `deploy.py code` (hash-verified). Manual: `deploy.py code --release <previous release>`;
   databases are never restored over newer evidence.
-* Workflows: re-publish the previous n8n version (kept in history and in the workflow backup folder).
+* Workflows: re-publish the previous n8n version (kept in history and in the workflow backup folder). Roll WF2
+  back **together with** the code: the new WF2 against the old helper does not publish a committed attempt (it
+  waits for an intent the old helper never returns), which ends as "outcome unknown" for the owner to confirm.
 * C4: deleting the column stops records; the store remains the cache it was before.
 
 ## 7. Containment while not deployed

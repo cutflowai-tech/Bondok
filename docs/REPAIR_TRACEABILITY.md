@@ -12,6 +12,12 @@ Component owners: Monday authority/approvals/language → `bondok/`, `items.py`,
 publication → `sched.py`, `publish.py`; media/n8n → `media.py`, `items.py` (prep), `workflows/build.py`;
 infra/deployment → `core.py`, `monitor.py`, `helper.py`, `deploy/`.
 
+Release review 2026-10-12 (standards/spec review of this branch): `test_r5_release.py` RR1 board provenance of
+Monday commands, RR2 ADR decision 4 (Monday intent acknowledged before media_publish), RR3 the B7 empty-Status
+Pause race end to end, RR4 M4; `test_r5_owner_status.py` Scheduled orders with missing, passed, near-due,
+date-only or half-legacy times and the notice text; `test_bondok.py` batch caption proposal recorded as a command.
+A12 and A13 were missing from this table (tested since c731276).
+
 Beyond the register: `test_r5_authority.py` (R2 rebuild from the board), `test_r5_campaign.py` (multi-cycle
 invariants; soak finding "refused attempt blocks its old file" fixed in 391d2a2),
 `test_r5_captions.py` (M18, LOW-13).
@@ -38,6 +44,8 @@ invariants; soak finding "refused attempt blocks its old file" fixed in 391d2a2)
 | A9 | HIGH | Recheck of an item blocked by a media verdict never finishes; full re-download each visit (BV-26 incomplete) | `test_r5_media.py::R5_A9_RecheckTerminates` | 4156cd7 |
 | A10 | HIGH | Defective sources (audio-only, truncated, no duration, >5 GB, ffmpeg timeout) are "temporary" for ever: never blocked, editor never told, re-downloaded hourly, occupy the queue | `test_r5_media.py::R5_A10_DefectiveSourcesArePermanent` | 4156cd7 |
 | A11 | HIGH | One Monday error while creating social items aborts the whole WF1 run, every run (Record Created Items throws); team owners are sent as | `test_r5_n8n.py::R5_A11_ImportIsolation` | c731276 |
+| A12 | HIGH (latent) | Import Plan payload is not chunked: 60 KB of the 120 KB limit today → WF1 stops completely when the board roughly doubles; `bodyFile` exists but is unused | `test_r5_n8n.py::R5_A12_ImportPlanTransport` | c731276 |
+| A13 | MED-HIGH | WF1 dying after `run_start` raises no alert (heartbeat written at start; no `errorWorkflow`) | `test_r5_n8n.py::R5_A13_RunLifecycle`<br>`test_r5_n8n.py::R5_A13_HelperRunContext` | c731276 |
 | A14 | HIGH | Pause runs for any owner message and any number of items; BV-79's pause half is fixed only in the prompt (the production thread still pauses all 5 Stories) | `test_r5_language.py::R5_A14_PauseNeedsResolvedScope` | c89b9a1 |
 | A15 | HIGH | "انشرهم في موعدهم بكرا بس مش اكثر" → resume with the earliest free slot (today), not the owner's time | `test_r5_language.py::R5_A15_ConstraintsTravel`<br>`test_r5_scheduling.py::R5_A15_ConstraintsTravelWithTheInstruction` | 1cb465a, c89b9a1 |
 | A16 | MEDIUM | Clearing Publish at → "unscheduled" owner hold with | `test_r5_scheduling.py::R5_A16_ClearedTimeIsVisibleAndRecoverable` | 1cb465a |
@@ -46,7 +54,7 @@ invariants; soak finding "refused attempt blocks its old file" fixed in 391d2a2)
 | M1 | MEDIUM | Proposals go stale from unrelated version bumps (prep, infra flap +2/visit, Notes edits); legacy-caption batch voided by one Dropbox timeout | `test_r5_board.py::R5_M1_ApprovalsBindToTheirDependencies` | 16ea777 |
 | M2 | MEDIUM | One Post Date+Time edit → 2 commands, 2 swap proposals, 2 Slack notices | `test_r5_board.py::R5_M2_DateAndTimeEditIsOneDecision` | 16ea777 |
 | M3 | MEDIUM | Repeated identical write to a human column dropped (INSERT OR IGNORE): 2nd Topaz reset, caption A→X→A (board X, publishes A), 2nd format rejection | `test_r5_board.py::R5_M3_RepeatedOwnerValuesAreSeparateEvents` | 16ea777 |
-| M4 | MEDIUM | Rejected time hidden when an Action is already shown; accepted-but-unreservable time vanishes from the board | `test_acceptance.py::SchedulingAudit.test_rejected_board_time_is_reverted_with_notice` | d49d1bf |
+| M4 | MEDIUM | Rejected time hidden when an Action is already shown; accepted-but-unreservable time vanishes from the board | `test_acceptance.py::SchedulingAudit.test_rejected_board_time_is_reverted_with_notice`<br>`test_r5_release.py::RR4_M4_TimeFeedbackStaysVisible` (both halves; the first half was not fixed until the release review) | d49d1bf, release review |
 | M5 | MEDIUM | Swap is not a swap: displaced item goes to the earliest free slot and becomes owner-pinned; requester's old slot left empty | `test_r5_scheduling.py::R5_M5_TrueSwap` | 1cb465a |
 | M6 | MEDIUM | Instagram container error text ( | `test_r5_publishing.py::R5_M6_ContainerContentErrors` | 739f11b |
 | M7 | MEDIUM | Definitively rejected item shows "Redy For Scheduled"; no retry primitive except approving "not published" | `test_r5_publishing.py::R5_M7_FailedPublicationDisplayAndRetry` | 739f11b |

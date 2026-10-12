@@ -1,4 +1,22 @@
-# Regression test results — deep audit (2026-10-10)
+# Regression test results
+
+## Release review (2026-10-12), `bondok/r5-monday-authority` at `bedd902`
+Command: `cd tests && python3 -m unittest discover -s . -p 'test_*.py'` (every module).
+
+| Python | Collected | Run | Skipped | Result |
+|---|---|---|---|---|
+| 3.12 (n8n-independent: Bondok host) | 504 | 504 | 0 | pass |
+| 3.13 | 504 | 504 | 0 | pass |
+| 3.14 (n8n image) | 504 | 504 | 0 | pass |
+
+Fail-before-fix: each new regression test was run red before its fix in this session (RR1, RR2, RR3 race, RR4
+first half, the five Scheduled-order tests and the notice test, the caption-command assertion). RR5 (end to end)
+and the stale-intent test were written after the fix they exercise. Not run here: real n8n (no runtime in the
+review environment); see `RELEASE_READINESS.md`.
+
+---
+
+# Deep audit (2026-10-10)
 
 Branch `bondok/deep-audit`. Command: `cd tests && python3 -m unittest test_acceptance test_workflows test_helper_cli test_bondok`.
 

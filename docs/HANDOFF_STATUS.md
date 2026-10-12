@@ -1,10 +1,21 @@
 # Handoff Status
 
-Updated: 2026-10-10 ~20:15 UTC. Directive: R5.2 master implementation directive (private; owner handoff).
-Milestone: **R5 repair and R2 authority code IMPLEMENTED · TESTED · RELEASE READY. NOT DEPLOYED.**
-No production change was made by this or the previous session (read-only Monday queries only).
+Updated: 2026-10-12. Directive: R5.2 master implementation directive (private; owner handoff), amended by the
+owner decisions of 2026-10-11/12 (`OWNER_AUTHORITY_CONTRACT.md` §0).
+Milestone: **R5 repair + release review IMPLEMENTED · TESTED. NOT DEPLOYED. One local check before GO**
+(`RELEASE_READINESS.md`). No production change was made by this session (no server, n8n, Monday or Slack access).
 
-## Current state (continuation session, 2026-10-10 evening)
+## Release review (2026-10-12)
+* Standards/spec review of `main...HEAD`, then test-first repairs: `f21915d` (Monday intent acknowledged before
+  media_publish, board provenance of Monday commands, Scheduled orders with missing/passed/near-due/partial times,
+  B7 race end to end) and `bedd902` (M4, caption batch as a command, stale intent cleanup, Monday-to-publisher
+  E2E). Register: `BUG_REGISTER.md` BV-84…BV-90; traceability completed (A12, A13, M4).
+* Tests: 504 collected / run, 0 skipped, pass on Python 3.12, 3.13, 3.14.
+* Next: re-run the WF2 end-to-end publishing check in real n8n (mocks) on the final commit; rebuild the release
+  candidate; then owner authorization of C1–C3 as one publication cutover (runbook §3).
+* Maintainability items deliberately left for after release: `POST_RELEASE_IMPROVEMENTS.md` 17–23.
+
+## Earlier state (continuation session, 2026-10-10 evening)
 * Integration branch `bondok/r5-monday-authority` contains every R5 workstream: urgent safety set, scheduling,
   publisher/WF2, board edits, infra/outbox, n8n transport + deployment tooling (agent worktree a808…),
   media/preparation (agent worktree ada0…), Bondok language reader (agent worktrees a4a5…/a5b1…), M18, LOW-12,

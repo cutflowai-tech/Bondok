@@ -130,6 +130,23 @@ mock (both the deployed release and the audit branch; see REGRESSION_TEST_RESULT
 | BV-82 | MEDIUM | `media_publish` answered 400 code 9007 / 2207027 ("The media is not ready for publishing, please wait for a moment") was recorded as a definitive rejection: item failed, slot lost until the owner asked for a retry (found by the end-to-end WF2 test; same in the deployed release) | publish.result | `78d9af1`, `6d92fa0` (committed attempts only) | `MediaNotReadyAtPublish`; end-to-end: retried in the same slot, 1 publication | latent (both releases) | not deployed |
 | BV-83 | LOW | Repository hygiene: a Monday person id (the owner's fallback assignee) is committed in docs and in the archived v1 workflow export, against the public-repo rule; not a credential | docs/, workflows/original | open (removing it from history needs a force-push: owner decision) | — | none (public since the v2 handoff commit) | — |
 
+
+## Release review — standards/spec review of `bondok/r5-monday-authority` (2026-10-12)
+
+Two-axis code review of the branch against `main`, then test-first repairs (each reproduced by a failing test).
+Owner decisions recorded the same day (`OWNER_AUTHORITY_CONTRACT.md` §0): Monday is the authoritative
+business-state database; Story trimming 60–65 s; explicit owner off-grid times.
+
+| ID | Sev | Bug | Components | Fix | Test (fails before fix) | Production impact | Deploy |
+|---|---|---|---|---|---|---|---|
+| BV-84 | HIGH | ADR decision 4 not implemented: nothing waited for a Monday acknowledgement before `media_publish`; a Pause typed after WF2's fresh read (also into an empty Status cell, B7) could not stop a publication already polling its container | publish.commit, WF2 | `f21915d` (intent write guarded on Status, `/v2/publish/intent`, `intent_ack`) | `test_r5_release.py` RR2, RR3, RR5 | release-candidate only | not deployed |
+| BV-85 | HIGH | A Monday-kind command needed no provenance: any caller of the handler could submit e.g. `request_publish` as `monday`, and `request_publish` was open to any board column | core.authorize, items._apply_edit | `f21915d` (board provenance recorded in `auth_ref`, per-op columns) | RR1 | release-candidate only (no route exposes the kind) | not deployed |
+| BV-86 | HIGH | Owner's Scheduled with a passed or near-due board time was refused and reverted (order discarded, no missed-request question); a date-only Publish at, half a legacy pair or an unreadable value silently became "next free slot" (an invented time) | items._system_edit, sched.op_request_reschedule | `f21915d` (late window or missed request; incomplete request; revert with reason) | `test_r5_owner_status.py` | release-candidate only (2026-10-11 decision) | not deployed |
+| BV-87 | MEDIUM | Scheduled-order notice appended "as soon as the video is ready" to every accepted result (wrong when another item holds the slot; said twice on the publish path) | items._system_edit | `f21915d` | `test_notice_says_the_real_reason_once` | release-candidate only | not deployed |
+| BV-88 | MEDIUM | R5 M4 first half still open: a rejected-time notice was hidden whenever an Action was already shown | core.desired_display | `bedd902` | RR4 | release-candidate only | not deployed |
+| BV-89 | LOW | Bondok's "approve all existing captions" created its proposal by a direct store call, not a recorded command | bondok/bridge.py | `bedd902` (`propose_legacy_captions` op) | `test_bondok.py::test_approve_all_captions_is_one_proposal` | release-candidate only | not deployed |
+| BV-90 | LOW | Documentation drift: `MONDAY_AND_TIME_CONTRACT.md` and `COMMANDS_AND_PERMISSIONS.md` still described board resume/format as proposals and status as always reverted; traceability omitted A12/A13 and overstated M4 | docs | release-review docs | — | none | — |
+
 ### Operational findings (not code defects; owner action)
 
 | ID | Sev | Finding | Recommended containment |

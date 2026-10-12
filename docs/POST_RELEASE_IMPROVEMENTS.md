@@ -43,3 +43,24 @@ operation; each needs either an owner decision or a separate, scoped change.
 16. **Prepared media and disk cleanup.** Prepared videos of reserved items live in the data directory's `media`
     folder; deleting them makes the item miss its slot (now reported, BV-80). Superseded files are cleaned
     automatically (audit `873a730`).
+
+## Maintainability (release review 2026-10-12, standards axis; not done before release on purpose)
+Judgement calls from the code review of `bondok/r5-monday-authority` (Fowler smells). None changes behaviour;
+each is a separate, scoped refactor with the full suite as its safety net.
+
+17. **One source for board and column ids** (duplicated values). `workflows/build.py` still writes the source
+    board id and the Customer Projects status column id as literals in its JS, and `bondok/monday_read.py` /
+    `bondok/app.py` repeat the social board id, while `rules.BOARD`, `rules.SOURCE_BOARD` and `board.COL` exist
+    (the new intent node already uses `rules.BOARD`). Substitute them at build time like `__BOARD__`.
+18. **`CODE_RE` copied into JavaScript** (`build.py`, "Same Code pattern as rules.CODE_RE"): emit it from
+    `rules.CODE_RE.pattern` at build time, with a parity test.
+19. **`bondok/policy.txt` restates owner-policy numbers** (slots, 60 s Story, 65 s trim limit, 1080 px, 300 MB):
+    generate that paragraph from `rules` so a policy change is made once.
+20. **Repeated tool switches in `bondok/bridge.py`** (24 `tool ==` branches in three chains; `confirm_topaz`
+    handled twice): one table of tool → (op, scope check, protected?) used by all three places.
+21. **Raw SQL reads outside `Ops`** (`bondok/app.py`, `src/helper.py` read `ops_proposals`, `ops_runs`,
+    `ops_checks` through `ops.store.read()`): small query methods on `Ops` so the schema has one reader.
+22. **`src/waset_ops/items.py` is 1,750 lines** for board observation, edit mapping, preparation and owner
+    controls: split by concern (observation/edits vs preparation) behind the existing `Ops` mixin seams.
+23. **Shared compare-before-write code.** The display sync and the publication intent now share `GUARD_JS`
+    (`build.py`); the Python mirror in `tests/board_sim.py` should be generated from, or tested against, it.

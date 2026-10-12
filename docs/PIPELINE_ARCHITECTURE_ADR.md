@@ -1,6 +1,7 @@
 # ADR: Monday as the business record (R5.2)
 
-Status: accepted for implementation 2026-10-10. Owner policy: `OWNER_AUTHORITY_CONTRACT.md`.
+Status: accepted for implementation 2026-10-10; **accepted by the owner 2026-10-12** (Monday is the authoritative
+business-state database; `OWNER_AUTHORITY_CONTRACT.md` §0). Owner policy: `OWNER_AUTHORITY_CONTRACT.md`.
 
 ## Context
 
@@ -42,6 +43,9 @@ writes are attributed differently (not documented). Both need the owner; neither
    intent (attempt, payload fingerprint, content fingerprint) is acknowledged on Monday; if that write fails,
    nothing is published. Duplicate protection keys on account + format + source content hash and delivered video
    hash, across items, including owner-reported and legacy publications.
+   *Implemented 2026-10-12:* `commit` returns the intent write (Status `Publishing` + fingerprints in System
+   update, guarded on Status) leased to the publishing worker; WF2 reads the board, writes it and reports to
+   `/v2/publish/intent`; only `intent_ack` reaches `committed` (`tests/test_r5_release.py` RR2/RR3).
 5. **Technical journal exception (needs owner agreement).** Monday cannot keep a deleted item's publication
    evidence, so a deleted original would free its content fingerprint (trace: publish A → delete A → duplicate
    item B with the same file → B publishes). The smallest exception: the local append-only publication journal

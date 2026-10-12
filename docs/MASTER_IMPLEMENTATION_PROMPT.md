@@ -1,5 +1,9 @@
 # BONDOK — MASTER ENGINEERING HANDOFF AND IMPLEMENTATION PROMPT
 
+> **Owner decisions 2026-10-12 amend this directive** (`OWNER_AUTHORITY_CONTRACT.md` §0): Monday is the
+> authoritative business-state database (§9, §16); automatic Story trimming 60–65 s is approved (§11.4); explicit
+> owner off-grid times are approved (§12). Where the text below differs, the owner decisions win.
+
 You are the lead engineer responsible for refactoring and integrating Bondok, Waset Co Studio's existing social-media AI assistant, with its existing n8n automation system.
 
 You are starting a new conversation with no prior project knowledge. This prompt supplies the project context, owner decisions, implementation requirements, evidence locations, and execution boundaries. Read it completely before acting.
@@ -250,7 +254,7 @@ WF1 preparation results ------------> same command handler
 WF3 repair proposals ----------------> same command handler
 WF2 publication claims/results ------> same command handler
 
-Command handler <-> one authoritative operational database
+Command handler <-> one authoritative operational database   [amended 2026-10-12: business state on Monday; local cache + execution journal]
 Command handler -> durable work for existing automation workers
 Command handler -> durable Monday/Slack synchronization work
 WF2 publisher -> Instagram -> durable receipt -> display synchronization
@@ -307,7 +311,7 @@ Required behavior:
 1. Import an eligible source project once using durable source-to-social identity. Preserve item IDs and detect ambiguity. Story/Post conversion must not create a duplicate item. A missing/deleted social item is not automatic permission to recreate it blindly.
 2. After import, the social item's authorized Format is authoritative. Source changes must not silently undo it. Preserve the intended source cancellation integration without bypassing owner pause or publication protections.
 3. Resolve the exact selected Dropbox file/version. Preserve explainable selection rules, but distinguish a wrong-folder/ambiguous-file error from “waiting for editor.” Filename “Topaz” is not proof of Topaz processing.
-4. For Stories, measure actual duration at the first practical check, before expensive encoding, captions, or scheduling. Fail at exactly 60.000 seconds and above. Do not crop/split/convert automatically as a workaround.
+4. For Stories, measure actual duration at the first practical check, before expensive encoding, captions, or scheduling. Fail at exactly 60.000 seconds and above. Do not crop/split/convert automatically as a workaround. *[Amended 2026-10-12: 60.000–65.000 s sources are end-trimmed automatically to < 60 s; owner decision.]*
 5. Require genuine authorized Topaz confirmation bound to the selected asset. Bondok cannot invent it or infer it from a filename.
 6. Verify final short edge >=1080 pixels and file size strictly <300,000,000 bytes, with valid actual measurements. Preserve applicable existing media compatibility requirements.
 7. Reuse valid immutable media/checks instead of downloading and encoding unchanged Scheduled items every ten minutes. Detect new file revisions AND changes in the selected candidate, not only metadata changes to one old file ID.
@@ -336,7 +340,7 @@ The current helper has an 84-day search horizon, five-minute lead, two-hour publ
 
 For a free valid requested slot, reserve/commit against the current revision. For an occupied slot, return an approval-required proposal WITHOUT modifying either item's committed schedule. Once approved, execute the exact validated multi-item change transactionally. Approval expires when relevant state changes.
 
-For an invalid/off-grid requested time, explain the conflict and return valid alternatives. Do not silently move the request elsewhere or let WF1 accept a time that WF3 later rejects. A generic “publish” permission is not permission to rewrite the slot grid or bypass due-time checks.
+For an invalid/off-grid requested time, explain the conflict and return valid alternatives. Do not silently move the request elsewhere or let WF1 accept a time that WF3 later rejects. *[Amended 2026-10-12: explicit owner times may be off-grid; owner decision.]* A generic “publish” permission is not permission to rewrite the slot grid or bypass due-time checks.
 
 Diversity is a scheduling preference, not a reason to endlessly move already valid committed reservations. Preserve explicitly chosen owner slots. Define bounded automatic repairs without displacing another reservation to satisfy a new request.
 
@@ -416,7 +420,7 @@ Use templates for ordinary acknowledgments and alerts. If the model is unavailab
 
 ## 16. Manual Monday edits and synchronized display
 
-Monday is the operational human interface, not the sole evidence of readiness/reservation/publication.
+Monday is the operational human interface, not the sole evidence of readiness/reservation/publication. *[Amended 2026-10-12: Monday is the authoritative business-state database; owner decision.]*
 
 Convert supported edits into authenticated/validated commands. Use trusted events where available, with deduplication and periodic reconciliation for missed/delayed events. Polling may remain as a small deterministic fallback; event-driven design does not mean removing the publisher clock.
 
