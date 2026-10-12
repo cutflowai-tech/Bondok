@@ -40,6 +40,21 @@ def owner_cmd(cid, op, item=None, explicit=False, **args):
     return Command(cid, op, OWNER_ID, 'owner', item, args, auth={'explicit': explicit})
 
 
+def board_cmd(cid, op, item, column, seen=None, **args):
+    """A Monday-kind command with the provenance a board observation attaches (column + observed value)."""
+    return Command(cid, op, 'monday', 'monday', item, args,
+                   auth={'board': {'source': 'observation', 'column': column, 'value': seen}})
+
+
+def commit_acked(ops, attempt_id, worker, fence, **kw):
+    """commit, then WF2's intent write succeeding on Monday (ADR decision 4): the commitment point as WF2 reaches it.
+    A commit refused before the intent (problems found) is returned as it is."""
+    r = ops.commit(attempt_id, worker, fence, **kw)
+    if not r.get('intent'):
+        return r
+    return ops.intent_ack(attempt_id, worker, fence, r['intent']['job'], ok=True)
+
+
 def cell(key, text=None, value=None):
     return {'id': COL[key], 'text': text or '', 'value': None if value is None else json.dumps(value)}
 

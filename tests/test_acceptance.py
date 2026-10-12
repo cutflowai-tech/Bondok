@@ -10,8 +10,8 @@ import threading
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from support import (OWNER_ID, ROOT, T0, Command, OpsCase, board_from_projection, monday_item, owner_cmd, rules,
-                     set_cell)
+from support import (OWNER_ID, ROOT, T0, Command, OpsCase, board_cmd, board_from_projection, commit_acked, monday_item,
+                     owner_cmd, rules, set_cell)
 
 from waset_ops import board
 
@@ -184,7 +184,7 @@ class Scenario03FileChange(OpsCase):
         self.clock.set(slot + timedelta(seconds=30))
         cl = self.ops.claim('21', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C1')
-        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], source_asset='id:FILE1@rev2',
+        r = commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], source_asset='id:FILE1@rev2',
                             container_status='FINISHED')
         self.assertFalse(r['committed'])
         self.assertIn('Dropbox file version changed after verification', r['reasons'])
@@ -354,12 +354,12 @@ class Scenario09PauseRace(OpsCase):
         cl = self._to_container('80')
         r = self.ops.submit(owner_cmd('p', 'pause', '80'))
         self.assertEqual(r['publication'], 'stopped_before_commit')
-        c = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        c = commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.assertFalse(c['committed'])
 
     def test_pause_after_commitment_point_is_truthful(self):
         cl = self._to_container('81')
-        self.assertTrue(self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['committed'])
+        self.assertTrue(commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['committed'])
         r = self.ops.submit(owner_cmd('p', 'pause', '81'))
         self.assertEqual(r['publication'], 'may_already_be_in_progress')
         self.assertNotIn('stopped', r['message'].lower().replace('stopped before', ''))
@@ -373,7 +373,7 @@ class Scenario10CrashReconcile(OpsCase):
         self.clock.set(rules.instant(self.res('90')['slot']) + timedelta(seconds=10))
         cl = self.ops.claim('90', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C90')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.clock.advance(1000)   # worker died; commit lease passed
         due = self.ops.due('w2')
         self.assertEqual(self.item('90')['publication'], 'outcome_unknown')
@@ -391,7 +391,7 @@ class Scenario10CrashReconcile(OpsCase):
         self.clock.set(rules.instant(self.res('91')['slot']) + timedelta(seconds=10))
         cl = self.ops.claim('91', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C91')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         r = self.ops.result(cl['attempt_id'], 'w', error='ETIMEDOUT', http_status=None)
         self.assertEqual(r['stage'], 'outcome_unknown')
         with self.ops.store.read() as c:
@@ -406,7 +406,7 @@ class Scenario11SyncFailure(OpsCase):
         self.clock.set(rules.instant(self.res('100')['slot']) + timedelta(seconds=10))
         cl = self.ops.claim('100', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C100')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.ops.result(cl['attempt_id'], 'w', media_id='IG100')
         for _ in range(3):
             for j in self.ops.outbox_take(['monday'], 'sync', 10):
@@ -437,7 +437,7 @@ class Scenario12Protections(OpsCase):
             self.ops.repair()
             self.assertIsNone(self.res(iid))
         # R5.2 contract §3 (expectation changed): the owner's board change away from Paused resumes directly.
-        r = self.ops.submit(Command('m', 'resume', 'monday', 'monday', '110', {}))
+        r = self.ops.submit(board_cmd('m', 'resume', '110', 'status', seen='Scheduled'))
         self.assertTrue(r['resumed'])
         r = self.ops.submit(owner_cmd('r', 'resume', '111'))
         self.assertTrue(r['resumed'])
@@ -447,7 +447,7 @@ class Scenario12Protections(OpsCase):
         self.clock.set(rules.instant(self.res('112')['slot']) + timedelta(seconds=10))
         cl = self.ops.claim('112', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.ops.result(cl['attempt_id'], 'w', media_id='IG')
         for op, args in (('replace_source', {'url': 'https://www.dropbox.com/s/x/y.mp4'}),
                          ('request_reschedule', {'at': rules.iso(at_cairo(2026, 10, 20, 11, 0))})):
@@ -458,7 +458,7 @@ class Scenario13NotesAndCaption(OpsCase):
     def test_notes_do_not_reprocess(self):
         self.make_ready('120', 'Post')
         before = self.item('120')
-        self.ops.submit(Command('n', 'set_notes', 'monday', 'monday', '120', {'value': 'call client'}))
+        self.ops.submit(board_cmd('n', 'set_notes', '120', 'notes', value='call client'))
         after = self.item('120')
         self.assertEqual((before['content_rev'], before['verification_id']),
                          (after['content_rev'], after['verification_id']))
@@ -469,9 +469,9 @@ class Scenario13NotesAndCaption(OpsCase):
         self.clock.set(rules.instant(self.res('121')['slot']) + timedelta(seconds=10))
         cl = self.ops.claim('121', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C-old')
-        self.ops.submit(Command('cap', 'update_caption', 'monday', 'monday', '121',
-                                {'text': 'Fresh hook, DM us now. 🚀\n\n#realestate'}))
-        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        self.ops.submit(board_cmd('cap', 'update_caption', '121', 'caption',
+                                  text='Fresh hook, DM us now. 🚀\n\n#realestate'))
+        r = commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.assertFalse(r['committed'])
         cl2 = self.ops.claim('121', 'w')
         self.assertTrue(cl2['claimed'])
@@ -530,8 +530,7 @@ class Scenario17AutonomousFormat(OpsCase):
         self.assertEqual(r['code'], 'needs_owner')
         self.assertEqual(self.item('160')['format'], 'Story')
         # Monday-originated format edit only creates a hold + approval request.
-        r = self.ops.submit(Command('mm', 'propose', 'monday', 'monday', '160', {'kind': 'change_format',
-                                                                                   'format': 'Post'}))
+        r = self.ops.submit(board_cmd('mm', 'propose', '160', 'format', kind='change_format', format='Post'))
         self.assertEqual(r['state'], 'awaiting_approval')
         self.assertEqual(self.item('160')['format'], 'Story')
         a = self.ops.submit(owner_cmd('ap', 'approve_proposal', None, proposal_id=r['proposal_id']))
@@ -784,8 +783,8 @@ class Scenario24StaleWorker(OpsCase):
         self.assertTrue(new['resumed'])
         self.assertEqual(new['container_id'], 'C210')
         with self.assertRaises(Exception):
-            self.ops.commit(old['attempt_id'], 'w-old', old['fence'], container_status='FINISHED')
-        self.assertTrue(self.ops.commit(new['attempt_id'], 'w-new', new['fence'], container_status='FINISHED')['committed'])
+            commit_acked(self.ops, old['attempt_id'], 'w-old', old['fence'], container_status='FINISHED')
+        self.assertTrue(commit_acked(self.ops, new['attempt_id'], 'w-new', new['fence'], container_status='FINISHED')['committed'])
         self.clock.advance(5000)   # result arrives after the commit lease: still recorded
         self.assertEqual(self.ops.result(new['attempt_id'], 'w-new', media_id='IG210')['stage'], 'published')
 
@@ -873,7 +872,7 @@ class Scenario28BoardBoundary(OpsCase):
 class Scenario30Collab(OpsCase):
     def test_collab_blocks_and_is_kept(self):
         self.make_ready('250', 'Post')
-        r = self.ops.submit(Command('cb', 'set_collab', 'monday', 'monday', '250', {'value': '@partner'}))
+        r = self.ops.submit(board_cmd('cb', 'set_collab', '250', 'collab', value='@partner'))
         self.assertEqual(r['readiness'], 'blocked')
         it = self.item('250')
         self.assertEqual(it['collab'], '@partner')
@@ -929,7 +928,7 @@ class LegacyMigrationBehaviour(OpsCase):
         with self.ops.store.tx() as c:
             p = self.ops.propose_legacy_captions(c, 'U-OWNER')
         # one caption changes on the board before approval -> that item is skipped
-        self.ops.submit(Command('ed', 'update_caption', 'monday', 'monday', '411', {'text': 'Changed by human, DM. ✨\n\n#c'}))
+        self.ops.submit(board_cmd('ed', 'update_caption', '411', 'caption', text='Changed by human, DM. ✨\n\n#c'))
         r = self.ops.submit(owner_cmd('ap', 'approve_proposal', None, proposal_id=p['proposal_id']))
         # R5.2 contract §7 (expectation changed, R5 M1): each caption is bound to its own text; the changed one is
         # skipped instead of voiding the whole batch.
@@ -1016,7 +1015,7 @@ class PublishingAuditCritical(OpsCase):
         self.clock.set(rules.instant(self.res(iid)['slot']) + timedelta(seconds=30))
         cl = self.ops.claim(iid, worker)
         self.ops.container(cl['attempt_id'], worker, cl['fence'], 'C-' + worker)
-        self.ops.commit(cl['attempt_id'], worker, cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], worker, cl['fence'], container_status='FINISHED')
         if media:
             return self.ops.result(cl['attempt_id'], worker, media_id=media)
         return self.ops.result(cl['attempt_id'], worker, error='{"code":100}', http_status=400, definitive=True)
@@ -1043,7 +1042,7 @@ class PublishingAuditCritical(OpsCase):
 
     def test_board_cannot_place_other_holds(self):
         self.make_ready('402', 'Story')
-        r = self.ops.submit(Command('m-h', 'hold', 'monday', 'monday', '402', {'kind': 'owner_review', 'reason': 'x'}))
+        r = self.ops.submit(board_cmd('m-h', 'hold', '402', 'status', kind='owner_review', reason='x'))
         self.assertEqual(r['state'], 'rejected')
 
     def test_published_item_cannot_be_reset_by_old_failed_attempt(self):
@@ -1138,7 +1137,7 @@ class PublishingAuditHigh(OpsCase):
         self.clock.set(rules.instant(slot) + timedelta(seconds=30))
         cl = self.ops.claim('412', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
-        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], source_asset='unverifiable', container_status='FINISHED')
+        r = commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], source_asset='unverifiable', container_status='FINISHED')
         self.assertFalse(r['committed'])
         it = self.item('412')
         self.assertEqual((it['readiness'], self.res('412')['slot']), ('ready', slot))
@@ -1488,7 +1487,7 @@ class TransientProviderErrors(OpsCase):
         self.clock.set(rules.instant(self.res(iid)['slot']) + timedelta(seconds=30))
         cl = self.ops.claim(iid, 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         return self.ops.result(cl['attempt_id'], 'w', error=err, http_status=400, definitive=True)
 
     def test_transient_error_reschedules_then_gives_up(self):
@@ -1607,7 +1606,7 @@ class OwnerJourneySequence(OpsCase):
         self.assertTrue(cl['claimed'])
         self.assertEqual(cl['payload']['caption'], self.CAP2)
         self.ops.container(cl['attempt_id'], 'wf2-a', cl['fence'], 'C1')
-        self.assertTrue(self.ops.commit(cl['attempt_id'], 'wf2-a', cl['fence'], source_asset='id:FILE2@rev2',
+        self.assertTrue(commit_acked(self.ops, cl['attempt_id'], 'wf2-a', cl['fence'], source_asset='id:FILE2@rev2',
                                         container_status='FINISHED')['committed'])
         # 8 provider timeout: no result arrives; 9 restart: the worker is gone, a new WF2 run starts
         self.clock.advance(20 * 60)
@@ -1726,7 +1725,7 @@ class RoundTwoRegressions(OpsCase):
             if not cl.get('claimed'):
                 break
             self.ops.container(cl['attempt_id'], 'w%d' % i, cl['fence'], 'C%d' % i)
-            self.ops.commit(cl['attempt_id'], 'w%d' % i, cl['fence'], source_asset='unverifiable', container_status='FINISHED')
+            commit_acked(self.ops, cl['attempt_id'], 'w%d' % i, cl['fence'], source_asset='unverifiable', container_status='FINISHED')
             self.clock.advance(60)
         self.assertIsNone(self.item('1106')['hold'])
         self.assertIsNotNone(self.res('1106'))
@@ -1782,7 +1781,7 @@ class FuzzFindings(OpsCase):
         self.make_ready('1202', 'Post')
         self.ops.submit(owner_cmd('f1', 'change_format', '1202', explicit=True, format='Story'))
         bad = 'x ' + ' '.join('#t%d' % i for i in range(31))
-        self.ops.submit(Command('m1', 'update_caption', 'monday', 'monday', '1202', {'text': bad}))
+        self.ops.submit(board_cmd('m1', 'update_caption', '1202', 'caption', text=bad))
         self.ops.submit(owner_cmd('f2', 'change_format', '1202', explicit=True, format='Post'))
         self.assertNotEqual(self.item('1202')['caption_state'], 'approved')
 
@@ -1947,7 +1946,7 @@ class MediaNotReadyAtPublish(OpsCase):
         cl = self.ops.claim(iid, 'w')
         self.assertTrue(cl['claimed'], cl)
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], f'C{minute}')
-        self.assertTrue(self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['committed'])
+        self.assertTrue(commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['committed'])
         return cl
 
     def test_not_ready_retries_the_same_slot_and_then_publishes(self):
@@ -2001,7 +2000,7 @@ class ReconciledPublicationShownOnBoard(OpsCase):
         self.clock.set(rules.instant(self.res('990')['slot']) + timedelta(seconds=30))
         cl = self.ops.claim('990', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C1')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.ops.result(cl['attempt_id'], 'w', error='socket hang up', http_status=None)       # answer lost
         self.drain_monday()                                                                     # board: Needs Review
         self.clock.advance(400)

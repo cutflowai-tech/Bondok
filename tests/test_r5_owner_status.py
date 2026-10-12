@@ -90,6 +90,89 @@ class R5_OwnerScheduledStatusIsAnOrder(OpsCase):
         self.assertNotEqual((self.res('5') or {}).get('slot'), taken)
         self.assertTrue(self.action('5'))                                 # the board says why
 
+    # ---- release review 2026-10-12: missing, expired and near-due times on a Scheduled order
+    def order(self, iid, at=None, **cells):
+        """The owner types Scheduled on an unscheduled ready item, with ``at`` in Publish at (or other cells)."""
+        b = self.unscheduled(iid)
+        set_cell(b, 'status', 'Scheduled')
+        if at is not None:
+            set_cell(b, 'publish_at', 'x', rules.monday_publish_at_value(at))
+        for k, (text, value) in cells.items():
+            set_cell(b, k, text, value)
+        return self.observe(b)
+
+    def minute(self, delta):
+        return (self.ops.now_dt() + delta).replace(second=0, microsecond=0)
+
+    def notices(self, iid):
+        return [json.loads(j['payload'])['text'] for j in self.outbox('slack') if j['item_id'] == iid]
+
+    def test_expired_time_is_closed_with_its_cause_and_one_question_never_another_slot(self):
+        at = self.minute(-timedelta(hours=3))
+        self.order('11', at)
+        self.assertIsNone(self.res('11'))                                 # no invented replacement time
+        hold = json.loads(self.item('11')['hold'] or '{}')
+        self.assertEqual(hold.get('kind'), 'missed_time')
+        self.assertEqual(hold.get('time'), rules.iso(at))                  # the owner's intent is kept
+        self.assertTrue(any('passed' in t and 'new time' in t for t in self.notices('11')))
+        self.drain_monday()
+        self.assertEqual(self.proj('11')['publish_at'], rules.iso(at))     # still visible on the board
+        self.assertNotEqual(self.proj('11')['status'], 'Scheduled')        # never "Scheduled" in the past
+
+    def test_expired_time_inside_the_late_window_is_published_late_at_that_time(self):
+        at = self.minute(-timedelta(minutes=30))
+        self.order('12', at)
+        self.assertEqual(self.res('12')['slot'], rules.iso(at))
+        self.assertTrue(self.ops.claim('12', 'w')['claimed'])
+
+    def test_near_due_time_is_kept(self):
+        self.unscheduled('13')
+        self.clock.advance(30)
+        at = self.minute(timedelta(minutes=1))                             # 30 s away
+        b = board_from_projection(self.ops, '13')
+        for k in ('publish_at', 'post_date', 'post_time'):
+            b['column_values'] = [x for x in b['column_values'] if x['id'] != board.COL[k]]
+        set_cell(b, 'status', 'Scheduled')
+        set_cell(b, 'publish_at', 'x', rules.monday_publish_at_value(at))
+        self.observe(b)
+        self.assertEqual(self.res('13')['slot'], rules.iso(at))
+
+    def test_date_without_time_keeps_the_date_and_asks_for_the_time(self):
+        day = self.minute(timedelta(days=2)).strftime('%Y-%m-%d')
+        self.order('14', publish_at=(day, {'date': day}))
+        self.assertIsNone(self.res('14'))                                 # neither midnight nor the next free slot
+        hold = json.loads(self.item('14')['hold'] or '{}')
+        self.assertEqual((hold.get('kind'), hold.get('date')), ('incomplete_time', day))
+
+    def test_partial_legacy_time_is_not_replaced_by_another_slot(self):
+        day = self.minute(timedelta(days=2)).strftime('%Y-%m-%d')
+        self.order('15', post_date=(day, {'date': day}))
+        self.assertIsNone(self.res('15'))
+        self.assertEqual(json.loads(self.item('15')['hold'] or '{}').get('kind'), 'incomplete_time')
+
+    def test_notice_says_the_real_reason_once(self):
+        # Slot held by another item: the notice names that, not "as soon as the video is ready".
+        self.make_ready('16')
+        taken = self.res('16')['slot']
+        self.observe(monday_item('17', fmt='Story'))                    # still checking
+        self.drain_monday()
+        self.clock.advance(180)
+        b = board_from_projection(self.ops, '17')
+        set_cell(b, 'status', 'Scheduled')
+        set_cell(b, 'publish_at', 'x', rules.monday_publish_at_value(rules.instant(taken)))
+        self.observe(b)
+        text = self.action('17')
+        self.assertIn('another item holds it', text)
+        self.assertNotIn('as soon as the video is ready', text)
+        # Not ready, no time: the reason appears once.
+        self.observe(monday_item('18', fmt='Story'))
+        self.drain_monday()
+        self.clock.advance(180)
+        b = board_from_projection(self.ops, '18')
+        set_cell(b, 'status', 'Scheduled')
+        self.observe(b)
+        self.assertEqual(self.action('18').lower().count('as soon as'), 1, self.action('18'))
+
     def test_scheduled_on_a_scheduled_item_changes_nothing(self):
         self.make_ready('6')
         self.drain_monday()

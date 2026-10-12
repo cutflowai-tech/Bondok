@@ -18,7 +18,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent / 'src'))
-from waset_ops import board  # noqa: E402
+from waset_ops import board, rules  # noqa: E402
 
 ORIG = HERE / 'original'
 DIST = HERE / 'dist'
@@ -279,6 +279,23 @@ if(!body&&e&&typeof e==='object'&&typeof e.description==='string'){try{body=JSON
 return [{json:{stage:'__STAGE__',error:body?JSON.stringify(body):text,httpStatus:code?Number(code)||null:null}}];"""
 
 
+# Compare-before-write check (display sync and publication intent): the board must still show a value the
+# system may have put there. __SRC__ names the node holding {job,item,guard,gql}.
+GUARD_JS = r"""
+const m=$('__SRC__').item.json;
+if($json.error||$json.errors)return {json:{...m,conflict:null,readError:String(($json.error&&$json.error.message)||JSON.stringify($json.errors)).slice(0,300)}};
+if(!($json.data?.items||[]).length)return {json:{...m,conflict:null,readError:'item not found on the board'}};
+const cols=$json.data.items[0].column_values||[];
+const norm=(c,kind)=>{if(!c)return null;
+  if(kind==='long'){try{const v=JSON.parse(c.value||'null');if(v&&typeof v.text==='string')return v.text.trim()||null}catch(e){}}
+  return String(c.text||'').trim()||null};
+// 'was' lists every value the board may legitimately show (last confirmed + writes already in flight).
+const changed=Object.entries(m.guard).filter(([id,g])=>{const cur=norm(cols.find(c=>c.id===id),g.kind);
+  const ok=[].concat(g.was===undefined?null:g.was).map(v=>v??null);
+  return !ok.includes(cur)&&cur!==(g.new??null)}).map(([id])=>id);
+return {json:{...m,conflict:changed.length?'conflict: changed on the board by a person ('+changed.join(',')+')':null}};
+"""
+
 # ============================================================================ WF2
 def build_wf2():
     o = load('pUIshuf16zIYoYRz__2_Publish_When_Due.json')
@@ -309,20 +326,7 @@ return {json:{job:j.id,item:String(p.item_id),guard,gql:{query:q+'}',variables:v
     g_read = f.monday('Read Board Before Sync', "JSON.stringify({query:'query($i:[ID!],$c:[String!]){items(ids:$i){"
                       "column_values(ids:$c){id text value} } }',variables:{i:[$json.item],c:Object.keys($json.guard)} })",
                       on_error='continueRegularOutput')
-    g_check = f.code('Check Board Before Sync', r"""
-const m=$('Build Sync Mutation').item.json;
-if($json.error||$json.errors)return {json:{...m,conflict:null,readError:String(($json.error&&$json.error.message)||JSON.stringify($json.errors)).slice(0,300)}};
-if(!($json.data?.items||[]).length)return {json:{...m,conflict:null,readError:'item not found on the board'}};
-const cols=$json.data.items[0].column_values||[];
-const norm=(c,kind)=>{if(!c)return null;
-  if(kind==='long'){try{const v=JSON.parse(c.value||'null');if(v&&typeof v.text==='string')return v.text.trim()||null}catch(e){}}
-  return String(c.text||'').trim()||null};
-// 'was' lists every value the board may legitimately show (last confirmed + writes already in flight).
-const changed=Object.entries(m.guard).filter(([id,g])=>{const cur=norm(cols.find(c=>c.id===id),g.kind);
-  const ok=[].concat(g.was===undefined?null:g.was).map(v=>v??null);
-  return !ok.includes(cur)&&cur!==(g.new??null)}).map(([id])=>id);
-return {json:{...m,conflict:changed.length?'conflict: changed on the board by a person ('+changed.join(',')+')':null}};
-""", each=True)
+    g_check = f.code('Check Board Before Sync', GUARD_JS.replace('__SRC__', 'Build Sync Mutation'), each=True)
     conflict = f.cond('Sync Conflict?', '!!$json.conflict || !!$json.readError')
     c_ack_in, c_ack = f.helper('Display Sync — Conflict Ack', '/v2/outbox/ack', r"""({id:$json.job,
 worker:$('Configuration').first().json.worker,ok:false,error:$json.conflict||('read before sync failed: '+$json.readError)})""",
@@ -494,8 +498,36 @@ sourceAsset:$json.sourceAsset,deliveredAsset:$json.deliveredAsset,containerStatu
     f.link(dverify, del_res, 0)
     f.link(dverify, del_res, 1)
     f.link(del_res, commit_in)
-    f.link(commit, committed)
     precommit(commit, 'commit_call')
+    # ADR decision 4: the publication intent is written on Monday (guarded on Status) and acknowledged before
+    # media_publish; a refused or failed write publishes nothing (release review 2026-10-12).
+    has_intent = f.cond('Publication Intent?', '!!($json.intent&&$json.intent.job)')
+    i_mut = f.code('Build Intent Write', r"""
+const i=$json.intent;
+return {json:{job:i.job,item:String(i.item_id),guard:i.guard,gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v,create_labels_if_missing:false){id}}',variables:{b:'__BOARD__',i:String(i.item_id),v:JSON.stringify(i.columns)}}}};
+""".replace('__BOARD__', rules.BOARD), each=True)
+    i_read = f.monday('Read Board Before Intent', "JSON.stringify({query:'query($i:[ID!],$c:[String!]){items(ids:$i){"
+                      "column_values(ids:$c){id text value} } }',variables:{i:[$json.item],c:Object.keys($json.guard)} })",
+                      on_error='continueRegularOutput')
+    i_check = f.code('Check Intent Guard', GUARD_JS.replace('__SRC__', 'Build Intent Write'), each=True)
+    i_ok = f.cond('Intent Guard Clear?', '!$json.conflict && !$json.readError')
+    i_write = f.monday('Write Publication Intent', "JSON.stringify($('Build Intent Write').item.json.gql)",
+                       on_error='continueRegularOutput')
+    i_ack_in, i_ack = f.helper('Acknowledge Publication Intent', '/v2/publish/intent', r"""(()=>{
+const m=$('Build Intent Write').item.json,c=$json;
+const err=c.conflict||(c.readError?'read before intent failed: '+c.readError:null)||
+  (c.error?(c.error.message||JSON.stringify(c.error)):(c.errors?JSON.stringify(c.errors):(c.data?null:'no response from Monday')));
+return {attemptId:$('Claim Publication').item.json.attempt_id,worker:$('Configuration').first().json.worker,
+fence:$('Claim Publication').item.json.fence,job:m.job,ok:!err,error:err?String(err).slice(0,500):null};})()""",
+                               fail=False)
+    f.link(commit, has_intent)
+    f.link(has_intent, i_mut, 0)
+    f.link(has_intent, done, 1)
+    f.chain(i_mut, i_read, i_check, i_ok)
+    f.link(i_ok, i_write, 0)
+    f.link(i_ok, i_ack_in, 1)
+    f.chain(i_write, i_ack_in)
+    f.link(i_ack, committed)
     f.link(committed, done, 1)
 
     publish = f.reuse('Publish To Instagram', onError='continueRegularOutput')

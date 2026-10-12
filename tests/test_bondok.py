@@ -8,7 +8,7 @@ import sqlite3
 import sys
 import unittest
 
-from support import ROOT, OpsCase, monday_item, rules
+from support import ROOT, OpsCase, commit_acked, monday_item, rules
 
 sys.path.insert(0, str(ROOT / 'bondok'))
 from app import Core, accept_event  # noqa: E402
@@ -171,7 +171,7 @@ class Notifications(BondokCase):
         self.clock.set(rules.instant(self.res('350')['slot']) + timedelta(seconds=10))
         cl = self.ops.claim('350', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.ops.result(cl['attempt_id'], 'w', error='timeout')
         core = self.core(FakeModel())
         core.deliver_notifications(50)

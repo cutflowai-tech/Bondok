@@ -7,7 +7,7 @@ import json
 import unittest
 from datetime import timedelta
 
-from support import OWNER_ID, Command, OpsCase, monday_item, owner_cmd, rules, set_cell
+from support import OWNER_ID, Command, OpsCase, commit_acked, monday_item, owner_cmd, rules, set_cell
 
 from waset_ops import board
 
@@ -163,7 +163,7 @@ class R5_OwnerReportCorrection(OpsCase):
         self.clock.set(rules.instant(self.res('42')['slot']) + timedelta(seconds=10))
         cl = self.ops.claim('42', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.ops.result(cl['attempt_id'], 'w', media_id='IG-42')
         self.ops.submit(owner_cmd(self.rid(), 'report_published', '42', source='slack'))
         r = self.ops.submit(owner_cmd(self.rid(), 'resolve_outcome', '42', explicit=True, outcome='not_published'))
@@ -179,7 +179,7 @@ class R5_B1_CrossItemDuplicateGuard(OpsCase):
         cl = self.ops.claim(iid, 'w-' + iid)
         self.assertTrue(cl['claimed'], cl)
         self.ops.container(cl['attempt_id'], 'w-' + iid, cl['fence'], 'C-' + iid)
-        r = self.ops.commit(cl['attempt_id'], 'w-' + iid, cl['fence'], container_status='FINISHED')
+        r = commit_acked(self.ops, cl['attempt_id'], 'w-' + iid, cl['fence'], container_status='FINISHED')
         self.assertTrue(r['committed'], r)
         self.ops.result(cl['attempt_id'], 'w-' + iid, media_id=media + iid)
 
@@ -265,7 +265,7 @@ class R5_B1_CrossItemDuplicateGuard(OpsCase):
             c.execute("UPDATE ops_items SET format='Story', content_hash='hash1', asset_key='id:FILE1@rev1' "
                       "WHERE item_id='63'")
         self.ops.submit(owner_cmd(self.rid(), 'report_published', '63', source='slack'))
-        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        r = commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.assertFalse(r['committed'])
         self.assertTrue(any('Same video' in x for x in r['reasons']))
 
@@ -285,7 +285,7 @@ class R5_B1_RefusedAttemptDoesNotBlockItsOldFileForever(OpsCase):
         self.clock.set(rules.instant(self.res('80')['slot']) + timedelta(seconds=30))
         cl = self.ops.claim('80', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C80')
-        self.assertTrue(self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['committed'])
+        self.assertTrue(commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['committed'])
         self.ops.result(cl['attempt_id'], 'w', error=json.dumps({'error': {'code': 9, 'error_subcode': 2207042,
                                                                             'message': 'limit'}}),
                         http_status=400, definitive=True)

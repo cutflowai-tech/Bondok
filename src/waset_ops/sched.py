@@ -357,6 +357,9 @@ class SchedMixin:
             at = (rules.validate_owner_time if owner else rules.validate_requested_slot)(self.now_dt(), it['format'],
                                                                                       at_raw)
         except (rules.RuleError, ValueError) as e:
+            due = self._order_time_due(c, cmd, it, at_raw) if owner and cmd.args.get('order') else None
+            if due is not None:
+                return due
             alts = rules.alternatives(self.now_dt(), it['format'], self.taken(c, it['format'], it['item_id']))
             msg = f"{e}. Free times on the usual schedule: " + ', '.join(rules.display(a) for a in alts)
             raise Rejected('Requested time rejected: ' + msg, 'invalid_slot', alternatives=[rules.iso(a) for a in alts])
@@ -385,7 +388,8 @@ class SchedMixin:
             self.update_item(c, it['item_id'], cmd.actor, 'requested time', requested_at=slot,
                              requested_by='owner' if cmd.actor_kind == OWNER else 'board')
             return {'_state': 'accepted', 'requested': slot,
-                    'message': f'Time recorded as requested ({rules.display(at)}); not yet reserved: ' + why}
+                    'message': f'Time recorded as requested ({rules.display(at)}); not yet reserved because {why}. '
+                               'It is reserved for that time once the item is ready.'}
         if res:
             c.execute('DELETE FROM ops_reservations WHERE item_id=?', (it['item_id'],))
         self._reserve(c, self.item(c, it['item_id']), at, 'owner', True, cmd.actor)
@@ -394,6 +398,43 @@ class SchedMixin:
             out['message'] = ('The publisher had already started on the previous time; that attempt stops before '
                               'publishing because the time changed.')
         return out
+
+    def _order_time_due(self, c, cmd, it, at_raw) -> dict | None:
+        """The owner's Scheduled order names a time that has passed or is less than a minute away (release review
+        2026-10-12). That time is kept: it is published late inside the late-publication window (contract §5: at
+        most 2 hours, never at or after the next reserved slot of the format); otherwise the request is closed with
+        its cause and one question (missed-request policy). Never another time. None: not this case."""
+        try:
+            at = rules.instant(at_raw)
+        except (rules.RuleError, ValueError):
+            return None
+        now = self.now_dt()
+        if at.second or at >= now + rules.OWNER_MIN_LEAD:
+            return None
+        slot = rules.iso(at)
+        res = self.reservation(c, it['item_id'])
+        if res and res['slot'] == slot:
+            self._clear_time_hold(c, it, cmd.actor)
+            return {'scheduled': slot, 'unchanged': True}
+        it = self._clear_time_hold(c, it, cmd.actor)    # the order answers an open time question
+        why = self.eligible(c, it)
+        taken = slot in self.reserved_slots(c, it['format'], it['item_id'])
+        end = rules.late_deadline(at, self.next_reserved_after(c, it['format'], slot, it['item_id']))
+        if why is None and not taken and now < end:
+            self._store_window(c, it['item_id'], None, cmd.actor)
+            if res:
+                self.release(c, it, 'owner chose another time', keep_request=False)
+            self._reserve(c, self.item(c, it['item_id']), at, 'owner', True, cmd.actor)
+            return {'scheduled': slot, 'display': rules.display(at),
+                    'message': (f'Published late at the requested time {rules.display(at)} (inside the 2-hour late '
+                                'window).') if at <= now else f'Scheduled for {rules.display(at)}.'}
+        cause = why or ('another item is reserved at that time' if taken else
+                        'Scheduled was set after the late-publication window for that time had closed')
+        if res:
+            self.release(c, it, 'owner time passed', keep_request=False)
+        it = self.update_item(c, it['item_id'], cmd.actor, 'requested time', requested_at=slot,
+                              requested_by='owner' if cmd.actor_kind == OWNER else 'board')
+        return self._missed_request(c, it, cmd.actor, cause)
 
     def op_set_window(self, c, cmd: Command):
         """Owner constraint for an item's publication day/earliest time (e.g. "not before tomorrow"). An existing

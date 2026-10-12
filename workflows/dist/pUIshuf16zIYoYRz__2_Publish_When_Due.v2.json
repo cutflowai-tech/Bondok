@@ -1567,6 +1567,215 @@
    ]
   },
   {
+   "name": "Publication Intent?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "78f9cd4b-28c4-556d-a97d-ed47d3e359f8",
+       "leftValue": "={{ !!($json.intent&&$json.intent.job) }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "35c03077-11d9-5927-8298-98e4309cb40e",
+   "position": [
+    480,
+    1400
+   ]
+  },
+  {
+   "name": "Build Intent Write",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const i=$json.intent;\nreturn {json:{job:i.job,item:String(i.item_id),guard:i.guard,gql:{query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v,create_labels_if_missing:false){id}}',variables:{b:'5105608159',i:String(i.item_id),v:JSON.stringify(i.columns)}}}};",
+    "mode": "runOnceForEachItem"
+   },
+   "id": "4cbabb95-7fa2-5415-9090-51db8a753a5a",
+   "position": [
+    720,
+    1400
+   ]
+  },
+  {
+   "name": "Read Board Before Intent",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.3,
+   "parameters": {
+    "url": "https://api.monday.com/v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "mondayComApi",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify({query:'query($i:[ID!],$c:[String!]){items(ids:$i){column_values(ids:$c){id text value} } }',variables:{i:[$json.item],c:Object.keys($json.guard)} }) }}"
+   },
+   "credentials": {
+    "mondayComApi": {
+     "id": "<REDACTED>",
+     "name": "Monday.com account"
+    }
+   },
+   "onError": "continueRegularOutput",
+   "id": "e0c2ae79-07f0-521f-9120-1d6957c32356",
+   "position": [
+    960,
+    1400
+   ]
+  },
+  {
+   "name": "Check Intent Guard",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const m=$('Build Intent Write').item.json;\nif($json.error||$json.errors)return {json:{...m,conflict:null,readError:String(($json.error&&$json.error.message)||JSON.stringify($json.errors)).slice(0,300)}};\nif(!($json.data?.items||[]).length)return {json:{...m,conflict:null,readError:'item not found on the board'}};\nconst cols=$json.data.items[0].column_values||[];\nconst norm=(c,kind)=>{if(!c)return null;\n  if(kind==='long'){try{const v=JSON.parse(c.value||'null');if(v&&typeof v.text==='string')return v.text.trim()||null}catch(e){}}\n  return String(c.text||'').trim()||null};\n// 'was' lists every value the board may legitimately show (last confirmed + writes already in flight).\nconst changed=Object.entries(m.guard).filter(([id,g])=>{const cur=norm(cols.find(c=>c.id===id),g.kind);\n  const ok=[].concat(g.was===undefined?null:g.was).map(v=>v??null);\n  return !ok.includes(cur)&&cur!==(g.new??null)}).map(([id])=>id);\nreturn {json:{...m,conflict:changed.length?'conflict: changed on the board by a person ('+changed.join(',')+')':null}};",
+    "mode": "runOnceForEachItem"
+   },
+   "id": "83aae487-3a64-5de2-a1a6-4fd2b8441d17",
+   "position": [
+    1200,
+    1400
+   ]
+  },
+  {
+   "name": "Intent Guard Clear?",
+   "type": "n8n-nodes-base.if",
+   "typeVersion": 2.3,
+   "parameters": {
+    "conditions": {
+     "options": {
+      "caseSensitive": true,
+      "leftValue": "",
+      "typeValidation": "strict",
+      "version": 2
+     },
+     "conditions": [
+      {
+       "id": "85b6bd5a-207c-51f3-8ed9-291faf3d1821",
+       "leftValue": "={{ !$json.conflict && !$json.readError }}",
+       "rightValue": true,
+       "operator": {
+        "type": "boolean",
+        "operation": "true",
+        "singleValue": true
+       }
+      }
+     ],
+     "combinator": "and"
+    },
+    "options": {}
+   },
+   "id": "a6806b88-b183-5cb5-8e7b-ed8d11e71bd0",
+   "position": [
+    1440,
+    1400
+   ]
+  },
+  {
+   "name": "Write Publication Intent",
+   "type": "n8n-nodes-base.httpRequest",
+   "typeVersion": 4.3,
+   "parameters": {
+    "url": "https://api.monday.com/v2",
+    "method": "POST",
+    "options": {
+     "timeout": 60000,
+     "response": {
+      "response": {
+       "responseFormat": "json",
+       "neverError": false
+      }
+     }
+    },
+    "authentication": "predefinedCredentialType",
+    "nodeCredentialType": "mondayComApi",
+    "sendBody": true,
+    "contentType": "json",
+    "specifyBody": "json",
+    "jsonBody": "={{ JSON.stringify($('Build Intent Write').item.json.gql) }}"
+   },
+   "credentials": {
+    "mondayComApi": {
+     "id": "<REDACTED>",
+     "name": "Monday.com account"
+    }
+   },
+   "onError": "continueRegularOutput",
+   "id": "615203b7-2931-581f-b1c7-3342fc632038",
+   "position": [
+    1680,
+    1400
+   ]
+  },
+  {
+   "name": "Acknowledge Publication Intent — Input",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "const body=(()=>{\nconst m=$('Build Intent Write').item.json,c=$json;\nconst err=c.conflict||(c.readError?'read before intent failed: '+c.readError:null)||\n  (c.error?(c.error.message||JSON.stringify(c.error)):(c.errors?JSON.stringify(c.errors):(c.data?null:'no response from Monday')));\nreturn {attemptId:$('Claim Publication').item.json.attempt_id,worker:$('Configuration').first().json.worker,\nfence:$('Claim Publication').item.json.fence,job:m.job,ok:!err,error:err?String(err).slice(0,500):null};})();\nconst payload=Buffer.from(JSON.stringify({path:\"/v2/publish/intent\",body}),'utf8').toString(\"base64\");\nconst command='python3 /home/node/.n8n-files/waset-social/helper.py '+payload;\nif(Buffer.byteLength(command)>120000)throw new Error('Helper payload too large ('+Buffer.byteLength(command)+' bytes); refusing to truncate');\nconst out={command};\nreturn [{json:out}];"
+   },
+   "id": "fcc5022b-7a30-5129-8d7b-371c48975190",
+   "position": [
+    1920,
+    1400
+   ]
+  },
+  {
+   "name": "Acknowledge Publication Intent — Local n8n",
+   "type": "n8n-nodes-base.executeCommand",
+   "typeVersion": 1,
+   "parameters": {
+    "executeOnce": false,
+    "command": "={{ $json.command }}"
+   },
+   "onError": "continueRegularOutput",
+   "id": "1dce9bc0-2019-5e4e-b9b7-8f76be6bcef7",
+   "position": [
+    2160,
+    1400
+   ]
+  },
+  {
+   "name": "Acknowledge Publication Intent",
+   "type": "n8n-nodes-base.code",
+   "typeVersion": 2,
+   "parameters": {
+    "jsCode": "let r;\nif($json.error!==undefined&&$json.stdout===undefined){\n  const raw=String(($json.error&&$json.error.message)||$json.error),nl=raw.indexOf('\\n');\n  const head=/^Command failed/.test(raw)?'non-zero exit':raw.slice(0,nl<0?200:Math.min(nl,200));\n  const tail=(nl<0?'':raw.slice(nl+1)).trim().split(/\\s*\\n\\s*/).join(' | ').slice(-700);\n  r={ok:false,kind:'helper_process_failed',error:('Helper process failed ('+head+'): '+(tail||raw.slice(0,200))).slice(0,900)};\n}else{\n  try{r=JSON.parse(String($json.stdout||''))}catch(e){r=null}\n  if(r===null||typeof r!=='object'||Array.isArray(r))r={ok:false,kind:'helper_bad_output',\n    error:('Helper output is not a JSON object: '+String($json.stdout||'').slice(0,200)+' '+String($json.stderr||'').slice(-300)).slice(0,900)};\n}\nreturn [{json:r}];"
+   },
+   "id": "80ca0080-a488-5bd6-87f9-76a7b54bb6d2",
+   "position": [
+    2400,
+    1400
+   ]
+  },
+  {
    "parameters": {
     "method": "POST",
     "url": "https://graph.facebook.com/v26.0/<IG_ACCOUNT>/media_publish",
@@ -1611,8 +1820,8 @@
    },
    "id": "edaa0146-ac04-551f-aed1-459ecddba074",
    "position": [
-    720,
-    1400
+    0,
+    1600
    ]
   },
   {
@@ -1626,8 +1835,8 @@
    "onError": "continueRegularOutput",
    "id": "c2747acc-a97f-5fd1-ab18-ba1dd2d89d8b",
    "position": [
-    960,
-    1400
+    240,
+    1600
    ]
   },
   {
@@ -1639,8 +1848,8 @@
    },
    "id": "e2f8528f-bd6d-5c12-adcf-b8b011f78e1f",
    "position": [
-    1200,
-    1400
+    480,
+    1600
    ]
   },
   {
@@ -1673,8 +1882,8 @@
    },
    "id": "ab320b0b-4512-55a3-91c6-6ad2e7eb55cc",
    "position": [
-    1440,
-    1400
+    720,
+    1600
    ]
   },
   {
@@ -1718,8 +1927,8 @@
    },
    "id": "a625ecdc-1db8-5669-89aa-0e52684eba32",
    "position": [
-    1920,
-    1400
+    1200,
+    1600
    ]
   },
   {
@@ -1733,8 +1942,8 @@
    "onError": "continueRegularOutput",
    "id": "16eb0357-d61e-58f3-adc1-99391b4c0741",
    "position": [
-    2160,
-    1400
+    1440,
+    1600
    ]
   },
   {
@@ -1746,8 +1955,8 @@
    },
    "id": "fa49fcfe-53fd-5c92-8a3e-35e25e1358ae",
    "position": [
-    2400,
-    1400
+    1680,
+    1600
    ]
   }
  ],
@@ -2773,7 +2982,7 @@
    "main": [
     [
      {
-      "node": "Committed?",
+      "node": "Publication Intent?",
       "type": "main",
       "index": 0
      }
@@ -2792,6 +3001,119 @@
     [
      {
       "node": "Record Pre-commit Failure — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Acknowledge Publication Intent — Input": {
+   "main": [
+    [
+     {
+      "node": "Acknowledge Publication Intent — Local n8n",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Acknowledge Publication Intent — Local n8n": {
+   "main": [
+    [
+     {
+      "node": "Acknowledge Publication Intent",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Publication Intent?": {
+   "main": [
+    [
+     {
+      "node": "Build Intent Write",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Publication Item Finished",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Build Intent Write": {
+   "main": [
+    [
+     {
+      "node": "Read Board Before Intent",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Read Board Before Intent": {
+   "main": [
+    [
+     {
+      "node": "Check Intent Guard",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Check Intent Guard": {
+   "main": [
+    [
+     {
+      "node": "Intent Guard Clear?",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Intent Guard Clear?": {
+   "main": [
+    [
+     {
+      "node": "Write Publication Intent",
+      "type": "main",
+      "index": 0
+     }
+    ],
+    [
+     {
+      "node": "Acknowledge Publication Intent — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Write Publication Intent": {
+   "main": [
+    [
+     {
+      "node": "Acknowledge Publication Intent — Input",
+      "type": "main",
+      "index": 0
+     }
+    ]
+   ]
+  },
+  "Acknowledge Publication Intent": {
+   "main": [
+    [
+     {
+      "node": "Committed?",
       "type": "main",
       "index": 0
      }

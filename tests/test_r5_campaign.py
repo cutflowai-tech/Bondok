@@ -18,7 +18,7 @@ import random
 import unittest
 from datetime import timedelta
 
-from support import OpsCase, monday_item, owner_cmd, rules
+from support import OpsCase, commit_acked, monday_item, owner_cmd, rules
 
 from waset_ops import Ops
 
@@ -122,7 +122,7 @@ class Campaign(OpsCase):
             self.world.n += 1
             cid = f'C{self.world.n}'
             self.ops.container(cl['attempt_id'], worker, cl['fence'], cid)
-            if not self.ops.commit(cl['attempt_id'], worker, cl['fence'], container_status='FINISHED').get('committed'):
+            if not commit_acked(self.ops, cl['attempt_id'], worker, cl['fence'], container_status='FINISHED').get('committed'):
                 continue
             ident = self.identity(iid)
             kind = rnd.choice(('ok', 'ok', 'ok', 'lost', 'unknown', 'refused', 'crash')) if outcomes else 'ok'

@@ -44,7 +44,8 @@ BODY_FILE = re.compile(r'inbox/[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.json')
 FENCE_FILE = 'deploy-fence.json'
 # Results of work already in flight, and read-only routes: allowed while the deployment fence is up.
 FENCE_ALLOWED = {'/v2/health', '/v2/monitor/inspect', '/v2/run/finish', '/v2/run/fail',
-                 '/v2/publish/container', '/v2/publish/renew', '/v2/publish/commit', '/v2/publish/result',
+                 '/v2/publish/container', '/v2/publish/renew', '/v2/publish/commit', '/v2/publish/intent',
+                 '/v2/publish/result',
                  '/v2/publish/evidence', '/v2/publish/reconcile', '/v2/publish/abandon', '/v2/outbox/ack',
                  '/v2/import/record'}
 # New work: answered as "nothing to do now" so the workflows end cleanly instead of failing every cycle.
@@ -308,6 +309,9 @@ def action(path, b):
     if path == '/v2/publish/commit':
         return o.commit(b['attemptId'], b['worker'], b['fence'], source_asset=b.get('sourceAsset'),
                         container_status=b.get('containerStatus'), delivered_asset=b.get('deliveredAsset'))
+    if path == '/v2/publish/intent':
+        return o.intent_ack(b['attemptId'], b['worker'], b['fence'], b['job'], ok=b.get('ok') is True,
+                            error=b.get('error'))
     if path == '/v2/publish/result':
         return o.result(b['attemptId'], b['worker'], media_id=b.get('mediaId'), error=b.get('error'),
                         http_status=b.get('httpStatus'), definitive=bool(b.get('definitive')))

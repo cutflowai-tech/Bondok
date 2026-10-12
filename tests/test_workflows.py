@@ -94,7 +94,10 @@ class GraphContracts(unittest.TestCase):
             for n in w['nodes']:
                 t = json.dumps(n.get('parameters', {}))
                 if 'change_multiple_column_values' in t:
-                    self.assertEqual((wid, n['name']), ('pUIshuf16zIYoYRz', 'Build Sync Mutation'))
+                    # the display sync, and the handler's publication intent (ADR decision 4); both carry values
+                    # decided by the handler and are compare-before-write guarded
+                    self.assertIn((wid, n['name']), {('pUIshuf16zIYoYRz', 'Build Sync Mutation'),
+                                                     ('pUIshuf16zIYoYRz', 'Build Intent Write')})
                 if 'create_item(' in t:
                     self.assertEqual((wid, n['name']), ('qI1N5VNgpRjnZAKH', 'Build Create Mutations'))
 

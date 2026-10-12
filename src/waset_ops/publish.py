@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import secrets
 
-from . import rules
+from . import board, rules
 from .core import ACTIVE_ATTEMPT, OWNER, PRE_COMMIT, Command, Rejected, fingerprint
 from .db import audit, dumps, loads, next_counter
 
@@ -459,6 +459,9 @@ class PublishMixin:
         now, now_dt = self.now(), self.now_dt()
         with self.store.tx() as c:
             a = self._attempt(c, attempt_id, worker, fence, ('container_created',))
+            earlier = ((loads(a['evidence'], {}) or {}).get('intent') or {}).get('job')
+            if earlier:
+                self._drop_intent(c, earlier, 'replaced by a new commit of the same attempt')
             it = self.item(c, a['item_id'])
             res = self.reservation(c, a['item_id'])
             problems = []
@@ -540,11 +543,108 @@ class PublishMixin:
                 self.evaluate(c, a['item_id'], worker)
                 self.project(c, a['item_id'])
                 return {'committed': False, 'reasons': problems}
+            # ADR decision 4 (release review 2026-10-12): the intent is acknowledged on Monday before media_publish.
+            # The attempt stays before the commitment point until WF2 reports the guarded write (intent_ack).
+            intent = self._publish_intent(c, a, it, worker)
+            c.execute('UPDATE ops_attempts SET lease_until=?, evidence=?, updated=? WHERE id=?',
+                      (now + LEASE, dumps({'intent': {'job': intent['job'], 'at': now}}), now, attempt_id))
+            audit(c, a['item_id'], 'publish_intent', worker, {'attempt': attempt_id, 'job': intent['job']})
+            return {'committed': False, 'intent': intent}
+
+    def _publish_intent(self, c, a, it, worker) -> dict:
+        """The Monday write that announces this publication: Status 'Publishing' and the intent (attempt, payload
+        and content fingerprints) in System update. Guarded on Status against every value the system may have put
+        there, so a person's change since (e.g. Paused typed into an empty cell, R5 B7) refuses it. Leased to this
+        worker only: the display sync never takes it."""
+        confirmed = loads(it['projected'], {}) or {}
+        pending = loads(it['pending_projection'], {}) or {}
+        was = [confirmed.get('status')]
+        for j in c.execute("SELECT payload FROM ops_outbox WHERE kind='monday' AND item_id=? AND "
+                           "state IN ('pending','in_flight','failed','escalated')", (a['item_id'],)):
+            v = (loads(j['payload'], {}).get('compare') or {}).get('status')
+            if v and v not in was:
+                was.append(v)
+        status = board.LABELS['publishing']
+        text = (f"Publishing now: attempt {a['id']}, payload {a['payload_fp'][:12]}, "
+                f"content {(it.get('content_hash') or 'unknown')[:12]}")
+        compare = {'status': status, 'system': text,
+                   '_ours': sorted(set(confirmed.get('_ours') or []) | {'status', 'system'})}
+        guard = {board.COL['status']: {'kind': 'status', 'was': was, 'new': status}}
+        columns = {board.COL['status']: board.mutation_value('status', status),
+                   board.COL['system']: board.mutation_value('system', text)}
+        payload = {'item_id': str(a['item_id']), 'columns': columns, 'compare': compare, 'guard': guard,
+                   'attempt': a['id']}
+        now = self.now()
+        cur = c.execute("INSERT INTO ops_outbox(kind,dedupe_key,item_id,payload,state,lease_owner,lease_until,next_at,"
+                        "created,updated) VALUES('intent',?,?,?,'in_flight',?,?,0,?,?)",
+                        (f"intent:{a['id']}:{next_counter(c, 'outbox:intent')}", str(a['item_id']), dumps(payload),
+                         worker, now + LEASE, now, now))
+        c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?',
+                  (dumps({**pending, 'status': status, 'system': text}), str(a['item_id'])))
+        return {'job': cur.lastrowid, 'item_id': str(a['item_id']), 'columns': columns, 'guard': guard}
+
+    def intent_ack(self, attempt_id, worker, fence, job, *, ok, error=None) -> dict:
+        """WF2 reports the guarded intent write. Only an acknowledged intent for this attempt, by its worker, with the
+        item still active, unchanged and inside its window, reaches the commitment point; anything else abandons the
+        attempt before Instagram is asked to publish (nothing published; the slot is retried or the owner's change
+        is observed)."""
+        now, now_dt = self.now(), self.now_dt()
+        with self.store.read() as c:
+            try:
+                a = self._attempt(c, attempt_id, worker, fence, ('container_created',), lease=False)
+            except Rejected as e:
+                return {'committed': False, 'reasons': [e.reason], 'code': e.code}
+            if ((loads(a['evidence'], {}) or {}).get('intent') or {}).get('job') != job:
+                return {'committed': False, 'reasons': ["not this attempt's current publication intent"],
+                        'code': 'stale'}
+        if ok:
+            self.outbox_ack(job, worker, True)              # the board shows the intent: display bookkeeping
+        with self.store.tx() as c:
+            a = self._attempt(c, attempt_id, worker, fence, ('container_created',), lease=False)
+            it = self.item(c, a['item_id'])
+            res = self.reservation(c, a['item_id'])
+            problems = [] if ok else ['publication intent was not acknowledged on Monday: ' + str(error or '')[:300]]
+            if (a['lease_until'] or 0) < now:
+                problems.append('publication lease expired before the intent was acknowledged')
+            if it['owner_state'] != 'active':
+                problems.append('item is ' + it['owner_state'])
+            if loads(it['hold'], None):
+                problems.append('item is held: ' + (loads(it['hold'], {}) or {}).get('reason', ''))
+            if it['content_rev'] != a['content_rev'] or not res or res['slot'] != a['slot'] or \
+                    res['payload_fp'] != a['payload_fp'] or self.payload_fp(c, it) != a['payload_fp']:
+                problems.append('item or reservation changed before the intent was acknowledged')
+            elif not (rules.instant(a['slot']) <= now_dt <= self.deadline(c, res)):
+                problems.append('outside the publication window')
+            if problems:
+                if not ok:
+                    self._drop_intent(c, job, error)
+                cls = 'conflict' if str(error or '').startswith('conflict') else 'transient'
+                c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
+                          (dumps({'refused': problems, 'class': cls, 'stage': 'intent'}), now, attempt_id))
+                audit(c, a['item_id'], 'commit_refused', worker, {'attempt': attempt_id, 'problems': problems})
+                self.evaluate(c, a['item_id'], worker)
+                self.project(c, a['item_id'])
+                return {'committed': False, 'reasons': problems}
             c.execute("UPDATE ops_attempts SET stage='committed', lease_until=?, updated=? WHERE id=?",
                       (now + COMMIT_LEASE, now, attempt_id))
             self._legacy_receipt(c, a, 'publish_requested')
-            audit(c, a['item_id'], 'commit', worker, {'attempt': attempt_id})
+            audit(c, a['item_id'], 'commit', worker, {'attempt': attempt_id, 'intent_job': job})
             return {'committed': True, 'container_id': a['container_id']}
+
+    def _drop_intent(self, c, job, error):
+        """An intent write that did not land: it is never retried (a later commit writes a new one), and the display
+        no longer assumes it."""
+        r = c.execute("SELECT * FROM ops_outbox WHERE id=? AND kind='intent'", (job,)).fetchone()
+        if not r or r['state'] == 'done':
+            return
+        c.execute("UPDATE ops_outbox SET state='superseded', last_error=?, updated=? WHERE id=?",
+                  (('intent not written: ' + str(error or ''))[:500], self.now(), job))
+        it = self.item(c, r['item_id'], required=False)
+        if it:
+            mine = {k for k in (loads(r['payload'], {}).get('compare') or {}) if not k.startswith('_')}
+            pend = {k: v for k, v in (loads(it['pending_projection'], {}) or {}).items() if k not in mine}
+            c.execute('UPDATE ops_items SET pending_projection=? WHERE item_id=?',
+                      (dumps(pend) if pend else None, r['item_id']))
 
     def _legacy_receipt(self, c, a, stage, extra=None):
         """Mirror into the legacy receipt table so a rolled-back helper still

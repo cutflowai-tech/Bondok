@@ -6,7 +6,7 @@ import json
 import unittest
 from datetime import timedelta
 
-from support import OpsCase, owner_cmd, rules
+from support import OpsCase, commit_acked, owner_cmd, rules
 
 
 def err(code, sub=None, msg='x', typ=None):
@@ -137,7 +137,7 @@ class PublishOnce(Base):
         self.clock.set(rules.instant(self.res(iid)['slot']) + timedelta(seconds=30))
         cl = self.ops.claim(iid, 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C' + iid)
-        self.assertTrue(self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['committed'])
+        self.assertTrue(commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['committed'])
         return cl
 
 
@@ -201,7 +201,7 @@ class R5_B9_OwnerNotPublishedVersusLaterEvidence(PublishOnce):
         cl2 = self.ops.claim('30', 'w3')
         self.assertTrue(cl2['claimed'], cl2)
         self.ops.container(cl2['attempt_id'], 'w3', cl2['fence'], 'C30b')
-        c2 = self.ops.commit(cl2['attempt_id'], 'w3', cl2['fence'], container_status='FINISHED')
+        c2 = commit_acked(self.ops, cl2['attempt_id'], 'w3', cl2['fence'], container_status='FINISHED')
         self.assertFalse(c2['committed'])
         self.assertTrue(any('re-checked' in x for x in c2['reasons']), c2)
         # Reconciliation of the old container now finds it PUBLISHED: that evidence is recorded.
@@ -221,7 +221,7 @@ class R5_B9_OwnerNotPublishedVersusLaterEvidence(PublishOnce):
         self.clock.set(rules.instant(res['slot']) + timedelta(seconds=30))
         cl2 = self.ops.claim('31', 'w3')
         self.ops.container(cl2['attempt_id'], 'w3', cl2['fence'], 'C31b')
-        self.assertTrue(self.ops.commit(cl2['attempt_id'], 'w3', cl2['fence'], container_status='FINISHED')['committed'])
+        self.assertTrue(commit_acked(self.ops, cl2['attempt_id'], 'w3', cl2['fence'], container_status='FINISHED')['committed'])
 
 
 class R5_CaptionRefusalGoesToTheOwner(PublishOnce):

@@ -19,7 +19,7 @@ from datetime import timedelta
 from pathlib import Path
 from unittest import mock
 
-from support import OpsCase, board_from_projection, monday_item, owner_cmd, rules, set_cell
+from support import OpsCase, board_from_projection, commit_acked, monday_item, owner_cmd, rules, set_cell
 from test_workflows import NODE, WF, run_js
 
 import helper  # noqa: E402  (src/helper.py: the real WF1 preparation step)
@@ -752,7 +752,7 @@ class R5_M17_DeliveredIdentityBound(OpsCase):
     def test_replaced_delivered_copy_blocks_publication(self):
         mid = self.delivered('1001')
         cl = self.at_commit('1001')
-        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], source_asset='id:FILE1@rev1',
+        r = commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], source_asset='id:FILE1@rev1',
                             delivered_asset='id:DLV@d2', container_status='FINISHED')
         self.assertFalse(r['committed'])
         self.assertTrue(any('Delivered Dropbox copy changed' in x for x in r['reasons']), r)
@@ -767,7 +767,7 @@ class R5_M17_DeliveredIdentityBound(OpsCase):
     def test_unreadable_delivered_copy_refuses_this_commit_only(self):
         self.delivered('1002')
         cl = self.at_commit('1002')
-        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], source_asset='id:FILE1@rev1',
+        r = commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], source_asset='id:FILE1@rev1',
                             delivered_asset='unverifiable', container_status='FINISHED')
         self.assertFalse(r['committed'])
         self.assertTrue(any('could not be checked' in x for x in r['reasons']), r)
@@ -776,7 +776,7 @@ class R5_M17_DeliveredIdentityBound(OpsCase):
     def test_matching_delivered_copy_commits(self):
         self.delivered('1003')
         cl = self.at_commit('1003')
-        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], source_asset='id:FILE1@rev1',
+        r = commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], source_asset='id:FILE1@rev1',
                             delivered_asset='id:DLV@d1', container_status='FINISHED')
         self.assertTrue(r['committed'], r)
 

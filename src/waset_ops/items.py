@@ -422,6 +422,12 @@ class ItemsMixin:
             lead = next((e for e in times if e['key'] == 'publish_at'), times[0])
             lead['also'] = [e['key'] for e in times if e is not lead]
             edits = [e for e in edits if e is lead or e['key'] not in TIME_KEYS]
+        order = next((e for e in edits if e['key'] == 'status' and e['new'] == board.LABELS['scheduled']), None)
+        if order and it['owner_state'] == 'active' and any(e['key'] in TIME_KEYS for e in edits):
+            # Scheduled typed together with a time is one order for that time (release review 2026-10-12): the
+            # time is not a separate request that a passed value would reject and revert on its own.
+            order['also'] = [x for e in edits if e['key'] in TIME_KEYS for x in (e['key'], *e.get('also', []))]
+            edits = [e for e in edits if e['key'] not in TIME_KEYS]
         c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(observed), it['item_id']))
         if rec_fix:
             self.project(c, it['item_id'], force_keys=('record',) if had_col else ())
@@ -438,7 +444,9 @@ class ItemsMixin:
         k, new = e['key'], e['new']
 
         def run(op, args=None):
-            return self.submit(Command(cid, op, 'monday', MONDAY, iid, args or {}))
+            return self.submit(Command(cid, op, 'monday', MONDAY, iid, args or {}, auth={'board': {
+                'source': 'observation', 'column': k, 'value': None if new is None else str(new)[:200],
+                'observed_at': self.now()}}))
 
         with self.store.read() as c:
             before_id = c.execute('SELECT COALESCE(MAX(id), 0) FROM ops_outbox').fetchone()[0]
@@ -523,17 +531,27 @@ class ItemsMixin:
                 # Owner decision 2026-10-11: "Scheduled" typed by the owner is an order to publish - at the time on
                 # the board, else the next free slot. Media safety and reservation conflicts still apply (another
                 # reserved item is never displaced); the board says why when it cannot be scheduled yet.
+                # Only a board with no time at all means "next free slot"; a date without a time, a half legacy
+                # pair or an unreadable value is the owner's partial request and is never replaced by another time
+                # (release review 2026-10-12). A passed or near-due time follows the missed-request policy.
                 snap = e.get('snap') or {}
-                try:
-                    at = board.requested_instant(snap) if any(snap.values()) else None
-                except Exception:   # noqa: BLE001 - an unreadable time is reported, not guessed
-                    return self._revert(iid, k, 'The time on the board could not be read; use Publish at (Cairo time)')
-                r = run('request_reschedule', {'at': rules.iso(at)}) if at else \
-                    run('request_publish', {'source': 'board status'})
+                pa, pd, pt = snap.get('publish_at'), snap.get('post_date'), snap.get('post_time')
+                if not (pa or pd or pt):
+                    r = run('request_publish', {'source': 'board status'})
+                elif board.date_only(pa) or (not pa and pd and not pt and board.date_only(pd)):
+                    r = run('request_reschedule', {'at': None, 'incomplete_date': board.date_only(pa or pd)})
+                else:
+                    try:
+                        at = board.requested_instant(snap)
+                    except Exception:   # noqa: BLE001 - an unreadable time is reported, not guessed
+                        at = None
+                    if at is None:
+                        return self._revert(iid, k, 'The time on the board could not be read or is incomplete; '
+                                                    'use Publish at (Cairo time)')
+                    r = run('request_reschedule', {'at': rules.iso(at), 'order': True})
                 if r.get('state') == 'accepted':
                     with self.store.tx() as c:
-                        self.set_notice(c, iid, 'Your Scheduled order is recorded: ' + str(r.get('message') or '') +
-                                        ' It will be scheduled as soon as the video is ready.')
+                        self.set_notice(c, iid, 'Your Scheduled order is recorded. ' + str(r.get('message') or ''))
                 return r
             return self._revert(iid, k, 'Status shows the system state; use Scheduled, Paused, Skipped, Posted, '
                                         'Publish at, or ask Bondok')

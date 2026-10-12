@@ -5,7 +5,7 @@ import unittest
 from datetime import timedelta
 
 from board_sim import Board, wf2_sync
-from support import OpsCase, monday_item, owner_cmd, rules
+from support import OpsCase, commit_acked, monday_item, owner_cmd, rules
 
 from waset_ops import board as B
 
@@ -221,7 +221,7 @@ class R5_M1_ApprovalsBindToTheirDependencies(BoardCase):
         self.make_ready('61')
         p = self.ops.submit(owner_cmd(self.rid(), 'request_reschedule', '60', at=self.res('61')['slot']))
         self.assertEqual(p['state'], 'awaiting_approval', p)
-        self.ops.submit(__import__('support').Command(self.rid(), 'set_notes', 'monday', 'monday', '61',
+        self.ops.submit(__import__('support').board_cmd(self.rid(), 'set_notes', '61', 'notes', **
                                                       {'value': 'unrelated note'}))
         with self.ops.store.tx() as c:                    # e.g. a readiness re-evaluation bumps the version
             self.ops.update_item(c, '60', 'test', 'unrelated bump', infra_issue=None, waiting_since=self.ops.now())
@@ -242,7 +242,7 @@ class R5_LOW10_PublishedAtIsNotInvented(OpsCase):
         self.clock.set(rules.instant(self.res('70')['slot']) + timedelta(seconds=30))
         cl = self.ops.claim('70', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C70')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.ops.result(cl['attempt_id'], 'w', error='ETIMEDOUT')
         self.clock.advance(5 * 3600)
         self.ops.reconcile(cl['attempt_id'], 'PUBLISHED')

@@ -4,7 +4,7 @@ import json
 import unittest
 from datetime import timedelta
 
-from support import OpsCase, board_from_projection, monday_item, owner_cmd, rules, set_cell
+from support import OpsCase, board_from_projection, commit_acked, monday_item, owner_cmd, rules, set_cell
 
 from waset_ops import board
 
@@ -257,7 +257,7 @@ class R5_LOW08_ScheduleListsOnlyPendingWork(Base):
         self.clock.set(rules.instant(self.res('70')['slot']) + timedelta(seconds=10))
         cl = self.ops.claim('70', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.ops.result(cl['attempt_id'], 'w', media_id='IG70')
         self.assertEqual([r for r in self.ops.schedule(14) if r['item_id'] == '70'], [])
         self.assertIsNone(self.ops.item_status('70')['reservation'])
@@ -280,7 +280,7 @@ class R5_OwnerNearDueCorrection(Base):
         self.clock.set(rules.instant(self.res('81')['slot']) + timedelta(seconds=10))
         cl = self.ops.claim('81', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         r = self.ops.submit(owner_cmd(self.rid(), 'request_reschedule', '81',
                                       at=rules.iso(self.ops.now_dt().replace(second=0) + timedelta(hours=2))))
         self.assertEqual(r['state'], 'rejected')

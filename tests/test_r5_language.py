@@ -17,7 +17,7 @@ import unittest
 from datetime import timedelta
 from unittest import mock
 
-from support import ROOT, Command, monday_item, owner_cmd, rules
+from support import ROOT, Command, commit_acked, monday_item, owner_cmd, rules
 from test_bondok import OWNER, BondokCase
 
 sys.path.insert(0, str(ROOT / 'bondok'))
@@ -133,7 +133,7 @@ class LangCase(BondokCase):
         self.clock.set(rules.instant(self.res(iid)['slot']) + timedelta(seconds=10))
         cl = self.ops.claim(iid, 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         self.ops.result(cl['attempt_id'], 'w', error='timeout')
         return cl['attempt_id']
 
@@ -685,7 +685,7 @@ class R5_M22_ApprovalRepliesAreTruthful(LangCase):
         self.clock.set(rules.instant(self.res('951')['slot']) + timedelta(seconds=10))
         cl = self.ops.claim('951', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
-        self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
         reply = self.say(core, 'اه')
         self.assertIn('may already be in progress', reply)
         self.assertNotIn('stopped', reply.lower())

@@ -226,12 +226,32 @@ class CoreMixin:
         'caption_draft': {'service:wf1', 'service:bondok'},
     }
 
+    # Which board columns can ask for an operation in the Monday actor kind (release review 2026-10-12). A Monday
+    # command is an owner decision only as the result of an observed board edit (contract §1): the observation
+    # attaches its provenance (column + value) and it is recorded with the command (ops_commands.auth_ref).
+    BOARD_COLUMNS = {
+        'pause': {'status'}, 'skip': {'status'}, 'resume': {'status'}, 'request_publish': {'status'},
+        'report_published': {'status', 'post_link', 'ig_media'},
+        'request_reschedule': {'status', 'publish_at', 'post_date', 'post_time'},
+        'change_format': {'format'}, 'update_caption': {'caption'}, 'confirm_topaz': {'topaz'},
+        'replace_source': {'dropbox'}, 'set_folder': {'folder'}, 'set_notes': {'notes'},
+        'set_variety': {'variety'}, 'set_collab': {'collab'}, 'set_code': {'code'},
+        'propose': {'format'}, 'hold': {'status', 'post_link', 'ig_media'},
+    }
+
     def authorize(self, c, cmd: Command):
         allowed = self.PERMISSIONS.get(cmd.op)
         if allowed is None:
             raise Rejected('Unsupported operation', 'unsupported')
         if cmd.actor_kind not in allowed:
             raise Rejected('This actor is not permitted to perform this operation', 'forbidden')
+        if cmd.actor_kind == MONDAY:
+            src = (cmd.auth or {}).get('board') or {}
+            if src.get('source') != 'observation' or src.get('column') not in self.BOARD_COLUMNS.get(cmd.op, ()):
+                raise Rejected('A Monday command must come from an observed board edit of a column that can request '
+                               'this operation', 'forbidden')
+            if cmd.op == 'request_publish' and src.get('value') != board.LABELS['scheduled']:
+                raise Rejected('A publish order from the board is Status set to Scheduled', 'forbidden')
         if cmd.item_id is not None and cmd.op not in ('approve_proposal', 'reject_proposal', 'propose'):
             self.item(c, cmd.item_id)  # membership: only registered social-board items
 
@@ -402,6 +422,8 @@ class CoreMixin:
         shown = res['slot'] if res else (it.get('requested_at') if it.get('requested_by') != 'legacy-board' else None)
         if not shown and hold and hold.get('kind') == 'incomplete_time':
             shown = hold.get('date')
+        if not shown and hold and hold.get('kind') == 'missed_time' and it['owner_state'] == 'active':
+            shown = hold.get('time')     # the owner's passed time stays visible next to the question (2026-10-12)
         legacy = rules.monday_legacy_values(rules.instant(shown)) if shown and not board.date_only(shown) else None
         d = {
             'status': board.LABELS[label],
@@ -677,7 +699,7 @@ class CoreMixin:
             p = loads(r['payload'], {})
             if ok:
                 c.execute("UPDATE ops_outbox SET state='done', last_error=NULL, updated=? WHERE id=?", (now, job_id))
-                if r['kind'] == 'monday':
+                if r['kind'] in ('monday', 'intent'):      # intent: the publication intent write (publish.py)
                     it = self.item(c, r['item_id'], required=False)
                     if it:
                         compare = p.get('compare', {})

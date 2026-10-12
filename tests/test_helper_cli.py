@@ -57,7 +57,12 @@ class HelperCli(OpsCase):
         self.assertTrue(self.call('/v2/publish/renew', base)['ok'])
         commit = self.call('/v2/publish/commit', {**base, 'sourceAsset': claim['source_asset'],
                                                   'containerStatus': 'FINISHED'})
-        self.assertTrue(commit['committed'], commit)
+        self.assertFalse(commit['committed'], commit)            # ADR §4: the intent is written on Monday first
+        res = self.call('/v2/publish/result', {'attemptId': claim['attempt_id'], 'worker': 'wf2-1',
+                                               'mediaId': '17999', 'httpStatus': 200})
+        self.assertNotEqual(res.get('stage'), 'published')       # no result before the commitment point
+        ack = self.call('/v2/publish/intent', {**base, 'job': commit['intent']['job'], 'ok': True, 'error': None})
+        self.assertTrue(ack['committed'], ack)
         res = self.call('/v2/publish/result', {'attemptId': claim['attempt_id'], 'worker': 'wf2-1',
                                                'mediaId': '17999', 'httpStatus': 200})
         self.assertEqual(res['stage'], 'published')
