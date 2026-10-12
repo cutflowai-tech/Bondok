@@ -509,7 +509,10 @@ class SlackAuditMedium(BondokCase):
         self.msg(core, 'اعتمد كل الكابشنز القديمة')
         with self.ops.store.read() as c:
             n = c.execute("SELECT COUNT(*) FROM ops_proposals WHERE kind='approve_captions'").fetchone()[0]
+            cmds = c.execute("SELECT actor_kind, state FROM ops_commands WHERE op='propose_legacy_captions'").fetchall()
         self.assertEqual(n, 1)
+        # Release review 2026-10-12: the proposal is a recorded owner command, not a direct store write.
+        self.assertEqual([(r['actor_kind'], r['state']) for r in cmds], [('owner', 'awaiting_approval')])
 
     def test_answer_only_in_its_thread(self):
         # R5: "اه" answers only the open question of its own thread (contract §4).

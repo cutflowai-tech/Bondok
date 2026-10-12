@@ -78,7 +78,8 @@ def main(db_snapshot, board_snapshot, helper):
         report['work_queue_styles'] = dict(styles)
         report['monitor'] = o.repair()
 
-        # Rollback receipt guard: a v2 publication blocks the old helper's claim.
+        # Rollback receipt guard: a v2 publication blocks the old helper's claim. Synthetic rows written directly into
+        # this isolated copy (documented exception to "no direct writers", COMMANDS_AND_PERMISSIONS.md).
         legacy_posted = [i['id'] for i in items if any(c['id'] == 'status' and c['text'] == 'Posted' for c in i['column_values'])]
         with o.store.tx() as c:
             iid = next(r['item_id'] for r in c.execute("SELECT item_id FROM ops_items WHERE publication='not_started' LIMIT 1"))

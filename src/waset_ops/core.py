@@ -207,6 +207,7 @@ class CoreMixin:
         'repair_missed': {'service:wf3'},
         'repair_schedule': {'service:wf3', 'service:wf1'},
         'resolve_outcome': {OWNER},
+        'propose_legacy_captions': {OWNER},   # one batch approval request (Slack); nothing changes until approved
         'approve_proposal': {OWNER},
         'reject_proposal': {OWNER},
         'propose': {OWNER, BONDOK, MONDAY, 'service:wf3', 'service:wf1'},
@@ -398,8 +399,9 @@ class CoreMixin:
             elif it.get('requested_at'):
                 action = 'Requested time is not available; choose another slot in Slack'
         notice = (loads(it.get('observed'), {}) or {}).get('_notice')
-        if notice and self.now() - notice.get('at', 0) < NOTICE_SECONDS and not action:
-            action = notice['text']
+        if notice and self.now() - notice.get('at', 0) < NOTICE_SECONDS and notice['text'] not in action:
+            # Shown next to an Action that is already there, never hidden behind it (R5 M4).
+            action = notice['text'] + ('\n' + action if action else '')
         system = []
         if it.get('infra_issue'):
             system.append('Temporary system issue (content not rejected): ' + it['infra_issue'])
@@ -917,6 +919,9 @@ class CoreMixin:
             self.op_update_caption(c, inner)
             done.append(x['item_id'])
         return {'approved': done, 'skipped_changed': skipped}
+
+    def op_propose_legacy_captions(self, c, cmd: Command):
+        return {'_state': 'awaiting_approval', **self.propose_legacy_captions(c, cmd.actor, cmd.auth.get('thread'))}
 
     def propose_legacy_captions(self, c, created_by, thread=None) -> dict:
         rows = c.execute("SELECT item_id, name, caption FROM ops_items WHERE caption_state='legacy_unapproved' "

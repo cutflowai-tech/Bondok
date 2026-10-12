@@ -198,6 +198,9 @@ class PublishMixin:
                 end = self.deadline(c, res) if res and res['slot'] == a['slot'] else \
                     rules.instant(a['slot']) + rules.LATE_WINDOW
                 if end < now_dt:
+                    job = ((loads(a['evidence'], {}) or {}).get('intent') or {}).get('job')
+                    if job:
+                        self._drop_intent(c, job, 'publisher stopped before the intent was acknowledged')
                     c.execute("UPDATE ops_attempts SET stage='abandoned', updated=? WHERE id=?", (now, a['id']))
                     audit(c, a['item_id'], 'attempt_abandoned', worker, {'attempt': a['id'], 'why': 'window passed'})
                     self.evaluate(c, a['item_id'], worker)     # a ready item gets its next slot (audit P4)

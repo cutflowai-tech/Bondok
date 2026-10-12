@@ -169,8 +169,7 @@ class Bridge:
         if tool == 'request_recheck':      # harmless: re-reads the file, decides nothing
             return self.ops.submit(Command(cid, 'request_recheck', actor, 'owner', item, {}, auth=auth))
         if tool == 'approve_all_existing_captions':    # only creates one proposal; nothing changes until approved
-            with self.ops.store.tx() as c:
-                return {'state': 'awaiting_approval', **self.ops.propose_legacy_captions(c, actor, thread)}
+            return self.ops.submit(Command(cid, 'propose_legacy_captions', actor, 'owner', None, {}, auth=auth))
         if tool == 'draft_caption':
             return self._draft(item, args, cid)
         if tool not in PROTECTED:

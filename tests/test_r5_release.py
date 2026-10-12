@@ -4,6 +4,9 @@
 * RR2 ADR decision 4: the publication intent is acknowledged on Monday before media_publish; a failed or refused
   acknowledgement publishes nothing.
 * RR3 The empty-Status-cell Pause race (R5 B7) end to end: board sync, publisher, intent guard, observation.
+* RR4 R5 M4 completed: both halves of the register entry are exercised (the cited test covered neither).
+* RR5 Monday to publisher end to end on a simulated board: an owner's Scheduled order with a passed time is
+  published late once, through the intent write; duplicates and forged Monday commands publish nothing.
 Synthetic data only.
 """
 import json
@@ -128,6 +131,20 @@ class RR2_IntentAcknowledgedBeforePublish(OpsCase):
         self.assertFalse(r.get('committed'))
         self.assertEqual(self.stage(cl['attempt_id']), 'container_created')
 
+    def test_publisher_stopping_before_the_ack_publishes_nothing_and_leaves_no_intent(self):
+        cl = self.due('6')
+        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['intent']
+        self.clock.advance(3 * 3600)                                        # worker died; the window passed
+        self.ops.due('w2')
+        self.assertEqual(self.stage(cl['attempt_id']), 'abandoned')
+        self.assertEqual(self.receipts('6'), 0)
+        with self.ops.store.read() as c:
+            self.assertEqual(c.execute('SELECT state FROM ops_outbox WHERE id=?', (i['job'],)).fetchone()[0],
+                             'superseded')
+        self.assertNotIn('Publishing now', json.dumps(json.loads(self.item('6')['pending_projection'] or '{}')))
+        r = self.ops.intent_ack(cl['attempt_id'], 'w', cl['fence'], i['job'], ok=True)   # a late ack changes nothing
+        self.assertFalse(r['committed'])
+
 
 @unittest.skipUnless(NODE, 'node is required to execute the generated workflow code')
 class RR2_WorkflowWritesIntentBeforePublishing(unittest.TestCase):
@@ -228,6 +245,100 @@ class RR3_EmptyStatusPauseRace(OpsCase):
         self.observe(*b.snapshot(), actor='service:wf2')
         self.assertFalse(self.ops.claim('71', 'wf2').get('claimed'))
         self.assertEqual(self.item('71')['owner_state'], 'paused')
+
+
+class RR4_M4_TimeFeedbackStaysVisible(OpsCase):
+    """R5 M4: 'Rejected time hidden when an Action is already shown; accepted-but-unreservable time vanishes from
+    the board'."""
+
+    def action(self, iid):
+        with self.ops.store.read() as c:
+            return self.ops.desired_display(c, self.ops.item(c, iid))['action'] or ''
+
+    def test_rejected_time_is_explained_even_when_an_action_is_already_shown(self):
+        self.make_ready('80', 'Post', approve_caption=False)        # Action: caption needs approval
+        self.assertIn('Caption needs owner approval', self.action('80'))
+        self.drain_monday()
+        self.clock.advance(180)
+        b = board_from_projection(self.ops, '80', fmt='Post')
+        far = (self.ops.now_dt() + timedelta(days=120)).replace(hour=19, minute=0, second=0, microsecond=0)
+        set_cell(b, 'publish_at', 'x', rules.monday_publish_at_value(far))      # beyond the 84-day horizon
+        self.observe(b)
+        text = self.action('80')
+        self.assertIn('not applied', text)                          # the rejection is visible ...
+        self.assertIn('Caption needs owner approval', text)         # ... next to the existing Action
+
+    def test_accepted_but_unreservable_time_stays_on_the_board(self):
+        self.observe(monday_item('81', fmt='Story'))               # still checking: cannot be reserved yet
+        self.drain_monday()
+        self.clock.advance(180)
+        at = (self.ops.now_dt() + timedelta(days=1)).replace(hour=19, minute=7, second=0, microsecond=0)
+        b = board_from_projection(self.ops, '81', topaz='Not yet')
+        set_cell(b, 'publish_at', 'x', rules.monday_publish_at_value(at))
+        self.observe(b)
+        self.assertIsNone(self.res('81'))
+        self.drain_monday()
+        self.assertEqual(json.loads(self.item('81')['projected'])['publish_at'], rules.iso(at))
+        self.clock.advance(180)
+        self.assertEqual(self.observe(board_from_projection(self.ops, '81', topaz='Not yet'))['edits'], [])   # stable, no churn
+
+
+class RR5_MondayToPublisher(OpsCase):
+    def wf2_publish(self, b, iid, media):
+        """One WF2 publication run for ``iid`` as the generated workflow does it (fresh read, claim, container,
+        commit, guarded intent write, acknowledgement, media_publish, result)."""
+        self.observe(*[x for x in b.snapshot() if x['id'] == iid], actor='service:wf2')
+        cl = self.ops.claim(iid, 'wf2')
+        if not cl.get('claimed'):
+            return cl
+        self.ops.container(cl['attempt_id'], 'wf2', cl['fence'], 'C-' + iid)
+        r = self.ops.commit(cl['attempt_id'], 'wf2', cl['fence'], container_status='FINISHED')
+        if not r.get('intent'):
+            return r
+        p = {'item_id': r['intent']['item_id'], 'columns': r['intent']['columns'], 'guard': r['intent']['guard']}
+        conflict = b.guard_conflict(p)
+        ok = not conflict and b.apply(p) is None
+        a = self.ops.intent_ack(cl['attempt_id'], 'wf2', cl['fence'], r['intent']['job'], ok=ok,
+                                error='conflict' if conflict else None)
+        if a.get('committed'):
+            self.published.append(iid)                                 # Instagram publishes here
+            self.ops.result(cl['attempt_id'], 'wf2', media_id=media)
+        return a
+
+    def test_owner_scheduled_order_reaches_instagram_once(self):
+        self.published = []
+        self.make_ready('90')
+        self.make_ready('91', content='c90-')                          # same video on a duplicated item
+        self.assertIsNone(self.res('91'))
+        self.drain_monday()
+        self.clock.advance(180)
+        b = board_sim.Board([board_from_projection(self.ops, '90'), board_from_projection(self.ops, '91')])
+        # The owner clears 90's time, then orders it published at a time that passed 20 minutes ago.
+        for k in ('publish_at', 'post_date', 'post_time'):
+            b.set_raw('90', board.COL[k], None)
+        self.observe(*b.snapshot())
+        board_sim.wf2_sync(self.ops, b)
+        self.clock.advance(600)                                           # the next WF1 cycle
+        at = (self.ops.now_dt() - timedelta(minutes=20)).replace(second=0, microsecond=0)
+        b.set_raw('90', board.COL['status'], {'id': 'status', 'text': 'Scheduled', 'value': '{"index":1}'})
+        b.set_raw('90', board.COL['publish_at'], {'id': board.COL['publish_at'], 'text': 'x',
+                                                  'value': json.dumps(rules.monday_publish_at_value(at))})
+        b.set_raw('91', board.COL['status'], {'id': 'status', 'text': 'Scheduled', 'value': '{"index":1}'})
+        self.observe(*b.snapshot())
+        self.assertEqual(self.res('90')['slot'], rules.iso(at))           # the owner's time, published late
+        self.assertIsNone(self.res('91'))                                 # the duplicate is still blocked
+        board_sim.wf2_sync(self.ops, b)
+        # A forged Monday-kind order (no board provenance) is refused.
+        self.assertEqual(self.ops.submit(Command('forged', 'request_publish', 'monday', MONDAY, '91', {}))['code'],
+                         'forbidden')
+        for _ in range(3):                                                # three WF2 runs, a minute apart
+            for iid in ('90', '91'):
+                self.wf2_publish(b, iid, 'IG-' + iid)
+            board_sim.wf2_sync(self.ops, b, clock=self.clock, step=60)
+        self.assertEqual(self.published, ['90'])
+        self.assertEqual(self.item('90')['publication'], 'published')
+        self.assertEqual(board.norm(b.items['90'], 'status'), 'Posted')
+        self.assertNotEqual(self.item('91')['publication'], 'published')
 
 
 if __name__ == '__main__':
