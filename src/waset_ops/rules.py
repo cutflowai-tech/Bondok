@@ -79,15 +79,20 @@ POLICY = {
     'late_window_minutes': {'default': int(LATE_WINDOW.total_seconds() // 60), 'type': 'int', 'min': 0,
                             'max': 24 * 60, 'label': 'How late a missed slot may still be published (minutes)'},
     # Operating policy (P1-06). Defaults are the behaviour in force before the migration, except where noted.
-    'publish_without_fresh_board': {'default': False, 'type': 'bool',
-                                    'label': 'Publish a due item even when its fresh Monday read fails (uses the '
-                                             'last observed board state)'},
-    'bulk_confirm_threshold': {'default': 10, 'type': 'int', 'min': 1, 'max': 1000,
-                               'label': 'One owner instruction acting on more items than this is confirmed once '
-                                        'before it runs (new default, P1-06)'},
-    'delete_means_archive': {'default': True, 'type': 'bool',
-                             'label': '"Delete" on the board archives the item (recoverable) unless the owner says '
-                                      'permanently (new default, P1-06)'},
+    'board_freshness_minutes': {'default': 15, 'type': 'int', 'min': 0, 'max': 7 * 24 * 60,
+                                'label': 'When Monday cannot be read just before publishing, publish only if Bondok '
+                                         'received the item\'s board state within this many minutes (0 = always '
+                                         'read it fresh)'},
+    'allowed_boards': {'default': [BOARD, SOURCE_BOARD, EDITOR_SUBITEM_BOARD], 'type': 'ids',
+                       'label': 'Monday boards Bondok may write'},
+    'dropbox_roots': {'default': ['/Social Media'], 'type': 'paths',
+                      'label': 'Dropbox folders whose files Bondok may rename, move or delete'},
+    'occupied_slot_needs_approval': {'default': True, 'type': 'bool',
+                                     'label': 'An owner time already used by another item moves that item only after '
+                                              'one approval naming both (owner decision option B, 2026-10-10)'},
+    'require_collab': {'default': True, 'type': 'bool', 'waivable': True,
+                       'label': 'An item with IG Collab is published only with its collaborators (Instagram supports '
+                                'collaborators on Reels, not on Stories)'},
     'agent_max_steps': {'default': 6, 'type': 'int', 'min': 1, 'max': 30,
                         'label': 'Model steps per owner message (cost and loop limit)'},
     'publish_attempts_per_slot': {'default': 3, 'type': 'int', 'min': 1, 'max': 10,
@@ -145,6 +150,16 @@ def coerce_policy(name: str, value):
         if not vals:
             raise RuleError(f'{name} needs at least one time')
         return vals
+    if t in ('ids', 'paths'):
+        vals = value if isinstance(value, (list, tuple)) else [x for x in re.split(r'[,\n]', str(value))]
+        vals = [str(x).strip() for x in vals if str(x).strip()]
+        if not vals:
+            raise RuleError(f'{name} needs at least one value')
+        if t == 'ids' and not all(re.fullmatch(r'\d{3,20}', x) for x in vals):
+            raise RuleError(f'{name} is a list of Monday board ids')
+        if t == 'paths' and not all(x.startswith('/') for x in vals):
+            raise RuleError(f'{name} is a list of Dropbox folders starting with /')
+        return sorted(set(vals))
     if t == 'weekly':
         if not isinstance(value, dict):
             raise RuleError(f'{name} is a map of weekday to time, e.g. {{"sat": "21:00"}}')

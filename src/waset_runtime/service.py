@@ -65,7 +65,7 @@ def build(env: dict, dry_run=False):
     os.environ.setdefault('WASET_HELPER', str(HERE / 'helper.py'))   # detached media jobs run through the helper
     ops = Ops(db)
     ops.store.migrate()
-    monday = Monday(env['MONDAY_API_TOKEN'])
+    monday = Monday(env['MONDAY_API_TOKEN'], boards=lambda: ops.policy_value('allowed_boards'))
     dropbox = Dropbox(token=env.get('DROPBOX_TOKEN'), refresh_token=env.get('DROPBOX_REFRESH_TOKEN'),
                       app_key=env.get('DROPBOX_APP_KEY'), app_secret=env.get('DROPBOX_APP_SECRET'))
     token = env['INSTAGRAM_TOKEN']

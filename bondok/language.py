@@ -664,6 +664,23 @@ _PERMANENT = (('من', 'النهارده'), ('من', 'النهارد'), ('من',
               ('every', 'video'), ('generally',), ('للابد',), ('نهائي',), ('نهائيا',))
 
 
+_DELETE_W = _lex('امسح', 'امسحه', 'امسحها', 'احذف', 'احذفه', 'احذفها', 'حذف', 'مسح', 'delete', 'erase')
+_ARCHIVE_W = _lex('ارشف', 'ارشفه', 'ارشفها', 'ارشيف', 'الارشيف', 'archive', 'archived')
+_REMOVE_W = _lex('شيل', 'شيله', 'شيلها', 'remove', 'ازاله', 'طلع')
+
+
+def removal(text: str) -> str:
+    """'delete' | 'archive' | 'both' | 'unclear' (only "remove"-like words) | 'none' for a board removal."""
+    T = tokens(text)
+    d = any(match(t, _DELETE_W, _VERB_PRE) is not None for t in T)
+    a = any(match(t, _ARCHIVE_W, _VERB_PRE) is not None for t in T)
+    if d and a:
+        return 'both'
+    if d or a:
+        return 'delete' if d else 'archive'
+    return 'unclear' if any(match(t, _REMOVE_W, _VERB_PRE) is not None for t in T) else 'none'
+
+
 def rule_words(rule: str, text: str) -> bool:
     lex = RULE_WORDS.get(rule)
     return bool(lex) and has(tokens(text), lex)

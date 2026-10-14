@@ -10,10 +10,8 @@ from . import board, rules
 from .core import MONDAY, Command, Rejected
 from .db import audit, dumps, next_counter
 
-import re
 
 FIELDS = ('notes', 'code', 'variety', 'collab')
-VIDEO = re.compile(r'\.(mp4|mov|m4v)$', re.I)
 PREPARED = '/social media/prepared'
 REMOVED = 'Removed from the board by the owner'
 
@@ -51,15 +49,12 @@ class AdminMixin:
 
     def op_board_remove(self, c, cmd: Command):
         it = self.item(c, cmd.item_id)
-        mode = 'archive'                 # recoverable unless the owner said permanently (or changed the rule)
-        if cmd.args.get('mode') == 'delete' and (cmd.args.get('permanent') or
-                                                 not self.policy(c)['delete_means_archive']):
-            mode = 'delete'
+        mode = cmd.args.get('mode')
+        if mode not in ('archive', 'delete'):
+            raise Rejected('Archive (recoverable from the board archive) or delete (removed from the board)?', 'invalid')
         att = self.active_attempt(c, it['item_id'])
-        if att and att['stage'] in ('committed', 'outcome_unknown'):
-            raise Rejected('A publication of this item may already be in progress or its outcome is not known yet; '
-                           'it is removed once that is settled', 'in_progress')
-        if att:
+        sent = bool(att and att['stage'] in ('committed', 'outcome_unknown'))
+        if att and not sent:
             c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
                       (dumps({'abandoned': 'item removed by the owner'}), self.now(), att['id']))
         self.release(c, it, 'removed by the owner', keep_request=False)
@@ -71,7 +66,8 @@ class AdminMixin:
         audit(c, it['item_id'], 'board_remove_requested', cmd.actor, {'mode': mode})
         return {'_state': 'accepted', 'mode': mode,
                 'message': f"{it['name']} will be {'archived (recoverable from the board archive)' if mode == 'archive' else 'deleted from the board'}"
-                           '; it will not be published.'}
+                           + ('. A publication was already sent to Instagram before this; Bondok still follows its '
+                              'outcome and reports it.' if sent else '; it will not be published.')}
 
     def op_board_set_field(self, c, cmd: Command):
         """Owner data columns (Notes, Code, Story variety, IG Colab) changed from Slack: stored, applied by the same
@@ -105,20 +101,41 @@ class AdminMixin:
             to = path.rsplit('/', 1)[0] + '/' + to
         if not cmd.item_id:
             raise Rejected('Which item does the file belong to?', 'invalid')
-        if not VIDEO.search(path) or (to and not VIDEO.search(to)):
-            raise Rejected('Only video files of an item can be renamed, moved or deleted', 'invalid')
-        if path.lower().startswith(PREPARED + '/'):
-            raise Rejected('That is a prepared copy Instagram fetches; it is managed by the system', 'protected')
+        roots = [r.lower().rstrip('/') for r in self.policy(c)['dropbox_roots']]
+        for p in [path] + ([to] if to else []):
+            if not any(p.lower() == r or p.lower().startswith(r + '/') for r in roots):
+                raise Rejected(f'{p} is outside the Dropbox folders Bondok may change ({", ".join(roots)}); the owner '
+                               'can widen them with the dropbox_roots rule', 'out_of_scope')
         it = self.item(c, cmd.item_id)
-        att = self.active_attempt(c, it['item_id'])
-        selected = bool(it.get('file_name')) and path.rsplit('/', 1)[-1].lower() == it['file_name'].lower()
-        if att or (selected and self.reservation(c, it['item_id'])):
-            raise Rejected('This is the file of a scheduled or in-progress publication; pause it or pick another '
-                           'file first', 'in_progress')
+        note = self._file_effect(c, it, path, cmd)
         key = f'admin-file:{next_counter(c, "admin:file")}'
         self.enqueue(c, 'dropbox_admin', key, {'action': action, 'path': path, 'to': to or None,
                                                'command': cmd.id}, cmd.item_id)
         audit(c, cmd.item_id, 'file_action_requested', cmd.actor, {'action': action, 'path': path, 'to': to})
         what = {'rename': f'renamed to {to.rsplit("/", 1)[-1]}', 'move': f'moved to {to}',
                 'delete': 'moved to Dropbox\'s deleted files (recoverable there)'}[action]
-        return {'_state': 'accepted', 'job': key, 'message': f'{path} will be {what}.'}
+        return {'_state': 'accepted', 'job': key, 'message': f'{path} will be {what}.' + note}
+
+    def _file_effect(self, c, it, path, cmd) -> str:
+        """An owner's change to the item's own file (the selected source or its prepared copy) is carried out; its
+        effect on the schedule is handled first and said truthfully."""
+        name = path.rsplit('/', 1)[-1].lower()
+        own = (it.get('file_name') or '').lower() == name or path.lower().startswith(PREPARED + '/' + it['item_id'])
+        if not own:
+            return ''
+        att = self.active_attempt(c, it['item_id'])
+        if att and att['stage'] in ('committed', 'outcome_unknown'):
+            return (' A publication of this item was already sent to Instagram; this file change does not change what '
+                    'Instagram received, and its outcome is still followed.')
+        out = ''
+        if att:
+            c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
+                      (dumps({'abandoned': 'the owner changed the file'}), self.now(), att['id']))
+            out += ' The publication being prepared was stopped before sending (nothing was published).'
+        if self.reservation(c, it['item_id']):
+            self.release(c, it, 'owner changed the file', keep_request=True)
+            out += ' Its slot was released; it is scheduled again once the file is checked.'
+        self.request_check(c, it['item_id'], cmd.actor, 'owner_file_action')
+        self.update_item(c, it['item_id'], cmd.actor, 'owner changed the file', readiness='checking',
+                         verification_id=None, block_kind=None, block_reason=None, block_key=None)
+        return out

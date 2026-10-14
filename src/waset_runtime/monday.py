@@ -27,8 +27,9 @@ class MondayError(Exception):
 
 
 class Monday:
-    def __init__(self, token, http: Http | None = None, api_version='2026-07', sleep=time.sleep):
+    def __init__(self, token, http: Http | None = None, api_version='2026-07', sleep=time.sleep, boards=None):
         self.http = http or Http(timeout=60)
+        self.boards = boards        # callable -> the owner's allowed_boards rule (default: the three project boards)
         self.headers = {'Authorization': token, 'API-Version': api_version}
         self.sleep = sleep
 
@@ -138,10 +139,11 @@ class Monday:
         return str(rows[0]['board']['id']) if rows and rows[0].get('board') else None
 
     # ------------------------------------------------------------------ writes
-    @staticmethod
-    def _scope(board_id):
-        if str(board_id) not in ALLOWED_BOARDS:
-            raise MondayError(f'Board {board_id} is outside Bondok\'s scope; nothing was written')
+    def _scope(self, board_id):
+        allowed = set(map(str, self.boards())) if self.boards else ALLOWED_BOARDS
+        if str(board_id) not in allowed:
+            raise MondayError(f'Board {board_id} is outside the boards Bondok may write (owner rule allowed_boards); '
+                              'nothing was written')
 
     def change_columns(self, item_id, columns: dict, group=None, board_id=rules.BOARD):
         self._scope(board_id)

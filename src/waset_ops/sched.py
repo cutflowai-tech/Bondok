@@ -20,7 +20,15 @@ class SchedMixin:
                 'verification_id': it['verification_id'], 'content_rev': it['content_rev']}
         if it['format'] == 'Post':
             body.update(caption=it['caption'], share_to_feed=True)
+            collab = self.collaborators(it)
+            if collab and 'require_collab' not in self.waived(c, it):
+                body['collaborators'] = collab          # Instagram Reels: up to 3 collaborators
         return body
+
+    @staticmethod
+    def collaborators(it) -> list[str]:
+        import re as _re
+        return [x.lstrip('@') for x in _re.findall(r'@?[A-Za-z0-9._]{2,30}', it.get('collab') or '')][:3]
 
     def payload_fp(self, c, it) -> str:
         return fingerprint(self.payload(c, it))
@@ -487,6 +495,11 @@ class SchedMixin:
                       if swap else f"it would move to {rules.display(new_for_other)} (earliest free slot). ")
                    + ('Its owner pin is kept. ' if pinned else 'It stays an automatic slot. ')
                    + 'Nothing changes until approved.')
+        if not self.policy(c)['occupied_slot_needs_approval'] and cmd.actor_kind in (OWNER, MONDAY):
+            # The owner's rule: an owner's request for an occupied time moves the other item at once.
+            out = self.execute_swap_slot(c, payload, cmd, None) or {}
+            return {**out, 'scheduled': rules.iso(at), 'moved': {'item_id': o['item_id'],
+                                                                  'slot': rules.iso(new_for_other)}}
         p = self.create_proposal(c, 'swap_slot', [it['item_id'], o['item_id']], payload, summary, cmd.actor,
                                  cmd.auth.get('thread'))
         if cmd.actor_kind == MONDAY:

@@ -84,9 +84,8 @@ class BoardAdministration(ToolCase):
 
     def test_archive_releases_and_never_publishes(self):
         self.make_ready('610', 'Story', code='RM1')
-        text = 'شيل RM1 من البورد'
-        core = self.run_core([act('board_remove_item', text, 'imperative', 'RM1', item='RM1', mode='archive',
-                                  permanent=False)], 'تمام')
+        text = 'أرشف RM1'
+        core = self.run_core([act('board_archive_item', text, 'imperative', 'RM1', item='RM1')], 'تمام')
         self.say(core, text)
         self.assertIsNone(self.res('610'))
         self.assertEqual(self.item('610')['owner_state'], 'skipped')
@@ -95,23 +94,42 @@ class BoardAdministration(ToolCase):
         self.assertEqual(self.monday.writes[-1], ('archive_item', '610'))
         self.assertEqual(self.ops.board_missing(['999999']), [])     # not reported as lost
 
-    def test_delete_means_archive_unless_permanent(self):
+    def test_delete_and_archive_are_different_operations(self):
         self.make_ready('611', 'Story', code='RM2')
-        r = self.ops.submit(owner_cmd('d1', 'board_remove', '611', explicit=True, mode='delete'))
-        self.assertEqual(r['mode'], 'archive')
         self.make_ready('612', 'Story', code='RM3')
-        r = self.ops.submit(owner_cmd('d2', 'board_remove', '612', explicit=True, mode='delete', permanent=True))
-        self.assertEqual(r['mode'], 'delete')
+        self.monday.board.items.update({i: {'id': i, 'name': i, 'column_values': []} for i in ('611', '612')})
+        core = self.run_core([act('board_delete_item', 'امسح RM2', 'imperative', 'RM2', item='RM2')], 'تمام',
+                             [act('board_archive_item', 'أرشف RM3', 'imperative', 'RM3', item='RM3')], 'تمام')
+        self.say(core, 'امسح RM2')
+        self.say(core, 'أرشف RM3')
+        run_admin_jobs(self.ops, self.monday, self.dbx)
+        self.assertIn(('delete_item', '611'), self.monday.writes)
+        self.assertIn(('archive_item', '612'), self.monday.writes)
+        r = self.ops.submit(owner_cmd('d3', 'board_remove', '611', explicit=True))
+        self.assertEqual(r['state'], 'rejected')                       # no silent default
 
-    def test_remove_refused_while_publication_may_be_in_progress(self):
+    def test_ambiguous_removal_asks_the_meaning_only(self):
+        self.make_ready('614', 'Story', code='RM5')
+        core = self.run_core([act('board_delete_item', 'شيل RM5', 'imperative', 'RM5', item='RM5')], 'تمام')
+        reply = self.say(core, 'شيل RM5')
+        self.assertIn('❓', reply)
+        self.assertIn('Archive', reply)
+        self.assertEqual(self.outbox('monday_admin'), [])
+        core = self.run_core([act('board_archive_item', 'أرشف RM5', 'imperative', 'RM5', item='RM5')], 'تمام')
+        self.say(core, 'أرشف RM5')
+        self.assertEqual(json.loads(self.outbox('monday_admin')[0]['payload'])['action'], 'archive')
+
+    def test_remove_during_a_sent_publication_is_truthful(self):
         from support import commit_acked
         self.make_ready('613', 'Story', code='RM4')
         self.clock.set(rules.instant(self.res('613')['slot']) + timedelta(seconds=5))
         cl = self.ops.claim('613', 'w')
         self.ops.container(cl['attempt_id'], 'w', cl['fence'], 'C')
         commit_acked(self.ops, cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
-        r = self.ops.submit(owner_cmd('d3', 'board_remove', '613', explicit=True))
-        self.assertEqual(r['code'], 'in_progress')
+        r = self.ops.submit(owner_cmd('d3', 'board_remove', '613', explicit=True, mode='archive'))
+        self.assertEqual(r['state'], 'accepted')
+        self.assertIn('already sent to Instagram', r['message'])
+        self.assertEqual(self.ops.active_attempt(self.ops.store.connect(), '613')['stage'], 'committed')
 
     def test_set_notes_writes_the_board(self):
         self.make_ready('620', 'Story', code='NO1')
@@ -151,22 +169,26 @@ class FileAdministration(ToolCase):
 
     def test_path_the_owner_did_not_name_is_refused(self):
         reply = self.file_case('امسح الفايل القديم بتاع FA1', self.OLD, to=None, action='delete')
-        self.assertIn('name the file exactly', reply)
+        self.assertIn('❓', reply)
         self.assertEqual(self.outbox('dropbox_admin'), [])
 
-    def test_prepared_copy_and_folders_are_protected(self):
+    def test_scope_and_the_scheduled_file(self):
         self.make_ready('661', 'Story', code='FA2')
         r = self.ops.submit(owner_cmd('p1', 'file_action', '661', explicit=True, action='delete',
-                                      path='/Social Media/Prepared/661-x.mp4'))
-        self.assertEqual(r['code'], 'protected')
+                                      path='/Other/a.mp4'))
+        self.assertEqual(r['code'], 'out_of_scope')
+        self.ops.submit(owner_cmd('rs', 'set_policy', None, explicit=True, rule='dropbox_roots',
+                                  value=['/Social Media', '/Other']))
         r = self.ops.submit(owner_cmd('p2', 'file_action', '661', explicit=True, action='delete',
-                                      path='/Social Media/Production/LIP12'))
-        self.assertEqual(r['code'], 'invalid')
-        r = self.ops.submit(owner_cmd('p3', 'file_action', '661', explicit=True, action='delete',
-                                      path='/x/video_v1.mp4'))
-        self.assertEqual(r['code'], 'in_progress')         # the selected file of a scheduled item
-        r = self.ops.submit(owner_cmd('p4', 'file_action', None, explicit=True, action='delete', path='/x/a.mp4'))
-        self.assertEqual(r['state'], 'rejected')
+                                      path='/Other/a.mp4'))
+        self.assertEqual(r['state'], 'accepted')               # the owner widened the scope
+        self.assertIsNotNone(self.res('661'))
+        r = self.ops.submit(owner_cmd('p3', 'file_action', '661', explicit=True, action='rename',
+                                      path='/Social Media/x/video_v1.mp4', to='video_v1 final.mp4'))
+        self.assertEqual(r['state'], 'accepted', r)            # the scheduled item's own file: carried out
+        self.assertIn('slot was released', r['message'])
+        self.assertIsNone(self.res('661'))
+        self.assertEqual(self.item('661')['readiness'], 'checking')
 
     def test_executor_refuses_a_folder(self):
         dbx = FakeDropbox()
@@ -179,19 +201,17 @@ class FileAdministration(ToolCase):
         self.assertIn('/social media/production/lip12/x.mp4', dbx.files)
 
 
-class BulkLimit(ToolCase):
-    def test_more_changes_than_the_limit_ask_once(self):
-        self.ops.submit(owner_cmd('b', 'set_policy', None, explicit=True, rule='bulk_confirm_threshold', value=2))
-        for i, code in enumerate(('BK1', 'BK2', 'BK3')):
-            self.make_ready(str(630 + i), 'Story', code=code)
-        text = 'وقف BK1 و BK2 و BK3'
-        core = self.run_core([act('pause_item', text, 'imperative', c, item=c, reason=None) for c in
-                              ('BK1', 'BK2', 'BK3')], 'تمام')
+class NoItemCountLimit(ToolCase):
+    def test_clear_instruction_for_twelve_items_runs_for_all(self):
+        codes = [f'BK{n}' for n in range(12)]
+        for n, code in enumerate(codes):
+            self.make_ready(str(630 + n), 'Story', code=code)
+        text = 'وقف ' + ' و '.join(codes)
+        core = self.run_core([act('pause_item', text, 'imperative', c, item=c, reason=None) for c in codes[:6]],
+                             [act('pause_item', text, 'imperative', c, item=c, reason=None) for c in codes[6:]], 'تمام')
         reply = self.say(core, text)
-        self.assertIn('more than 2 changes', reply)
-        self.assertEqual([self.item(i)['owner_state'] for i in ('630', '631', '632')], ['paused', 'paused', 'active'])
-        self.say(core, 'اه')
-        self.assertEqual(self.item('632')['owner_state'], 'paused')
+        self.assertNotIn('❓', reply)
+        self.assertEqual({self.item(str(630 + n))['owner_state'] for n in range(12)}, {'paused'})
 
 
 class HistoryAndMemory(ToolCase):

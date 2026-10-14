@@ -23,15 +23,15 @@ class Crash(BaseException):
 
 
 STEPS = [
-    ('ig', 'create_container', 'before'), ('ops', 'container', 'before'), ('ops', 'renew', 'before'),
-    ('ig', 'container_status', 'before'), ('dbx', 'metadata', 'before'), ('ops', 'commit', 'before'),
-    ('ops', 'commit', 'after'), ('monday', 'guard_values', 'before'), ('monday', 'change_columns', 'after'),
-    ('ops', 'intent_ack', 'before'), ('ops', 'intent_ack', 'after'), ('ig', 'publish', 'before'),
+    ('monday', 'fresh_item', 'before'), ('ops', 'claim', 'after'), ('ig', 'create_container', 'before'),
+    ('ig', 'create_container', 'after'), ('ops', 'container', 'before'), ('ops', 'renew', 'before'),
+    ('ig', 'container_status', 'before'), ('dbx', 'metadata', 'before'), ('ops', 'observe', 'before'),
+    ('ops', 'commit', 'before'), ('ops', 'commit', 'after'), ('ig', 'publish', 'before'),
     ('ig', 'publish', 'after'), ('ops', 'result', 'before'), ('ops', 'evidence', 'before'),
 ]
 
 
-UNKNOWN_AFTER_COMMIT = {('ops', 'intent_ack', 'after'), ('ig', 'publish', 'before')}
+UNKNOWN_AFTER_COMMIT = {('ops', 'commit', 'after'), ('ig', 'publish', 'before')}
 
 
 class A19_CrashAtEveryStep(RuntimeCase):

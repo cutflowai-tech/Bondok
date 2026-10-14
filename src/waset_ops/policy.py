@@ -53,6 +53,10 @@ class PolicyMixin:
             return 0.0
         return float(r[0] or 0.0)
 
+    def policy_value(self, name):
+        with self.store.read() as c:
+            return self.policy(c)[name]
+
     def overrides(self, c, item_id) -> list[dict]:
         try:
             rows = c.execute("SELECT * FROM ops_overrides WHERE item_id=? AND state='active' ORDER BY created",
@@ -231,7 +235,7 @@ class PolicyMixin:
     def _blocked_by(it, rule) -> bool:
         key, reason = it.get('block_key') or '', (it.get('block_reason') or '').lower()
         return {'topaz_required': key.startswith('topaz:'), 'duplicate_video_block': key.startswith('duplicate:'),
-                'min_short_edge': 'short edge' in reason}.get(rule, False)
+                'min_short_edge': 'short edge' in reason, 'require_collab': key == 'collab'}.get(rule, False)
 
     def op_restore_rule(self, c, cmd: Command):
         """Owner withdraws an exemption: the rule applies to the item again."""
@@ -271,6 +275,7 @@ class PolicyMixin:
                 with_rule = ('topaz_required' if bk.startswith('topaz:') else
                              'duplicate_video_block' if bk.startswith('duplicate:') else
                              'story_max_seconds' if bk.startswith('story_duration') else
+                             'require_collab' if bk == 'collab' else
                              'min_short_edge' if 'short edge' in (reason or '') else None)
             elif it['format'] == 'Post' and it['caption_state'] != 'approved' and pol['post_caption_approval']:
                 reason, with_rule = 'the caption is not approved yet', 'post_caption_approval'

@@ -870,14 +870,27 @@ class Scenario28BoardBoundary(OpsCase):
 
 
 class Scenario30Collab(OpsCase):
-    def test_collab_blocks_and_is_kept(self):
+    """Agent migration 2026-10-14: Instagram supports collaborators on Reels (IG User Media `collaborators`), so a
+    Post is published with them; Stories cannot have them (platform limit) and wait for the owner."""
+
+    def test_post_collab_is_published_with_the_collaborator(self):
         self.make_ready('250', 'Post')
         r = self.ops.submit(board_cmd('cb', 'set_collab', '250', 'collab', value='@partner'))
+        self.assertEqual(r['readiness'], 'ready')
+        with self.ops.store.read() as c:
+            self.assertEqual(self.ops.payload(c, self.ops.item(c, '250'))['collaborators'], ['partner'])
+        self.assertIsNotNone(self.res('250'))
+
+    def test_story_collab_blocks_with_the_platform_reason_and_can_be_waived(self):
+        self.make_ready('251', 'Story')
+        r = self.ops.submit(board_cmd('cb', 'set_collab', '251', 'collab', value='@partner'))
         self.assertEqual(r['readiness'], 'blocked')
-        it = self.item('250')
+        it = self.item('251')
         self.assertEqual(it['collab'], '@partner')
-        self.assertIsNone(self.res('250'))
-        self.assertIn('IG Collab', it['block_reason'])
+        self.assertIsNone(self.res('251'))
+        self.assertIn('Instagram does not support collaborators on Stories', it['block_reason'])
+        self.ops.submit(owner_cmd('w', 'waive_rule', '251', explicit=True, rule='require_collab'))
+        self.assertEqual(self.item('251')['readiness'], 'ready')
 
 
 class Scenario31HistoricalPosted(OpsCase):

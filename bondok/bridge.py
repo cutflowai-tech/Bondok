@@ -27,12 +27,13 @@ RECENT_FILE_CHANGE = 6 * 3600
 PROTECTED = {'pause_item', 'resume_item', 'skip_item', 'request_reschedule', 'request_publish', 'change_format',
              'replace_source', 'update_caption', 'approve_existing_caption', 'approve_caption_draft', 'confirm_topaz',
              'resolve_publication', 'report_published', 'set_window', 'request_rework', 'waive_rule', 'restore_rule',
-             'set_rule', 'publish_now', 'cancel_schedule', 'board_create_item', 'board_remove_item', 'set_item_field',
-             'file_action'}
+             'set_rule', 'publish_now', 'cancel_schedule', 'board_create_item', 'board_archive_item',
+             'board_delete_item', 'set_item_field', 'file_action'}
 # Protected tools that are not about one item.
 GLOBAL = {'set_rule', 'board_create_item'}
 # Board/file administration and publish-now: read by the generic reader (language.contradiction 'generic').
-GENERIC = {'publish_now', 'board_create_item', 'board_remove_item', 'set_item_field', 'file_action'}
+GENERIC = {'publish_now', 'board_create_item', 'board_archive_item', 'board_delete_item', 'set_item_field',
+           'file_action'}
 MUTATING = PROTECTED | {'request_recheck', 'draft_caption', 'approve_all_existing_captions'}
 EXECUTABLE_ACTS = ('imperative', 'completed_statement')
 # Reader kind per tool (language.contradiction / supports).
@@ -160,15 +161,9 @@ class Bridge:
 
     # ------------------------------------------------------------------ execution
     def execute(self, action: dict, *, actor, cid, thread, event_id, turn: Turn | None = None) -> dict:
-        """Submit one validated owner decision to the handler (the only writer). One message acting on more items
-        than the owner's bulk limit asks once before the rest run (the answer "اه" executes them)."""
+        """Submit one validated owner decision to the handler (the only writer). A clear instruction with a defined
+        scope runs for every item it names; there is no item-count limit."""
         if turn is not None:
-            with self.ops.store.read() as c:
-                limit = int(self.ops.policy(c)['bulk_confirm_threshold'])
-            if turn.executed >= limit:
-                q = f'This message asks for more than {limit} changes. Do the rest too?'
-                turn.ask(q, action)
-                return {'state': 'needs_confirmation', 'question': q}
             turn.executed += 1
         return self.ops.submit(Command(cid, action['op'], actor, 'owner', action['item'], action['args'],
                                        auth={'thread': thread, 'event': event_id, 'explicit': True}))
@@ -210,6 +205,8 @@ class Bridge:
         try:
             action, summary = self._plan(tool, item, args, meaning, turn)
         except Rejected as e:
+            if e.code == 'question':
+                return self._clarify(e.reason)
             return {'state': 'rejected', 'reason': e.reason}
         speech = str(meaning.get('speech_act'))
         if speech == 'bondok_offer':
@@ -409,10 +406,16 @@ class Bridge:
             a = {k: args.get(k) for k in ('name', 'format', 'code', 'dropbox_url', 'caption') if args.get(k)}
             return {'tool': tool, 'item': None, 'op': 'board_create', 'args': a}, \
                 f"Create the {args.get('format')} \"{args.get('name')}\" on the board"
-        if tool == 'board_remove_item':
-            a = {'mode': 'delete' if args.get('mode') == 'delete' else 'archive', 'permanent': bool(args.get('permanent'))}
-            return {**act, 'op': 'board_remove', 'args': a}, \
-                f"{'Delete' if a['mode'] == 'delete' else 'Archive'} {label} on the board (it will not be published)"
+        if tool in ('board_archive_item', 'board_delete_item'):
+            mode = 'archive' if tool == 'board_archive_item' else 'delete'
+            said = lang.removal(turn.text)
+            if said not in (mode, 'both'):
+                if said == 'unclear':
+                    raise Rejected('Archive it (it can be restored from the board archive) or delete it from the '
+                                   'board? Say which.', 'question')
+                raise Rejected(f'Not done: your words ask to {said}, not to {mode}.')
+            return {**act, 'op': 'board_remove', 'args': {'mode': mode}}, \
+                f"{'Delete' if mode == 'delete' else 'Archive'} {label} on the board (it will not be published)"
         if tool == 'set_item_field':
             value = str(args.get('value') or '')
             if value and not lang.contains(turn.text, value):
@@ -430,7 +433,7 @@ class Bridge:
             name = path.rsplit('/', 1)[-1]
             if not (lang.contains(turn.text, path) or (path.lower() in listed and name and
                                                          lang.contains(turn.text, name.rsplit('.', 1)[0]))):
-                raise Rejected('Not done: name the file exactly (as list_files shows it) for this item')
+                raise Rejected('Which file exactly? Name it as list_files shows it.', 'question')
             return {'tool': tool, 'item': item, 'op': 'file_action', 'args': a}, \
                 f"{str(a.get('action') or '').capitalize()} {a.get('path')}" + (f" → {a['to']}" if a.get('to') else '')
         if tool == 'request_rework':

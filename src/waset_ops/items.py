@@ -228,6 +228,12 @@ class ItemsMixin:
             seen.add(iid)
             try:
                 self._observe_one(raw, iid, src, floor, results, created)
+                # When Bondok last received this item's board state (freshness rule, agent migration 2): a WF1
+                # snapshot counts from its run start (read after it), a single-item read from now.
+                with self.store.tx() as c:
+                    c.execute("UPDATE ops_items SET observed=json_set(COALESCE(NULLIF(observed,''),'{}'),"
+                              "'$._read_at',?) WHERE item_id=?",
+                              (floor if actor == 'service:wf1' else self.now(), iid))
             except Exception as e:  # noqa: BLE001 - one malformed item never stops the board (R5 A3)
                 results.append({'item_id': iid, 'edit': '_item', 'state': 'failed',
                                 'reason': f'{type(e).__name__}: {str(e)[:200]}'})
@@ -1124,10 +1130,12 @@ class ItemsMixin:
         if self.safe_style(it['code']) is None:
             fields = dict(readiness='blocked', block_kind='config', block_key='invalid_code',
                           block_reason='Code must start with 2-3 letters followed by a number')
-        elif it['collab']:
+        elif it['collab'] and it['format'] == 'Story' and self.policy(c)['require_collab'] and \
+                'require_collab' not in self.waived(c, it):
             fields = dict(readiness='blocked', block_kind='review', block_key='collab',
-                          block_reason='IG Collab is requested but the publisher cannot add collaborators. '
-                                       'It stays blocked until the request is removed or it is published manually.')
+                          block_reason='IG Collab is requested, but Instagram does not support collaborators on '
+                                       'Stories (platform limit). Remove the collaborator, change it to Post, or tell '
+                                       'Bondok to publish it without the collaborator.')
         elif it['verification_id']:
             problem = self.verification_problem(c, it)
             if problem:

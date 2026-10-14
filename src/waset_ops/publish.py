@@ -524,8 +524,26 @@ class PublishMixin:
             return {'ok': True}
 
     # ------------------------------------------------------------------ commitment point
+    def board_read_at(self, c, item_id) -> float:
+        return float((loads(self.item(c, item_id)['observed'], {}) or {}).get('_read_at') or 0)
+
+    def board_fresh(self, item_id) -> dict:
+        """Freshness rule (owner policy ``board_freshness_minutes``): how old the last board state Bondok received
+        for this item may be when it publishes without a new read. Monday display writes never count here."""
+        with self.store.read() as c:
+            at = self.board_read_at(c, item_id)
+            limit = int(self.policy(c)['board_freshness_minutes'])
+        age = self.now() - at if at else None
+        return {'fresh': age is not None and age <= limit * 60, 'read_at': self.iso_ts(at) if at else None,
+                'age_seconds': int(age) if age is not None else None, 'limit_minutes': limit}
+
     def commit(self, attempt_id, worker, fence, *, source_asset=None, container_status=None,
-               delivered_asset=None) -> dict:
+               delivered_asset=None, record='monday') -> dict:
+        """The commitment point. ``record='store'`` (Bondok runtime, owner decision 2026-10-14): the authorization,
+        intent, version and attempt are recorded in this store and the attempt is committed at once; Monday shows
+        'Publishing' through the ordinary retried display sync, and a failed display write never stops it. The
+        board state used must be within the owner's freshness rule. ``record='monday'`` (n8n WF2): the intent is
+        written on Monday first and acknowledged (intent_ack), as before."""
         now, now_dt = self.now(), self.now_dt()
         with self.store.tx() as c:
             a = self._attempt(c, attempt_id, worker, fence, ('container_created',))
@@ -585,6 +603,12 @@ class PublishMixin:
             end = self.deadline(c, res) if res and res['slot'] == a['slot'] else slot + rules.late_window(self.policy(c))
             if not (slot <= now_dt <= end):
                 problems.append('outside the publication window')
+            read_at = self.board_read_at(c, a['item_id'])
+            limit = int(self.policy(c)['board_freshness_minutes'])
+            if record == 'store' and (not read_at or now - read_at > limit * 60):
+                problems.append('the board was last read ' + (rules.display(rules.instant(self.iso_ts(read_at)))
+                                                              if read_at else 'never') +
+                                f'; Monday could not be read since (freshness rule: {limit} min)')
             if problems:
                 c.execute("UPDATE ops_attempts SET stage='abandoned', evidence=?, updated=? WHERE id=?",
                           (dumps({'refused': problems}), now, attempt_id))
@@ -613,6 +637,22 @@ class PublishMixin:
                 self.evaluate(c, a['item_id'], worker)
                 self.project(c, a['item_id'])
                 return {'committed': False, 'reasons': problems}
+            if record == 'store':
+                ev = {'intent': {'store': True, 'at': now, 'payload_fp': a['payload_fp'],
+                                 'content_hash': it.get('content_hash'), 'asset': it.get('asset_key'),
+                                 'board_read_at': read_at, 'authorized_by': (res or {}).get('origin')}}
+                c.execute("UPDATE ops_attempts SET stage='committed', lease_until=?, evidence=?, updated=? WHERE id=?",
+                          (now + COMMIT_LEASE, dumps(ev), now, attempt_id))
+                self._legacy_receipt(c, a, 'publish_requested')
+                audit(c, a['item_id'], 'commit', worker, {'attempt': attempt_id, 'record': 'store',
+                                                          'board_read_at': read_at})
+                if now - read_at > 180:
+                    self.notify(c, f'stale-board:{attempt_id}', f"{it['name']} ({it['item_id']}) is being published "
+                                'with the board as Bondok last read it at ' +
+                                rules.display(rules.instant(self.iso_ts(read_at))) + ' (Monday could not be read just '
+                                'before publishing; any change typed after that was not received).', it['item_id'])
+                self.project(c, a['item_id'])                 # 'Publishing' on Monday: display sync, retried
+                return {'committed': True, 'container_id': a['container_id']}
             # ADR decision 4 (release review 2026-10-12): the intent is acknowledged on Monday before media_publish.
             # The attempt stays before the commitment point until WF2 reports the guarded write (intent_ack).
             intent = self._publish_intent(c, a, it, worker)

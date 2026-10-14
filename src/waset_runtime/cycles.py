@@ -505,11 +505,11 @@ class Runner:
             status = self.monday.source_status(_txt(fresh, B.COL['source_item']))
         except (MondayError, HttpError) as e:
             stage = 'read_item' if fresh is None else 'read_source'
-            with self.ops.store.read() as c:
-                lenient = self.ops.policy(c)['publish_without_fresh_board']
-            if not lenient:
+            if fresh is None and not self.ops.board_fresh(item)['fresh']:
+                # Monday cannot be read and Bondok's last board state of the item is older than the owner's
+                # freshness rule: nothing is started (no container); retried next minute inside the window.
                 return self.ops.read_failure(item, stage, str(e)[:600], getattr(e, 'status', None))
-            # Owner policy: what could not be read falls back to the last observed state; what was read counts.
+            # Within the freshness rule: what could not be read is taken from the last state received.
         try:
             if fresh is not None:
                 self.ops.observe([{k: fresh[k] for k in ('id', 'name', 'column_values', 'group') if k in fresh}],
@@ -558,28 +558,21 @@ class Runner:
                                   f'({self.poll_seconds} s each)')[:600])
         source_asset = self._asset_of(lambda: self.dropbox.metadata(str(cl['source_asset']).split('@')[0]))
         delivered = self._asset_of(lambda: self.dropbox.link_metadata(strip_raw(payload['video_url'])), rev_only=True)
+        # The owner's latest board decisions (a Pause typed while the container was processing) are read just before
+        # the commitment point. Reading, not writing: a Monday that cannot be read is judged by the freshness rule.
+        try:
+            again = self.monday.fresh_item(item)
+            self.ops.observe([{k: again[k] for k in ('id', 'name', 'column_values', 'group') if k in again}],
+                             actor='service:wf2')
+        except (MondayError, HttpError) as e:
+            LOG.warning('precommit_read_failed item=%s detail=%s', item, str(e)[:120])
         try:
             c = self.ops.commit(aid, worker, fence, source_asset=source_asset, container_status=status_code,
-                                delivered_asset=delivered)
+                                delivered_asset=delivered, record='store')
         except Exception as e:  # noqa: BLE001
             return fail('commit_call', e)
-        intent = c.get('intent')
-        if not (intent and intent.get('job')):
+        if not c.get('committed'):
             return {'item_id': item, 'committed': False, 'reasons': c.get('reasons')}
-        err = None
-        try:
-            cur = self.monday.guard_values(intent['item_id'], list(intent.get('guard') or {}))
-            conflict, read_error = guard_conflict(intent.get('guard') or {}, cur)
-            err = conflict or (('read before intent failed: ' + read_error) if read_error else None)
-            if not err:
-                d = self.monday.change_columns(intent['item_id'], intent['columns'])
-                if str(((d or {}).get('change_multiple_column_values') or {}).get('id')) != str(intent['item_id']):
-                    err = 'no response from Monday (intent write not confirmed)'
-        except (MondayError, HttpError) as e:
-            err = str(e)[:500] or 'no response from Monday'
-        ack = self.ops.intent_ack(aid, worker, fence, intent['job'], ok=err is None, error=err)
-        if not ack.get('committed'):
-            return {'item_id': item, 'committed': False, 'intent_error': err}
         # ---- past the commitment point: whatever happens is recorded, nothing is retried blindly
         try:
             st, body = self.ig.publish(cid)

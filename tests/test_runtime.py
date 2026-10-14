@@ -120,16 +120,17 @@ class A02_ExemptionThroughTheRuntime(RuntimeCase):
 
 
 class A13_A24_PublishWithoutModelOrChat(RuntimeCase):
-    def test_scheduled_item_publishes_once_with_intent_first(self):
+    def test_scheduled_item_publishes_once_and_the_intent_is_in_the_store(self):
         iid = self.ready_item()
         self.runner.publish_cycle()
         self.at_slot(iid)
         out = self.runner.publish_cycle()
         self.assertEqual(out['published'][0]['stage'], 'published', out)
         self.assertEqual(len(self.ig.publish_calls()), 1)
-        writes = [w for w in self.monday.writes if w[0] == 'change_columns' and w[1] == iid]
-        intent = [w for w in writes if (w[2].get('status') or {}).get('label') == 'Publishing']
-        self.assertTrue(intent)                                      # written on Monday before media_publish
+        with self.ops.store.read() as c:
+            ev = json.loads(c.execute("SELECT evidence FROM ops_attempts WHERE item_id=?", (iid,)).fetchone()[0])
+        self.assertTrue(ev['intent']['store'])                       # recorded before media_publish
+        self.assertEqual(ev['intent']['asset'], self.item(iid)['asset_key'])
         self.assertEqual(self.item(iid)['publication'], 'published')
         self.clock.advance(60)
         self.runner.publish_cycle()
@@ -277,14 +278,24 @@ class A21_ProviderFailures(RuntimeCase):
         self.runner.publish_cycle()
         self.assertEqual(self.ig.publish_calls(), [])
 
-    def test_owner_policy_publishes_from_last_known_state(self):
+    def test_owner_freshness_rule_decides_when_monday_cannot_be_read(self):
         iid = self.ready_item()
         self.at_slot(iid)
-        self.ops.submit(owner_cmd('pol', 'set_policy', None, explicit=True, rule='publish_without_fresh_board',
-                                  value=True))
-        self.monday.fail['fresh_item'] = MondayError('no answer', answered=False)
+        self.ops.submit(owner_cmd('pol', 'set_policy', None, explicit=True, rule='board_freshness_minutes',
+                                  value=7 * 24 * 60))
+        self.monday.fail['fresh_item'] = [MondayError('no answer', answered=False)] * 2
         self.runner.publish_cycle()
         self.assertEqual(len(self.ig.publish_calls()), 1)
+        self.assertTrue(any('last read' in json.loads(j['payload'])['text'] for j in self.outbox('slack')))
+
+    def test_stale_board_is_not_published_under_the_default_rule(self):
+        iid = self.ready_item()
+        self.at_slot(iid)
+        self.monday.fail['fresh_item'] = MondayError('no answer', answered=False)
+        self.runner.publish_cycle()
+        self.assertEqual(self.ig.publish_calls(), [])
+        self.assertEqual(self.ops.board_fresh(iid)['limit_minutes'], 15)
+        self.assertIsNotNone(self.ops.board_fresh(iid)['read_at'])     # what was last received is shown
 
 
 class A22_DisplayFailureAfterPublish(RuntimeCase):
@@ -392,24 +403,30 @@ if __name__ == '__main__':
 class ReviewFindings(RuntimeCase):
     """Regression tests for the independent review of 2026-10-14."""
 
-    def test_unconfirmed_intent_write_publishes_nothing(self):          # finding 6
+    def test_monday_writes_down_publication_goes_ahead_and_syncs_later(self):   # owner decision 2026-10-14
         iid = self.ready_item()
-        self.at_slot(iid)
-        real = self.monday.change_columns
-
-        def silent(item_id, columns, group=None, board_id=rules.BOARD):
-            if (columns.get('status') or {}).get('label') == 'Publishing':
-                return {}                                                # Monday answered without the id
-            return real(item_id, columns, group, board_id)
-        self.monday.change_columns = silent
         self.runner.publish_cycle()
-        self.assertEqual(self.ig.publish_calls(), [])
+        self.at_slot(iid)
+        self.monday.fail['change_columns'] = MondayError('Monday HTTP 503', status=503)   # every write fails
+        self.runner.publish_cycle()
+        self.assertEqual(len(self.ig.publish_calls()), 1)
+        self.assertEqual(self.item(iid)['publication'], 'published')
+        self.assertNotEqual(self.monday.text(iid, 'status'), 'Posted')
+        for _ in range(3):
+            self.clock.advance(1200)
+            self.runner.publish_cycle()
+        del self.monday.fail['change_columns']                             # Monday is back
+        for _ in range(8):
+            self.clock.advance(1800)
+            self.runner.publish_cycle()
+        self.assertEqual(self.monday.text(iid, 'status'), 'Posted')
+        self.assertEqual(len(self.ig.publish_calls()), 1)
 
     def test_successful_fresh_read_counts_under_the_lenient_policy(self):  # finding 4
         iid = self.ready_item()
         self.runner.publish_cycle()
-        self.ops.submit(owner_cmd('pol', 'set_policy', None, explicit=True, rule='publish_without_fresh_board',
-                                  value=True))
+        self.ops.submit(owner_cmd('pol', 'set_policy', None, explicit=True, rule='board_freshness_minutes',
+                                  value=7 * 24 * 60))
         self.at_slot(iid)
         self.monday.board.set_raw(iid, 'status', {'id': 'status', 'text': 'Paused', 'value': '{"index":2}'})
         self.monday.source_status = lambda sid: (_ for _ in ()).throw(MondayError('timeout', answered=False))

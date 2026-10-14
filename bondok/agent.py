@@ -99,12 +99,11 @@ TOOLS = [
     _fn('waive_rule', 'Owner exempts ONE item from a rule, e.g. "publish it without Topaz" (rule topaz_required), '
         '"publish it even under 1080" (min_short_edge), "publish the same video again" (duplicate_video_block). '
         'This is an exemption, never a claim that the rule was satisfied.',
-        {**ITEM, 'rule': {'type': 'string', 'enum': ['topaz_required', 'min_short_edge', 'duplicate_video_block']},
+        {**ITEM, 'rule': {'type': 'string', 'enum': list(rules.WAIVABLE)},
          'this_file_only': {'type': 'boolean', 'description': 'true when the owner limits it to the current file'},
          'reason': {'type': 'string'}, **MEANING}),
     _fn('restore_rule', 'Owner withdraws an exemption: the rule applies to the item again.',
-        {**ITEM, 'rule': {'type': 'string', 'enum': ['topaz_required', 'min_short_edge', 'duplicate_video_block']},
-         **MEANING}),
+        {**ITEM, 'rule': {'type': 'string', 'enum': list(rules.WAIVABLE)}, **MEANING}),
     _fn('set_rule', 'Owner changes a rule for every item from now on, e.g. "from today Topaz is not required" '
         '(topaz_required=false), "Story slots 12:00, 15:00, 21:00" (story_slots), "allow publishing up to 3 hours '
         'late" (late_window_minutes=180). Values: bool for on/off rules, numbers, ["HH:MM",...] for story_slots, '
@@ -122,10 +121,10 @@ TOOLS = [
         {'name': {'type': 'string'}, 'format': {'type': 'string', 'enum': ['Post', 'Story']},
          'code': {'type': ['string', 'null']}, 'dropbox_url': {'type': ['string', 'null']},
          'caption': {'type': ['string', 'null']}, **MEANING}),
-    _fn('board_remove_item', 'Owner request: remove an item from the board (archive by default; delete only when the '
-        'owner says permanently). It will not be published.',
-        {**ITEM, 'mode': {'type': 'string', 'enum': ['archive', 'delete']}, 'permanent': {'type': 'boolean'},
-         **MEANING}),
+    _fn('board_archive_item', 'Owner request: archive an item on the board (restorable from Monday\'s archive). It '
+        'will not be published.', {**ITEM, **MEANING}),
+    _fn('board_delete_item', 'Owner request: delete an item from the board. It will not be published. If the owner\'s '
+        'words do not say archive or delete, ask which.', {**ITEM, **MEANING}),
     _fn('set_item_field', 'Owner request: set Notes, Code, Story variety or IG Colab of an item (exact value the '
         'owner typed).', {**ITEM, 'field': {'type': 'string', 'enum': ['notes', 'code', 'variety', 'collab']},
                           'value': {'type': 'string'}, **MEANING}),

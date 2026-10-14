@@ -540,7 +540,8 @@ def runtime_clients(env) -> dict:
     out = {}
     try:
         from waset_runtime.monday import Monday
-        out['monday'] = Monday(env['MONDAY_API_TOKEN'])
+        out['monday'] = Monday(env['MONDAY_API_TOKEN'], boards=lambda: Ops(env['PIPELINE_DB']).policy_value(
+            'allowed_boards'))
         if env.get('DROPBOX_REFRESH_TOKEN') or env.get('DROPBOX_TOKEN'):
             from waset_runtime.dropbox import Dropbox
             out['dropbox'] = Dropbox(token=env.get('DROPBOX_TOKEN'), refresh_token=env.get('DROPBOX_REFRESH_TOKEN'),
