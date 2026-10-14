@@ -225,10 +225,75 @@ class PublishMixin:
                 # Account-level failure: no new containers for anyone; reconciliation continues (R5 A2).
                 work = [w for w in work if w['kind'] != 'publish']
                 probe = self.now() - (b.get('last_probe') or 0) >= BREAKER_PROBE_SECONDS
+            gap = self.restore_gap(c)
+            if gap:
+                # Restored from a backup: what was published after the backup is not in this store. Nothing new is
+                # published until the gap is reconciled with Instagram (A28); reconciliation of known attempts runs.
+                work = [w for w in work if w['kind'] != 'publish']
         out = {'work': work[:limit], 'more': len(work) > limit}
         if b:
             out.update(probe=probe, breaker=b['kind'])
+        if gap:
+            out['restore_gap'] = gap
         return out
+
+    # ------------------------------------------------------------------ restore gap (agent migration A28)
+    def restore_gap(self, c) -> dict | None:
+        r = c.execute("SELECT value FROM ops_meta WHERE key='restore_gap'").fetchone()
+        return loads(r['value'], None) if r else None
+
+    def mark_restored(self, backup_at: float, actor='service:migration') -> dict:
+        """Called by the restore procedure: the store now holds the state of ``backup_at``."""
+        with self.store.tx() as c:
+            gap = {'since': float(backup_at), 'marked': self.now()}
+            c.execute("INSERT OR REPLACE INTO ops_meta VALUES('restore_gap',?)", (dumps(gap),))
+            audit(c, None, 'restore_gap_opened', actor, gap)
+            self.notify(c, f'restore-gap:{int(self.now())}', '⚠️ The operational store was restored from a backup of '
+                        f'{rules.display(rules.instant(self.iso_ts(backup_at)))}. Publishing is paused until the posts '
+                        'made since then are checked on Instagram.')
+            return gap
+
+    def restore_gap_check(self, media: list[dict]) -> dict:
+        """Instagram's recent posts against the store: posts newer than the backup whose media id the store does not
+        know are the gap. None -> publishing reopens; otherwise the owner gets the list and decides
+        (``resolve_restore_gap`` after recording them, e.g. report_published with the post link)."""
+        with self.store.tx() as c:
+            gap = self.restore_gap(c)
+            if not gap:
+                return {'open': False}
+            known = {r[0] for r in c.execute('SELECT media_id FROM ops_attempts WHERE media_id IS NOT NULL')}
+            for r in c.execute("SELECT data FROM publications WHERE stage='published'"):
+                mid = (loads(r['data'], {}) or {}).get('publishedMediaId')
+                if mid:
+                    known.add(str(mid))
+            unknown = []
+            for m in media:
+                try:
+                    ts = rules.instant(str(m.get('timestamp')).replace('+0000', '+00:00')).timestamp()
+                except (ValueError, rules.RuleError):
+                    ts = None
+                if (ts is None or ts >= gap['since']) and str(m.get('id')) not in known:
+                    unknown.append({'id': str(m.get('id')), 'permalink': m.get('permalink'),
+                                    'timestamp': m.get('timestamp')})
+            if not unknown:
+                c.execute("DELETE FROM ops_meta WHERE key='restore_gap'")
+                audit(c, None, 'restore_gap_closed', 'service:wf2', {'checked': len(media)})
+                self.notify(c, f"restore-gap-closed:{int(gap['marked'])}", '✅ Checked Instagram since the backup: no '
+                            'post is missing from the store. Publishing continues.')
+                return {'open': False, 'closed': True}
+            self.notify(c, f"restore-gap-unknown:{int(gap['marked'])}:{len(unknown)}",
+                        '⚠️ After the restore, Instagram shows posts the store does not know: ' + ', '.join(
+                            (u['permalink'] or u['id']) for u in unknown[:10]) + '. Tell Bondok which items these are '
+                        '(it records them as published), then say the check is done. Publishing stays paused.')
+            return {'open': True, 'unknown': unknown}
+
+    def op_resolve_restore_gap(self, c, cmd: Command):
+        gap = self.restore_gap(c)
+        if not gap:
+            return {'open': False, 'unchanged': True}
+        c.execute("DELETE FROM ops_meta WHERE key='restore_gap'")
+        audit(c, None, 'restore_gap_closed', cmd.actor, {'by': 'owner'})
+        return {'open': False, 'message': 'Restore check closed by the owner; publishing continues.'}
 
     # ------------------------------------------------------------------ claim
     def claim(self, item_id, worker, *, source_status=None) -> dict:
@@ -236,6 +301,8 @@ class PublishMixin:
         with self.store.tx() as c:
             it = self.item(c, item_id)
             res = self.reservation(c, item_id)
+            if self.restore_gap(c):
+                return {'claimed': False, 'reason': 'publishing is paused until the post-restore check is done'}
             if source_status == 'Canceled':
                 # Same outcome WF1 records later; releasing now stops WF2 re-reading Monday every minute and WF3
                 # moving the item to the next slot (audit, publishing LOW). A pre-commit attempt is ended too: nothing

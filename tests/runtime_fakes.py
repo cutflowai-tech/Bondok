@@ -267,6 +267,9 @@ class FakeInstagram:
             return 400, {'error': {'message': 'Invalid parameter', 'code': 100}}
         return 500, {'error': {'message': 'An unknown error occurred', 'code': 1}}
 
+    def media(self, limit=25):
+        return ig_media(self)[:limit]
+
     def permalink(self, media_id):
         return f'https://www.instagram.com/reel/{media_id}/'
 
@@ -304,3 +307,9 @@ class FakeMediaWorker:
                                                                          dumps(info)))
         self.prepared.append(b['itemId'])
         return {'ready': True, 'mediaId': mid, 'filePath': str(path), **info}
+
+
+def ig_media(ig):
+    """Recent media as Instagram lists them (newest first) for the restore-gap check."""
+    return [{'id': 'IG' + c, 'permalink': f'https://www.instagram.com/reel/IG{c}/', 'timestamp': '2099-01-01T00:00:00+0000'}
+            for c in reversed(ig.published)]

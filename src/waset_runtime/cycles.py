@@ -396,6 +396,11 @@ class Runner:
         if self.ig is None:
             return {**out, 'publishing': 'no Instagram client configured'}
         due = self.ops.due(worker, 5)
+        if due.get('restore_gap'):
+            try:
+                out['restore_gap'] = self.ops.restore_gap_check(self.ig.media(50))
+            except HttpError as e:
+                out['restore_gap'] = {'open': True, 'error': error_text(e)[:200]}
         if due.get('probe'):
             ok, err = self.ig.probe()
             self.ops.provider_probe(ok, err)

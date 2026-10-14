@@ -204,6 +204,7 @@ class CoreMixin:
         'set_window': {OWNER},
         'set_policy': {OWNER},          # owner changes a rule (versioned; agent migration P1)
         'set_runtime_owner': {OWNER},
+        'resolve_restore_gap': {OWNER},  # owner closes the post-restore check (A28)
         'board_create': {OWNER},         # owner administration of the board and files (admin.py)
         'board_remove': {OWNER},
         'board_set_field': {OWNER},

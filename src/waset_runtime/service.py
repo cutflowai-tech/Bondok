@@ -157,7 +157,28 @@ def main(argv=None):
     p.add_argument('--env', default=os.environ.get('WASET_RUNTIME_ENV', '/opt/waset-bondok/runtime.env'))
     p.add_argument('--once', choices=sorted(CADENCE))
     p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--mark-restored', metavar='BACKUP_TIME',
+                   help='after restoring a backup: its time (ISO, with zone); publishing pauses until the gap since '
+                        'then is checked on Instagram')
+    p.add_argument('--switch-owner', choices=['bondok', 'n8n'],
+                   help='cutover/rollback step, run only with the owner\'s authorization: which runner executes the '
+                        'scheduled work')
+    p.add_argument('--authorized-by', help='reference of the owner authorization for --switch-owner')
     a = p.parse_args(argv)
+    if a.switch_owner:
+        from waset_ops import OWNER, Command
+        if not a.authorized_by:
+            raise SystemExit('--switch-owner needs --authorized-by (the owner\'s authorization reference)')
+        ops = Ops(read_env(a.env)['PIPELINE_DB'])
+        print(json.dumps(ops.submit(Command(f'switch-owner:{a.switch_owner}:{int(time.time())}', 'set_runtime_owner',
+                                            'operator', OWNER, None, {'owner': a.switch_owner},
+                                            auth={'authorized_by': a.authorized_by}))))
+        return
+    if a.mark_restored:
+        from waset_ops import rules
+        ops = Ops(read_env(a.env)['PIPELINE_DB'])
+        print(json.dumps(ops.mark_restored(rules.instant(a.mark_restored).timestamp(), actor='operator:restore')))
+        return
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(name)s %(message)s')
     ops, runner = build(read_env(a.env), dry_run=a.dry_run)
     if a.once:
