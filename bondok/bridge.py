@@ -30,7 +30,7 @@ PROTECTED = {'pause_item', 'resume_item', 'skip_item', 'request_reschedule', 're
              'set_rule', 'publish_now', 'cancel_schedule', 'board_create_item', 'board_remove_item', 'set_item_field',
              'file_action'}
 # Protected tools that are not about one item.
-GLOBAL = {'set_rule', 'board_create_item', 'file_action'}
+GLOBAL = {'set_rule', 'board_create_item'}
 # Board/file administration and publish-now: read by the generic reader (language.contradiction 'generic').
 GENERIC = {'publish_now', 'board_create_item', 'board_remove_item', 'set_item_field', 'file_action'}
 MUTATING = PROTECTED | {'request_recheck', 'draft_caption', 'approve_all_existing_captions'}
@@ -136,6 +136,14 @@ class Bridge:
         if turn._named_set is None:
             turn._named_set = self.items_named(turn.history_text) | self.named_now(turn) | set(turn.context_items)
         return turn._named_set
+
+    def remember_files(self, thread, item_id, paths):
+        """The files list_files showed for an item in this thread (file_action may act only on these or on a path
+        the owner typed)."""
+        if self.store and thread:
+            f = self.store.kv('files:' + thread) or {}
+            f[str(item_id)] = [p.lower() for p in paths]
+            self.store.kv('files:' + thread, f)
 
     def remember_shown(self, thread, item_id, asset_key):
         """The file version the owner was shown in this thread (Topaz binds to it, R5 M25)."""
@@ -248,7 +256,7 @@ class Bridge:
                 turn.ask(q + '؟', action)
                 return {'state': 'needs_confirmation', 'question': q + '؟'}
             return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn)
-        if tool in ('board_create_item', 'file_action'):
+        if tool == 'board_create_item':
             return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn)
 
         # ---- targets: the owner's words and the thread's named set, never extra items (R5 B6, A14)
@@ -415,6 +423,14 @@ class Bridge:
             a = {k: args.get(k) for k in ('action', 'path', 'to') if args.get(k)}
             if a.get('to') and not lang.contains(turn.text, a['to'].rsplit('/', 1)[-1]):
                 raise Rejected('Not done: the new name or folder is not in your message; type it exactly')
+            # The file must be one the owner named, or one listed for this item in this thread (list_files):
+            # never a path the model made up or took from file names it read.
+            path = str(a.get('path') or '')
+            listed = ((self.store.kv('files:' + turn.thread) or {}).get(str(item)) or []) if self.store else []
+            name = path.rsplit('/', 1)[-1]
+            if not (lang.contains(turn.text, path) or (path.lower() in listed and name and
+                                                         lang.contains(turn.text, name.rsplit('.', 1)[0]))):
+                raise Rejected('Not done: name the file exactly (as list_files shows it) for this item')
             return {'tool': tool, 'item': item, 'op': 'file_action', 'args': a}, \
                 f"{str(a.get('action') or '').capitalize()} {a.get('path')}" + (f" → {a['to']}" if a.get('to') else '')
         if tool == 'request_rework':

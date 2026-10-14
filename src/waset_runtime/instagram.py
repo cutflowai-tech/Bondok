@@ -36,7 +36,8 @@ class Instagram:
         return self.http.request('POST', self.base + path, json_body=body, headers=self._auth(), timeout=timeout)
 
     def _auth(self):
-        return {'Authorization': 'Bearer ' + self.token}     # never in a URL (logs)
+        token = self.token.token() if hasattr(self.token, 'token') else self.token
+        return {'Authorization': 'Bearer ' + token}     # never in a URL (logs)
 
     # ------------------------------------------------------------------ publishing
     def create_container(self, payload) -> str:
@@ -99,3 +100,51 @@ class Instagram:
 def error_text(e: HttpError) -> str:
     j = e.json()
     return json.dumps(j.get('error', j))[:600] if isinstance(j, dict) else str(e)[:600]
+
+
+class TokenStore:
+    """Long-lived Instagram Login tokens last 60 days and can be refreshed once they are at least 24 hours old
+    (GET graph.instagram.com/refresh_access_token, grant_type=ig_refresh_token). A Facebook Page token (Facebook
+    Login) does not use this. The refreshed token is kept in a 0600 file next to the runtime env, never logged."""
+
+    REFRESH_AFTER = 30 * 86400
+
+    def __init__(self, path, initial, http: Http | None = None, clock=None):
+        import time as _t
+        self.path, self.http, self.clock = path, http or Http(timeout=30), clock or _t.time
+        self.state = self._load() or {'token': initial, 'refreshed': self.clock()}
+
+    def _load(self):
+        import os
+        try:
+            with open(self.path) as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return None
+        finally:
+            if os.path.exists(self.path):
+                os.chmod(self.path, 0o600)
+
+    def token(self) -> str:
+        if self.clock() - float(self.state.get('refreshed') or 0) >= self.REFRESH_AFTER:
+            self.refresh()
+        return self.state['token']
+
+    def refresh(self):
+        import os
+        try:
+            r = self.http.request('GET', 'https://graph.instagram.com/refresh_access_token',
+                                  params={'grant_type': 'ig_refresh_token'},
+                                  headers={'Authorization': 'Bearer ' + self.state['token']})
+        except HttpError:
+            r = None                # the current token still works until it expires; auth errors open the breaker
+        if not r or not r.get('access_token'):
+            self.state['refreshed'] = self.clock() - self.REFRESH_AFTER + 3600     # try again in an hour
+            return False
+        self.state = {'token': r['access_token'], 'refreshed': self.clock()}
+        tmp = str(self.path) + '.tmp'
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            json.dump(self.state, f)
+        os.replace(tmp, self.path)
+        return True

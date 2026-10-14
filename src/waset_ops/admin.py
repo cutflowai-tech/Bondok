@@ -10,7 +10,11 @@ from . import board, rules
 from .core import MONDAY, Command, Rejected
 from .db import audit, dumps, next_counter
 
+import re
+
 FIELDS = ('notes', 'code', 'variety', 'collab')
+VIDEO = re.compile(r'\.(mp4|mov|m4v)$', re.I)
+PREPARED = '/social media/prepared'
 REMOVED = 'Removed from the board by the owner'
 
 
@@ -99,12 +103,18 @@ class AdminMixin:
             raise Rejected('Where should it go? A new name or folder is required', 'invalid')
         if action == 'rename' and '/' not in to:
             to = path.rsplit('/', 1)[0] + '/' + to
-        if cmd.item_id:
-            it = self.item(c, cmd.item_id)
-            att = self.active_attempt(c, it['item_id'])
-            if att and action in ('move', 'delete'):
-                raise Rejected('This item has a publication attempt in progress; change its files after it ends',
-                               'in_progress')
+        if not cmd.item_id:
+            raise Rejected('Which item does the file belong to?', 'invalid')
+        if not VIDEO.search(path) or (to and not VIDEO.search(to)):
+            raise Rejected('Only video files of an item can be renamed, moved or deleted', 'invalid')
+        if path.lower().startswith(PREPARED + '/'):
+            raise Rejected('That is a prepared copy Instagram fetches; it is managed by the system', 'protected')
+        it = self.item(c, cmd.item_id)
+        att = self.active_attempt(c, it['item_id'])
+        selected = bool(it.get('file_name')) and path.rsplit('/', 1)[-1].lower() == it['file_name'].lower()
+        if att or (selected and self.reservation(c, it['item_id'])):
+            raise Rejected('This is the file of a scheduled or in-progress publication; pause it or pick another '
+                           'file first', 'in_progress')
         key = f'admin-file:{next_counter(c, "admin:file")}'
         self.enqueue(c, 'dropbox_admin', key, {'action': action, 'path': path, 'to': to or None,
                                                'command': cmd.id}, cmd.item_id)

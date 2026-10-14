@@ -102,6 +102,23 @@ class P4_02_ImportSelectPrepareDeliver(RuntimeCase):
         self.assertEqual((it['readiness'], it['block_kind']), ('blocked', 'config'))
 
 
+class A02_ExemptionThroughTheRuntime(RuntimeCase):
+    def test_short_edge_exemption_unblocks_a_720p_source(self):
+        self.worker.width, self.worker.height = 720, 1280
+        self.cycle(2)
+        iid = self.social_id()
+        self.ops.submit(owner_cmd('tz', 'confirm_topaz', iid, explicit=True, confirmed=True))
+        self.runner.prepare_cycle()
+        it = self.item(iid)
+        self.assertEqual(it['readiness'], 'blocked')
+        self.assertIn('short edge', it['block_reason'])
+        self.ops.submit(owner_cmd('w', 'waive_rule', iid, explicit=True, rule='min_short_edge'))
+        self.clock.advance(60)
+        self.runner.prepare_cycle()
+        self.assertEqual(self.item(iid)['readiness'], 'ready', self.item(iid))
+        self.assertIsNotNone(self.res(iid))
+
+
 class A13_A24_PublishWithoutModelOrChat(RuntimeCase):
     def test_scheduled_item_publishes_once_with_intent_first(self):
         iid = self.ready_item()
@@ -305,7 +322,7 @@ class A29_A30_RuntimeOwnership(RuntimeCase):
         self.assertEqual(s.tick(), [])
         r = self.ops.submit(owner_cmd('own', 'set_runtime_owner', None, explicit=True, owner='bondok'))
         self.assertEqual(r['state'], 'completed', r)
-        self.assertEqual(sorted(s.tick()), ['prepare', 'publish', 'supervise'])
+        self.assertEqual(sorted(s.tick()), ['prepare', 'publish', 'supervise', 'sync'])
         for t in s.threads:
             t.join()
         self.assertEqual(len(self.monday.board.items), 1)       # the runtime imported the item
@@ -346,8 +363,7 @@ class A29_A30_RuntimeOwnership(RuntimeCase):
         self.assertEqual(len(self.ig.publish_calls()), 1)     # published while preparation is still running
         self.assertTrue(s.running['prepare'])
         gate.set()
-        for t in s.threads:
-            t.join()
+        s.shutdown()
 
 
 class Selection(unittest.TestCase):
@@ -371,3 +387,68 @@ class Selection(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ReviewFindings(RuntimeCase):
+    """Regression tests for the independent review of 2026-10-14."""
+
+    def test_unconfirmed_intent_write_publishes_nothing(self):          # finding 6
+        iid = self.ready_item()
+        self.at_slot(iid)
+        real = self.monday.change_columns
+
+        def silent(item_id, columns, group=None, board_id=rules.BOARD):
+            if (columns.get('status') or {}).get('label') == 'Publishing':
+                return {}                                                # Monday answered without the id
+            return real(item_id, columns, group, board_id)
+        self.monday.change_columns = silent
+        self.runner.publish_cycle()
+        self.assertEqual(self.ig.publish_calls(), [])
+
+    def test_successful_fresh_read_counts_under_the_lenient_policy(self):  # finding 4
+        iid = self.ready_item()
+        self.runner.publish_cycle()
+        self.ops.submit(owner_cmd('pol', 'set_policy', None, explicit=True, rule='publish_without_fresh_board',
+                                  value=True))
+        self.at_slot(iid)
+        self.monday.board.set_raw(iid, 'status', {'id': 'status', 'text': 'Paused', 'value': '{"index":2}'})
+        self.monday.source_status = lambda sid: (_ for _ in ()).throw(MondayError('timeout', answered=False))
+        self.runner.publish_cycle()
+        self.assertEqual(self.ig.publish_calls(), [])
+        self.assertEqual(self.item(iid)['owner_state'], 'paused')
+
+    def test_deploy_fence_keeps_the_runtime_idle(self):                 # finding 3
+        self.ops.submit(owner_cmd('own', 'set_runtime_owner', None, explicit=True, owner='bondok'))
+        (self.dir / 'deploy-fence.json').write_text('{}')
+        s = Scheduler(self.ops, self.runner, clock=self.clock)
+        self.assertEqual(s.tick(), [])
+        (self.dir / 'deploy-fence.json').unlink()
+        self.assertTrue(s.tick())
+        s.shutdown()
+
+    def test_dropbox_credential_failure_is_not_an_item_problem(self):    # finding 8
+        from waset_runtime.dropbox import DropboxError
+        self.dbx.fail['link_metadata'] = DropboxError('Dropbox credential refresh failed (400)', kind='infra')
+        self.cycle(2)
+        it = self.item(self.social_id())
+        self.assertNotEqual(it['block_kind'], 'config')
+
+    def test_legacy_off_grid_reservation_without_created_is_still_moved(self):   # finding 9
+        iid = self.ready_item()
+        with self.ops.store.tx() as c:
+            c.execute("UPDATE ops_reservations SET slot='2026-10-10T13:17:00Z', created=NULL, owner_pinned=0 "
+                      'WHERE item_id=?', (iid,))
+        f = [x for x in self.ops.inspect()['findings'] if x.get('kind') == 'off_grid'] \
+            if isinstance(self.ops.inspect().get('findings'), list) else []
+        self.assertTrue(f, self.ops.inspect())
+
+
+class PermanenceWords(unittest.TestCase):                              # finding 2
+    def test_one_item_sentence_is_never_a_lasting_rule(self):
+        import sys
+        from support import ROOT
+        sys.path.insert(0, str(ROOT / 'bondok'))
+        import language as L
+        self.assertFalse(L.permanent('انشر الفيديو ده خلاص مش لازم توباز'))
+        self.assertFalse(L.permanent('من النهارده LIP12 مش محتاج توباز'))
+        self.assertTrue(L.permanent('من النهارده توباز مش شرط'))

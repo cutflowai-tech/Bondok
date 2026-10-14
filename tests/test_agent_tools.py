@@ -133,16 +133,50 @@ class BoardAdministration(ToolCase):
 
 
 class FileAdministration(ToolCase):
+    OLD = '/Social Media/Production/LIP12/Story/old.mp4'
+
+    def file_case(self, text, path, to='final-v2.mp4', action='rename', item='FA1'):
+        self.make_ready('660', 'Story', code='FA1')
+        core = self.run_core([act('file_action', text, 'imperative', 'FA1', item=item, action=action, path=path,
+                                  to=to)], 'تمام')
+        return self.say(core, text)
+
     def test_rename_file(self):
         dbx = FakeDropbox()
-        dbx.add_file('/Social Media/Production/LIP12/Story/old.mp4')
-        text = 'سمي الفايل /Social Media/Production/LIP12/Story/old.mp4 باسم final-v2.mp4'
-        core = self.run_core([act('file_action', text, 'imperative', '', item=None, action='rename',
-                                  path='/Social Media/Production/LIP12/Story/old.mp4', to='final-v2.mp4')], 'تمام')
-        self.say(core, text)
+        dbx.add_file(self.OLD)
+        self.file_case(f'سمي الفايل {self.OLD} بتاع FA1 باسم final-v2.mp4', self.OLD)
         out = run_admin_jobs(self.ops, None, dbx)
         self.assertEqual(out[0]['path'], '/Social Media/Production/LIP12/Story/final-v2.mp4')
         self.assertIn('/social media/production/lip12/story/final-v2.mp4', dbx.files)
+
+    def test_path_the_owner_did_not_name_is_refused(self):
+        reply = self.file_case('امسح الفايل القديم بتاع FA1', self.OLD, to=None, action='delete')
+        self.assertIn('name the file exactly', reply)
+        self.assertEqual(self.outbox('dropbox_admin'), [])
+
+    def test_prepared_copy_and_folders_are_protected(self):
+        self.make_ready('661', 'Story', code='FA2')
+        r = self.ops.submit(owner_cmd('p1', 'file_action', '661', explicit=True, action='delete',
+                                      path='/Social Media/Prepared/661-x.mp4'))
+        self.assertEqual(r['code'], 'protected')
+        r = self.ops.submit(owner_cmd('p2', 'file_action', '661', explicit=True, action='delete',
+                                      path='/Social Media/Production/LIP12'))
+        self.assertEqual(r['code'], 'invalid')
+        r = self.ops.submit(owner_cmd('p3', 'file_action', '661', explicit=True, action='delete',
+                                      path='/x/video_v1.mp4'))
+        self.assertEqual(r['code'], 'in_progress')         # the selected file of a scheduled item
+        r = self.ops.submit(owner_cmd('p4', 'file_action', None, explicit=True, action='delete', path='/x/a.mp4'))
+        self.assertEqual(r['state'], 'rejected')
+
+    def test_executor_refuses_a_folder(self):
+        dbx = FakeDropbox()
+        dbx.add_folder('/Social Media/Production/LIP12/x.mp4')
+        self.make_ready('662', 'Story', code='FA3')
+        self.ops.submit(owner_cmd('p5', 'file_action', '662', explicit=True, action='delete',
+                                  path='/Social Media/Production/LIP12/x.mp4'))
+        out = run_admin_jobs(self.ops, None, dbx)
+        self.assertIn('not a file', out[0]['error'])
+        self.assertIn('/social media/production/lip12/x.mp4', dbx.files)
 
 
 class BulkLimit(ToolCase):

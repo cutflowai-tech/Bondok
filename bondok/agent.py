@@ -132,7 +132,7 @@ TOOLS = [
     _fn('list_files', 'The videos in an item\'s Dropbox project folder, with which one is selected. Read-only.', ITEM),
     _fn('file_action', 'Owner request: rename, move or delete (to Dropbox\'s deleted files) one Dropbox file. Use the '
         'exact path from list_files.',
-        {'item': {'type': ['string', 'null'], 'description': 'The item the file belongs to, if any'},
+        {'item': {'type': 'string', 'description': 'The item the file belongs to'},
          'action': {'type': 'string', 'enum': ['rename', 'move', 'delete']}, 'path': {'type': 'string'},
          'to': {'type': ['string', 'null'], 'description': 'New name (rename) or full new path (move)'},
          **MEANING}),
@@ -251,7 +251,10 @@ class Agent:
             r = self.bridge.resolve(args.get('item'))
             if 'item_id' not in r:
                 return r
-            return self._files(r['item_id'])
+            out = self._files(r['item_id'])
+            if out.get('videos'):
+                self.bridge.remember_files(ctx['thread'], r['item_id'], [v['path'] for v in out['videos']])
+            return out
         if name == 'instagram_recent':
             ig = self.clients.get('instagram')
             if ig is None:

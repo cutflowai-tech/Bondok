@@ -178,3 +178,26 @@ class DryRun(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class InstagramTokenRefresh(unittest.TestCase):
+    def test_refresh_after_thirty_days_is_persisted_privately(self):
+        from waset_runtime.instagram import TokenStore
+        d = Path(tempfile.mkdtemp())
+        now = [1_000_000.0]
+        t = Transport((200, {'access_token': 'NEW', 'expires_in': 5184000}))
+        ts = TokenStore(d / 'tok.json', 'OLD', Http(t), clock=lambda: now[0])
+        self.assertEqual(ts.token(), 'OLD')
+        now[0] += 31 * 86400
+        self.assertEqual(ts.token(), 'NEW')
+        self.assertNotIn('OLD', t.requests[0]['url'])
+        self.assertEqual(os.stat(d / 'tok.json').st_mode & 0o777, 0o600)
+        self.assertEqual(TokenStore(d / 'tok.json', 'IGNORED', Http(Transport()), clock=lambda: now[0]).token(), 'NEW')
+
+    def test_failed_refresh_keeps_the_working_token(self):
+        from waset_runtime.instagram import TokenStore
+        d = Path(tempfile.mkdtemp())
+        now = [0.0]
+        ts = TokenStore(d / 'tok.json', 'OLD', Http(Transport((500, {}))), clock=lambda: now[0])
+        now[0] += 40 * 86400
+        self.assertEqual(ts.token(), 'OLD')

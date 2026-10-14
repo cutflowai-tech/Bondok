@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import secrets
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -95,6 +96,8 @@ class Runner:
         self.name, self.sleep, self.poll_seconds, self.max_polls = name, sleep, poll_seconds, max_polls
         self.publishers = publishers
         self.maintenance = maintenance
+        self._lock = threading.Lock()
+        self._inflight = set()
 
     def _id(self, kind):
         return f'{self.name}-{kind}-{int(time.time())}-{secrets.token_hex(3)}'
@@ -122,7 +125,7 @@ class Runner:
             step = 'prepare'
             by_id = {str(s['id']): s for s in sources}
             work = self.ops.work_queue(limit=limit)
-            out['items'] = [self.prepare_item(w, by_id.get(str(w.get('source_item_id'))), run_id, fence)
+            out['items'] = [self._prepare_safely(w, by_id.get(str(w.get('source_item_id'))), run_id, fence)
                             for w in work]
             step = 'editor'
             out['editor'] = self.editor_jobs(run_id)
@@ -229,6 +232,16 @@ class Runner:
         return edits
 
     # ------------------------------------------------------------------ one item
+    def _prepare_safely(self, w, source, run_id, fence) -> dict:
+        """One item's failure never stops the others (n8n's per-item error branches). A superseded run stops."""
+        try:
+            return self.prepare_item(w, source, run_id, fence)
+        except Exception as e:  # noqa: BLE001
+            if getattr(e, 'code', None) == 'fenced':
+                raise
+            LOG.error('prepare_failed item=%s type=%s detail=%s', w.get('item_id'), type(e).__name__, str(e)[:200])
+            return {'item_id': str(w.get('item_id')), 'error': type(e).__name__}
+
     def prepare_item(self, w, source, run_id, fence) -> dict:
         ctx = selection.context(w, source)
         item = str(w['item_id'])
@@ -361,8 +374,8 @@ class Runner:
                     task = self.monday.create_subitem(p['source_item_id'], p['task_name'], {'status': SUBITEM_LABEL})
                 self.monday.create_update(task, p['body'])
                 self.ops.outbox_ack(j['id'], worker, True, None, {'task_id': task})
-            except (MondayError, HttpError) as e:
-                self.ops.outbox_ack(j['id'], worker, False, str(e)[:400], {'task_id': task})
+            except Exception as e:  # noqa: BLE001 - one editor job never stops the others
+                self.ops.outbox_ack(j['id'], worker, False, f'{type(e).__name__}: {str(e)[:400]}', {'task_id': task})
         return n
 
     @staticmethod
@@ -390,9 +403,16 @@ class Runner:
                    (asset and asset in str(u.get('text_body') or '') and same_kind(u.get('text_body'))) for u in ups)
 
     # ================================================================== WF2
-    def publish_cycle(self) -> dict:
+    def sync_cycle(self) -> dict:
+        return self.display_sync(self._id('sync'))
+
+    def publish_cycle(self, pool=None, sync=True) -> dict:
+        """Display sync (unless the scheduler runs it on its own timer), reconciliation, then the due items. With
+        ``pool`` (the scheduler's executor) each due item is handed off and the cycle returns at once, so a container
+        that takes minutes never delays the next minute's work (one n8n execution per minute did the same); the
+        claim keeps two runs from taking one item."""
         worker = self._id('wf2')
-        out = {'sync': self.display_sync(worker)}
+        out = {'sync': self.display_sync(worker)} if sync else {}
         if self.ig is None:
             return {**out, 'publishing': 'no Instagram client configured'}
         due = self.ops.due(worker, 5)
@@ -407,12 +427,26 @@ class Runner:
         work = due.get('work') or []
         out['reconciled'] = [self.reconcile(w) for w in work if w.get('kind') == 'reconcile']
         pubs = [w for w in work if w.get('kind') != 'reconcile']
-        if pubs:
+        if pubs and pool is not None:
+            with self._lock:
+                new = [w for w in pubs if str(w['item_id']) not in self._inflight]
+                self._inflight.update(str(w['item_id']) for w in new)
+            for w in new:
+                pool.submit(self._publish_tracked, w)
+            out['dispatched'] = [w['item_id'] for w in new]
+        elif pubs:
             # One worker identity per item (as one n8n execution per item); several due items in parallel so one
             # container's processing never delays another slot.
             with ThreadPoolExecutor(max_workers=max(1, min(self.publishers, len(pubs)))) as pool:
                 out['published'] = list(pool.map(self._publish_safely, pubs))
         return out
+
+    def _publish_tracked(self, w):
+        try:
+            return self._publish_safely(w)
+        finally:
+            with self._lock:
+                self._inflight.discard(str(w['item_id']))
 
     def _publish_safely(self, w):
         """A crash of one item's publication never stops the others. Whatever stage it reached is in the store: a
@@ -468,7 +502,6 @@ class Runner:
         fresh, status = None, None
         try:
             fresh = self.monday.fresh_item(item)
-            stage = 'read_source'
             status = self.monday.source_status(_txt(fresh, B.COL['source_item']))
         except (MondayError, HttpError) as e:
             stage = 'read_item' if fresh is None else 'read_source'
@@ -476,11 +509,11 @@ class Runner:
                 lenient = self.ops.policy(c)['publish_without_fresh_board']
             if not lenient:
                 return self.ops.read_failure(item, stage, str(e)[:600], getattr(e, 'status', None))
-            fresh = None        # owner policy: publish from the last observed board state
-        if fresh is not None:
-            self.ops.observe([{k: fresh[k] for k in ('id', 'name', 'column_values', 'group') if k in fresh}],
-                             actor='service:wf2')
+            # Owner policy: what could not be read falls back to the last observed state; what was read counts.
         try:
+            if fresh is not None:
+                self.ops.observe([{k: fresh[k] for k in ('id', 'name', 'column_values', 'group') if k in fresh}],
+                                 actor='service:wf2')
             cl = self.ops.claim(item, worker, source_status=status)
         except Exception as e:  # noqa: BLE001 - WF2 'claim' read failure
             return self.ops.read_failure(item, 'claim', f'{type(e).__name__}: {str(e)[:500]}', None)
@@ -539,7 +572,9 @@ class Runner:
             conflict, read_error = guard_conflict(intent.get('guard') or {}, cur)
             err = conflict or (('read before intent failed: ' + read_error) if read_error else None)
             if not err:
-                self.monday.change_columns(intent['item_id'], intent['columns'])
+                d = self.monday.change_columns(intent['item_id'], intent['columns'])
+                if str(((d or {}).get('change_multiple_column_values') or {}).get('id')) != str(intent['item_id']):
+                    err = 'no response from Monday (intent write not confirmed)'
         except (MondayError, HttpError) as e:
             err = str(e)[:500] or 'no response from Monday'
         ack = self.ops.intent_ack(aid, worker, fence, intent['job'], ok=err is None, error=err)

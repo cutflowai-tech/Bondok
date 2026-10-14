@@ -216,8 +216,8 @@ class PolicyMixin:
                                                             'command': cmd.id})
         if rule == 'topaz_required':
             self._nudge(c, it['item_id'])
-        if it.get('readiness') == 'blocked' and it.get('block_kind') != 'infra':
-            # The block may come from this rule: evaluated again from the facts (it reappears if another rule holds)
+        if it.get('readiness') == 'blocked' and self._blocked_by(it, rule):
+            # Only the block this rule caused is lifted; the facts are evaluated again (another rule still holds)
             self.update_item(c, it['item_id'], cmd.actor, f'{rule} waived by owner', readiness='checking',
                              block_kind=None, block_reason=None, block_key=None)
         res = self.evaluate(c, it['item_id'], cmd.actor)
@@ -226,6 +226,12 @@ class PolicyMixin:
                 'message': f"{rules.POLICY[rule]['label']}: waived for {it['name']} by the owner"
                            + (' (this file version only)' if asset else '') + '. The rule itself is unchanged.'
                            + (' This is an exemption, not a Topaz confirmation.' if rule == 'topaz_required' else '')}
+
+    @staticmethod
+    def _blocked_by(it, rule) -> bool:
+        key, reason = it.get('block_key') or '', (it.get('block_reason') or '').lower()
+        return {'topaz_required': key.startswith('topaz:'), 'duplicate_video_block': key.startswith('duplicate:'),
+                'min_short_edge': 'short edge' in reason}.get(rule, False)
 
     def op_restore_rule(self, c, cmd: Command):
         """Owner withdraws an exemption: the rule applies to the item again."""

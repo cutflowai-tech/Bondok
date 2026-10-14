@@ -68,7 +68,8 @@ class Dropbox:
         if self._token and self.clock() < self._expires - 60:
             return self._token
         if not self.refresh_token:
-            raise DropboxError('Dropbox credential missing or expired; reconnect Dropbox', kind='config')
+            # A credential problem is the account's, not the item's: infra (one alert, items wait), as in n8n.
+            raise DropboxError('Dropbox credential missing or expired; reconnect Dropbox', kind='infra')
         try:
             r = self.http.request('POST', TOKEN_URL, data=(
                 f'grant_type=refresh_token&refresh_token={self.refresh_token}&client_id={self.app_key}'
@@ -76,8 +77,7 @@ class Dropbox:
                 headers={'Content-Type': 'application/x-www-form-urlencoded'})
         except HttpError as e:
             raise DropboxError('Dropbox credential refresh failed (' + str(e.status) + '); reconnect Dropbox',
-                               kind='config' if e.status in (400, 401) else 'infra', status=e.status,
-                               answered=e.answered) from None
+                               kind='infra', status=e.status, answered=e.answered) from None
         self._token, self._expires = r['access_token'], self.clock() + float(r.get('expires_in') or 14400)
         return self._token
 

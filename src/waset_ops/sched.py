@@ -88,8 +88,12 @@ class SchedMixin:
             return (loads(it['hold'], {}) or {}).get('reason') or 'waiting for owner decision'
         if it['readiness'] != 'ready':
             return it['block_reason'] or 'media is not verified yet'
-        if it['format'] == 'Post' and it['caption_state'] != 'approved' and self.policy(c)['post_caption_approval']:
-            return 'caption is not approved'
+        if it['format'] == 'Post' and it['caption_state'] != 'approved':
+            if self.policy(c)['post_caption_approval']:
+                return 'caption is not approved'
+            bad = rules.validate_caption(it['caption'] or '')       # approval off: the text must still be valid
+            if bad:
+                return 'caption: ' + bad
         if self.active_attempt(c, it['item_id']):
             return 'a publication attempt is active'
         b = self.breaker(c)

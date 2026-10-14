@@ -1,5 +1,13 @@
 # Handoff Status
 
+## Agent migration (2026-10-14) — current work
+Branch `bondok/agent-migration` (from `8675c93`). Plan and tracker: `bondok-agent-migration/` (`08-tracker.md`,
+`P0-baseline.md`, `CUTOVER_PACKAGE.md`). Implemented and tested locally (590+ tests, 3.12/3.14): owner rules and
+exemptions, Topaz confirmation without file-name conditions, Bondok execution tools, `waset_runtime` replacing n8n
+WF1/WF2/WF3, runtime ownership switch, restore-gap guard. **Not deployed.** Next: owner approval of the cutover steps
+T1–T9; prerequisites: ffmpeg on the Bondok host, runtime credentials, two default values (bulk limit 10, delete =
+archive).
+
 Updated: 2026-10-12. Directive: R5.2 master implementation directive (private; owner handoff), amended by the
 owner decisions of 2026-10-11/12 (`OWNER_AUTHORITY_CONTRACT.md` §0).
 Milestone: **R5 repair + release review IMPLEMENTED · TESTED. NOT DEPLOYED. One local check before GO**

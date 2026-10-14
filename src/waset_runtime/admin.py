@@ -7,6 +7,8 @@ from .dropbox import DropboxError
 from .http import HttpError
 from .monday import MondayError
 
+from waset_ops.rules import BOARD
+
 KINDS = ['monday_admin', 'dropbox_admin']
 
 
@@ -34,6 +36,8 @@ def run_admin_jobs(ops, monday, dropbox, worker='bondok-admin', limit=5) -> list
                         out.append({'job': j['id'], 'uncertain': True})
                         continue
                     result = {'item_id': iid}
+                elif act in ('archive', 'delete') and monday.board_of(p['item_id']) != BOARD:
+                    raise ValueError('the item is not on the For Social Media board; nothing was changed')
                 elif act == 'archive':
                     monday.archive_item(p['item_id'])
                     result = {'archived': p['item_id']}
@@ -45,6 +49,9 @@ def run_admin_jobs(ops, monday, dropbox, worker='bondok-admin', limit=5) -> list
             else:
                 if dropbox is None:
                     raise DropboxError('Dropbox is not configured for Bondok', kind='config')
+                meta = dropbox.metadata(p['path'])
+                if meta.get('.tag') != 'file':
+                    raise ValueError(f"{p['path']} is not a file; only files are changed")
                 if act in ('rename', 'move'):
                     m = dropbox.move(p['path'], p['to'])
                     result = {'path': ((m or {}).get('metadata') or {}).get('path_display') or p['to']}
@@ -57,7 +64,7 @@ def run_admin_jobs(ops, monday, dropbox, worker='bondok-admin', limit=5) -> list
             with ops.store.tx() as c:
                 ops.notify(c, f"admin-done:{j['id']}", '✅ ' + _done_text(j['kind'], act, p, result), j.get('item_id'))
             out.append({'job': j['id'], **result})
-        except (MondayError, DropboxError, HttpError, ValueError) as e:
+        except Exception as e:  # noqa: BLE001 - one job's failure is recorded and never stops the others
             permanent = isinstance(e, ValueError) or getattr(e, 'kind', None) == 'config' or (
                 isinstance(e, MondayError) and e.answered and not e.status)
             ops.outbox_ack(j['id'], worker, False, str(e)[:400])

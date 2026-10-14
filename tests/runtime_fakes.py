@@ -128,6 +128,9 @@ class FakeMonday:
         r = self.create_items([{'key': 'x', 'name': name, 'columns': columns or {}, 'group': group}])
         return r['data']['sx']['id']
 
+    def board_of(self, item_id):
+        return rules.BOARD if str(item_id) in self.board.items else None
+
     def archive_item(self, item_id):
         self.writes.append(('archive_item', str(item_id)))
         self.board.items.pop(str(item_id), None)
@@ -295,6 +298,9 @@ class FakeMediaWorker:
                 'checkedAt': 0}
 
     def prepare(self, b):
+        if min(self.width, self.height) < b.get('minShortEdge', 1080):
+            return {'ready': False, 'reason': f"Source short edge is below {b.get('minShortEdge', 1080)} pixels",
+                    'failureClass': 'verdict', 'assetKey': b['assetKey'], 'format': b['format']}
         mid = media.media_key(b)
         path = self.folder / (mid + '.mp4')
         path.write_bytes(b'prepared ' + mid.encode())

@@ -50,7 +50,8 @@ class MonitorMixin:
                                             f"{it['name']}: content changed; reservation re-validated for the new "
                                             'revision.', notify=False))
                 elif not rules.on_grid(r['format'], slot, self.policy(c)) and not near and not r['owner_pinned'] and \
-                        (r['created'] or 0) > self.policy_changed_at(c, ('story_slots', 'post_slots')):
+                        (not self.policy_changed_at(c, ('story_slots', 'post_slots')) or
+                         (r['created'] or 0) > self.policy_changed_at(c, ('story_slots', 'post_slots'))):
                     # A grid change by the owner does not move reservations made before it (agent migration P1).
                     # Owner times may be off-grid (contract §5); an automatic slot off the grid is moved.
                     findings.append(self._f('off_grid', r, 'release',

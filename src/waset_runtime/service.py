@@ -30,7 +30,7 @@ sys.path.insert(0, str(HERE))
 from waset_ops import Ops  # noqa: E402
 
 LOG = logging.getLogger('waset_runtime')
-CADENCE = {'publish': 60, 'prepare': 600, 'supervise': None}       # supervise: minutes 5 and 35 of every hour
+CADENCE = {'sync': 60, 'publish': 60, 'prepare': 600, 'supervise': None}   # supervise: minutes 5 and 35
 REQUIRED = ('PIPELINE_DB', 'MONDAY_API_TOKEN', 'INSTAGRAM_ACCOUNT_ID', 'INSTAGRAM_TOKEN')
 
 
@@ -68,7 +68,11 @@ def build(env: dict, dry_run=False):
     monday = Monday(env['MONDAY_API_TOKEN'])
     dropbox = Dropbox(token=env.get('DROPBOX_TOKEN'), refresh_token=env.get('DROPBOX_REFRESH_TOKEN'),
                       app_key=env.get('DROPBOX_APP_KEY'), app_secret=env.get('DROPBOX_APP_SECRET'))
-    ig = Instagram(env['INSTAGRAM_TOKEN'], env['INSTAGRAM_ACCOUNT_ID'])
+    token = env['INSTAGRAM_TOKEN']
+    if env.get('INSTAGRAM_TOKEN_KIND') == 'instagram_login':      # 60-day token: refreshed automatically
+        from .instagram import TokenStore
+        token = TokenStore(Path(env.get('INSTAGRAM_TOKEN_FILE') or Path(db).parent / 'instagram-token.json'), token)
+    ig = Instagram(token, env['INSTAGRAM_ACCOUNT_ID'])
     captions = CaptionWriter(env['OPENROUTER_API_KEY']) if env.get('OPENROUTER_API_KEY') else None
     if dry_run:
         from .dry import dry
@@ -91,12 +95,19 @@ def shadow_copy(db) -> str:
 
 
 class Scheduler:
-    def __init__(self, ops, runner, *, clock=time.time, dry_run=False):
+    def __init__(self, ops, runner, *, clock=time.time, dry_run=False, data_dir=None):
+        from concurrent.futures import ThreadPoolExecutor
         self.ops, self.runner, self.clock, self.dry_run = ops, runner, clock, dry_run
+        self.data_dir = Path(data_dir) if data_dir else Path(str(ops.store.path)).parent
         self.last = {k: 0.0 for k in CADENCE}
         self.running = {k: False for k in CADENCE}
         self.stop = threading.Event()
         self.threads = []
+        self.pool = ThreadPoolExecutor(max_workers=getattr(runner, 'publishers', 3), thread_name_prefix='publish')
+
+    def fenced(self) -> bool:
+        """A deployment is in progress (deploy.py writes deploy-fence.json beside the store): start nothing new."""
+        return (self.data_dir / 'deploy-fence.json').exists()
 
     def due(self, kind, now) -> bool:
         if self.running[kind]:
@@ -112,8 +123,12 @@ class Scheduler:
         """Start every due cycle; returns the kinds started."""
         owner = self.ops.runtime_owner()
         now = self.clock()
+        self.threads = [t for t in self.threads if t.is_alive()]
         if owner != 'bondok' and not self.dry_run:
             self.ops.heartbeat('runtime', {'idle': True, 'owner': owner})
+            return []
+        if self.fenced():
+            self.ops.heartbeat('runtime', {'idle': True, 'owner': owner, 'deploy_fence': True})
             return []
         started = []
         for kind in CADENCE:
@@ -130,7 +145,10 @@ class Scheduler:
 
     def _run(self, kind):
         try:
-            out = getattr(self.runner, kind + '_cycle')()
+            if kind == 'publish':
+                out = self.runner.publish_cycle(pool=self.pool, sync=False)
+            else:
+                out = getattr(self.runner, kind + '_cycle')()
             LOG.info('cycle kind=%s result=%s', kind, json.dumps(_summary(out), ensure_ascii=False)[:400])
         except Exception as e:  # noqa: BLE001 - a failed cycle is recorded by the handler (run_fail) and retried
             LOG.error('cycle_failed kind=%s type=%s detail=%s', kind, type(e).__name__, str(e)[:200])
@@ -144,6 +162,14 @@ class Scheduler:
             except Exception as e:  # noqa: BLE001 - e.g. the store is briefly unreadable
                 LOG.error('tick_failed type=%s', type(e).__name__)
             self.stop.wait(interval)
+        self.shutdown()
+
+    def shutdown(self, timeout=900):
+        """Let running cycles and publications finish (a publication cut mid-way becomes 'outcome unknown')."""
+        deadline = time.monotonic() + timeout
+        for t in list(self.threads):
+            t.join(max(0.0, deadline - time.monotonic()))
+        self.pool.shutdown(wait=True)
 
 
 def _summary(out):

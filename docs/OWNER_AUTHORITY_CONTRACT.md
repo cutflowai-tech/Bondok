@@ -13,6 +13,7 @@ differ.
 | 2026-10-12 | **Monday is the authoritative business-state database.** Owner decisions and the business record live on the board (ADR `PIPELINE_ARCHITECTURE_ADR.md`, accepted); the local store is a cache plus the execution journal (leases, fences, attempts, outbox, media jobs) | `MASTER_IMPLEMENTATION_PROMPT.md` §9 "one authoritative operational database", §16 "not the sole evidence" |
 | 2026-10-12 | **Automatic Story trimming from 60.000 to 65.000 s is approved** (§6) | MASTER §11.4 "Do not crop … automatically" |
 | 2026-10-12 | **Explicit owner off-grid publishing times are approved** (§5); the grid applies to automatic allocation only | MASTER §12 "let WF1 accept a time that WF3 later rejects" (WF3 never rejects an owner time for being off-grid) |
+| 2026-10-14 | **Business rules are the owner's preferences** (agent migration, `bondok-agent-migration/01-authority.md`): the owner changes any rule (`set_policy`, versioned) or exempts one item (`waive_rule`; an exemption is never recorded as the fact the rule asks for). Bondok carries out owner instructions with execution tools and n8n's scheduled work moves to the Bondok runtime. Defaults are the values in force before (`rules.POLICY`); platform limits (`rules.PLATFORM`) are not rules | §6 "Topaz ... required", §5 grid as fixed rules; the policy text "explain them, do not override them" |
 
 These are requirements, not deviations. The ADR §5 publication-journal exception is still open (owner item).
 

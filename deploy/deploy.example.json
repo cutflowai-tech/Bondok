@@ -15,8 +15,8 @@
   "python": "<Bondok venv python>",
   "db": "<Bondok sqlite file>",
   "unit_files": ["/etc/systemd/system/bondok.service"],
-  "stop": [["systemctl", "stop", "bondok"]],
-  "start": [["systemctl", "start", "bondok"]],
+  "stop": [["systemctl", "stop", "waset-runtime"], ["systemctl", "stop", "bondok"]],
+  "start": [["systemctl", "start", "bondok"], ["systemctl", "start", "waset-runtime"]],
   "health": {"command": ["systemctl", "is-active", "bondok"], "expect_stdout": "active"}
  },
  "drain": {"timeout_seconds": 900, "poll_seconds": 5},

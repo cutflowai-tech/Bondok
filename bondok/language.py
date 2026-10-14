@@ -659,10 +659,9 @@ _RESTORE = _lex('رجع', 'ارجع', 'رجعه', 'restore', 'again', 'تاني'
                 'الغي', 'cancel', 'undo')
 _PERMANENT = (('من', 'النهارده'), ('من', 'النهارد'), ('من', 'دلوقتي'), ('من', 'هنا', 'ورايح'), ('دايما',), ('دايماً',),
               ('علي', 'طول'), ('عموما',), ('خالص',), ('بعد', 'كده'), ('كل', 'الفيديوهات'), ('كل', 'الستوريز'),
-              ('كل', 'البوستات'), ('كل', 'حاجه'), ('القاعده',), ('قاعده',), ('السياسه',), ('from', 'now'),
-              ('always',), ('anymore',), ('any', 'more'), ('permanently',), ('in', 'general'), ('all', 'videos'),
-              ('all', 'stories'), ('all', 'posts'), ('every', 'video'), ('rule',), ('policy',), ('default',),
-              ('generally',), ('للابد',), ('نهائي',), ('نهائيا',), ('خلاص', 'مش'))
+              ('كل', 'البوستات'), ('كل', 'حاجه'), ('from', 'now'), ('always',), ('anymore',), ('any', 'more'),
+              ('permanently',), ('in', 'general'), ('all', 'videos'), ('all', 'stories'), ('all', 'posts'),
+              ('every', 'video'), ('generally',), ('للابد',), ('نهائي',), ('نهائيا',))
 
 
 def rule_words(rule: str, text: str) -> bool:
@@ -670,9 +669,15 @@ def rule_words(rule: str, text: str) -> bool:
     return bool(lex) and has(tokens(text), lex)
 
 
+_ONE_ITEM = _lex('ده', 'دي', 'دا', 'this', 'that', 'it')
+
+
 def permanent(text: str) -> bool:
-    """The owner's words say the change is lasting ("من النهارده", "always"), not about one item."""
+    """The owner's words say the change is lasting ("من النهارده", "always") and do not point at one item
+    ("ده", "this video", a code): a one-item sentence is never read as a rule change."""
     T = tokens(text)
+    if any(t in _ONE_ITEM for t in T) or any(_CODE_LIKE.match(t) for t in T):
+        return False
     return any(_phrase(T, p) for p in _PERMANENT)
 
 

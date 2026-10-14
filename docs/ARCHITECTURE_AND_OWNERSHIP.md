@@ -1,5 +1,12 @@
 # Architecture and Ownership
 
+> **Agent migration (branch `bondok/agent-migration`, 2026-10-14, not deployed).** The decision layer below is
+> unchanged. What changes: the owner's rules are versioned policies with per-item exemptions (`waset_ops/policy.py`);
+> Bondok has execution tools (board/file administration, publish now, rules); the scheduled work of WF1/WF2/WF3 is
+> performed by `src/waset_runtime` (same handler calls, same leases), selected by `ops_meta.runtime_owner`
+> (`n8n` until the owner-approved cutover, `CUTOVER_PACKAGE.md`). Until that switch the table below describes
+> production.
+
 One deterministic execution authority — `waset_ops` — over the **existing** SQLite store (`state.sqlite`, WAL).
 n8n and Bondok run on the same host and already share this file (n8n volume `waset_social_data`, bind-mounted into
 Bondok's systemd sandbox), so a shared Python module is the smallest safe transport: no new service, port, broker or database.

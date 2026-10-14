@@ -18,7 +18,7 @@ import hashlib
 import json
 
 from . import board, rules
-from .db import dumps, loads
+from .db import dumps, loads, next_counter
 
 RECORD_SCHEMA = 1
 RECORD_MAX = 2000             # Monday long text limit (characters)
@@ -121,7 +121,8 @@ class RecordMixin:
             if rule in rules.WAIVABLE and not any(o['rule'] == rule for o in self.overrides(c, iid)):
                 c.execute('INSERT INTO ops_overrides(id,item_id,rule,asset_key,state,reason,set_by,source,created) '
                           "VALUES(?,?,?,?,'active',?,?,?,?)",
-                          (f'W-R{iid}-{rule}', str(iid), rule, None if asset == '*' else asset,
+                          (f"W-R{iid}-{rule}-{next_counter(c, 'override')}", str(iid), rule,
+                           None if asset == '*' else asset,
                            'restored from the board record', 'record', '{}', self.now()))
 
     def restore_side_effects(self, c, iid, rec, fields):

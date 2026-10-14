@@ -54,8 +54,8 @@ class Monday:
                     self.sleep(5 * (attempt + 1))
                     continue
                 raise MondayError('Monday rejected the request: ' + text, errors=errs)
-            if not isinstance(data, dict) or 'data' not in data:
-                raise MondayError('Monday answered without data')
+            if not isinstance(data, dict) or not isinstance(data.get('data'), dict):
+                raise MondayError('Monday answered without data (no response from Monday)')
             return data['data']
         raise MondayError('unreachable')
 
@@ -138,7 +138,13 @@ class Monday:
         return str(rows[0]['board']['id']) if rows and rows[0].get('board') else None
 
     # ------------------------------------------------------------------ writes
+    @staticmethod
+    def _scope(board_id):
+        if str(board_id) not in ALLOWED_BOARDS:
+            raise MondayError(f'Board {board_id} is outside Bondok\'s scope; nothing was written')
+
     def change_columns(self, item_id, columns: dict, group=None, board_id=rules.BOARD):
+        self._scope(board_id)
         args = '$b:ID!,$i:ID!,$v:JSON!' + (',$g:String!' if group else '')
         q = (f'mutation({args}){{change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v,'
              'create_labels_if_missing:false){id}' + (' move_item_to_group(item_id:$i,group_id:$g){id}' if group
@@ -149,6 +155,7 @@ class Monday:
         return self.query(q, v, retries=1)
 
     def change_column(self, board_id, item_id, column_id, value):
+        self._scope(board_id)
         return self.query('mutation($b:ID!,$i:ID!,$v:JSON!){change_column_value(board_id:$b,item_id:$i,column_id:"'
                           + column_id + '",value:$v){id}}',
                           {'b': str(board_id), 'i': str(item_id), 'v': json.dumps(value, ensure_ascii=False)},
@@ -157,6 +164,7 @@ class Monday:
     def create_items(self, creates: list[dict], board_id=rules.BOARD) -> dict:
         """One aliased mutation for up to 20 creates; returns {alias_key: id | None} plus the raw error if any.
         Not retried: a lost answer is an uncertain create, reported as such."""
+        self._scope(board_id)
         sig, body, v = ['$b:ID!'], [], {'b': str(board_id)}
         for j, cr in enumerate(creates):
             sig += [f'$v{j}:JSON!', f'$n{j}:String!', f'$g{j}:String!']
@@ -166,6 +174,7 @@ class Monday:
         return self.http.request('POST', API, headers=self.headers, json_body={'query': q, 'variables': v})
 
     def create_item(self, name, columns=None, group=None, board_id=rules.BOARD) -> str:
+        self._scope(board_id)
         v = {'b': str(board_id), 'n': name, 'v': json.dumps(columns or {}, ensure_ascii=False)}
         sig, grp = '$b:ID!,$n:String!,$v:JSON!', ''
         if group:
