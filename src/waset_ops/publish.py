@@ -196,7 +196,7 @@ class PublishMixin:
                                'AND lease_until<?', (now,)).fetchall():
                 res = self.reservation(c, a['item_id'])
                 end = self.deadline(c, res) if res and res['slot'] == a['slot'] else \
-                    rules.instant(a['slot']) + rules.LATE_WINDOW
+                    rules.instant(a['slot']) + rules.late_window(self.policy(c))
                 if end < now_dt:
                     job = ((loads(a['evidence'], {}) or {}).get('intent') or {}).get('job')
                     if job:
@@ -515,7 +515,7 @@ class PublishMixin:
                     problems.append('an earlier attempt was reported not published, but its Instagram container was '
                                     'not re-checked yet (R5 B9)')
             slot = rules.instant(a['slot'])
-            end = self.deadline(c, res) if res and res['slot'] == a['slot'] else slot + rules.LATE_WINDOW
+            end = self.deadline(c, res) if res and res['slot'] == a['slot'] else slot + rules.late_window(self.policy(c))
             if not (slot <= now_dt <= end):
                 problems.append('outside the publication window')
             if problems:

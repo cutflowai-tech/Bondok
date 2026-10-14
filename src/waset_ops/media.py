@@ -121,7 +121,20 @@ def media_key(b) -> str:
     if not all(b.get(k) for k in ('fileId', 'revision', 'contentHash', 'assetKey')):
         raise ValueError('Exact Dropbox file ID, revision and content hash are required')
     identity = '|'.join(str(b.get(k, '')) for k in ('itemId', 'fileId', 'revision', 'contentHash', 'format', 'assetKey'))
-    return hashlib.sha256((identity + '|qa' + str(rules.QA_POLICY)).encode()).hexdigest()
+    # Owner policy that changes the encode (agent migration P1) is part of the identity only when it differs from the
+    # defaults, so every prepared file made under the defaults keeps its key.
+    extra = ''
+    if b.get('minShortEdge') is not None:
+        extra += '|edge' + str(int(b['minShortEdge']))
+    if b.get('policy'):
+        extra += '|pol' + json.dumps(b['policy'], sort_keys=True)
+    return hashlib.sha256((identity + '|qa' + str(rules.QA_POLICY) + extra).encode()).hexdigest()
+
+
+def _edge(b) -> int:
+    """Target short edge: the owner's minimum (default 1080), 0 when the owner exempted the item."""
+    v = b.get('minShortEdge')
+    return rules.MIN_SHORT_EDGE if v is None else int(v)
 
 
 def cache_key(mid: str) -> str:
@@ -424,7 +437,7 @@ def prepare(b):
             if prior and prior.get('recheckOf') == token and not prior.get('ready'):
                 return prior                   # the recheck's verdict (audit MP1, R5 A9)
             return _launch('reverify', mid, b, 1)
-        bad = rules.media_failure(info, b['format'])
+        bad = rules.media_failure(info, b['format'], b.get('policy'), _waived(b))
         if bad:
             return {'ready': False, 'reason': bad, 'failureClass': 'verdict', 'assetKey': b['assetKey'],
                     'format': b['format'], 'recheckOf': token}
@@ -448,29 +461,44 @@ def job_preflight(b):
     try:
         _download(raw_url(b['sourceUrl']), original, b['contentHash'])
         info = probe(original)
-        bad = rules.story_source_failure(info['duration'])
+        bad = rules.story_source_failure(info['duration'], b.get('policy'))
         if bad is None and info['duration'] < IG_MIN_SECONDS:
             bad = (f"Story is {info['duration']:g} seconds; Instagram requires at least 3 seconds (3-second minimum). "
                    'Supply a longer edit')
         return {'ready': bad is None, 'duration': info['duration'], 'reason': bad, 'replaceRequired': bad is not None,
-                'failureClass': 'verdict' if bad else None, 'trimTo': rules.story_trim_target(info['duration']),
+                'failureClass': 'verdict' if bad else None,
+                'trimTo': rules.story_trim_target(info['duration'], b.get('policy')),
                 'assetKey': b['assetKey'], 'contentHash': b['contentHash'], 'checkedAt': _now()}
     finally:
         original.unlink(missing_ok=True)
 
 
-def _source_policy(info, fmt):
+def _waived(b):
+    return ('min_short_edge',) if b.get('minShortEdge') == 0 else ()
+
+
+def _target_edge(info, b) -> int:
+    """Short edge of the prepared file: 1080 (larger sources are scaled down as before); a smaller source that the
+    owner's rule or exemption allows keeps its own size (never scaled up)."""
+    short = int(min(info['width'], info['height']))
+    return rules.MIN_SHORT_EDGE if short >= rules.MIN_SHORT_EDGE else short - short % 2
+
+
+def _source_policy(info, fmt, b=None):
     """Reasons a measured SOURCE cannot become a conforming prepared file (no encoding is attempted)."""
+    b = b or {}
     w, h, d = info['width'], info['height'], info['duration']
-    if min(w, h) < rules.MIN_SHORT_EDGE:
-        return 'Source short edge is below 1080 pixels'
+    edge = _edge(b)
+    if edge and min(w, h) < edge:
+        return f'Source short edge is below {edge} pixels'
     if d < IG_MIN_SECONDS:
         return f'Source is {d:g} seconds; Instagram requires at least 3 seconds (3-second minimum)'
     if fmt == 'Post' and d > IG_REEL_MAX_SECONDS:
         return f'Source is {d:g} seconds; Instagram Reels are limited to 15 minutes (15-minute maximum)'
-    out_w = rules.MIN_SHORT_EDGE if h >= w else 2 * round(w * rules.MIN_SHORT_EDGE / h / 2)
+    target = _target_edge(info, b)
+    out_w = target if h >= w else 2 * round(w * target / h / 2)
     if out_w > IG_MAX_COLUMNS:
-        return (f'Source is {w}x{h}: at the required 1080-pixel short edge it would be {out_w} pixels wide, above '
+        return (f'Source is {w}x{h}: at the required {target}-pixel short edge it would be {out_w} pixels wide, above '
                 "Instagram's 1920-column maximum. Supply an edit between 9:16 and 16:9")
     return None
 
@@ -487,18 +515,19 @@ def job_prepare(b):
         info = probe(original)
         trim = None
         if b['format'] == 'Story':
-            bad = rules.story_source_failure(info['duration'])
+            bad = rules.story_source_failure(info['duration'], b.get('policy'))
             if bad:
                 return {**base, 'ready': False, 'reason': bad}
-            trim = rules.story_trim_target(info['duration'])
-        bad = _source_policy(info, b['format'])
+            trim = rules.story_trim_target(info['duration'], b.get('policy'))
+        bad = _source_policy(info, b['format'], b)
         if bad:
             return {**base, 'ready': False, 'reason': bad}
         bitrate = min(12_000_000, int(TARGET_BYTES * 8 / (trim or info['duration'])) - 160_000)
         if bitrate < 500_000:
             return {**base, 'ready': False, 'reason': 'Duration cannot fit the current transfer path at usable quality'}
         # 1080 short edge (owner policy); frame rate brought into Instagram's 23-60 FPS range only when outside it.
-        vf = "scale=w='if(gte(ih,iw),1080,-2)':h='if(gte(ih,iw),-2,1080)'"
+        edge = _target_edge(info, b)
+        vf = f"scale=w='if(gte(ih,iw),{edge},-2)':h='if(gte(ih,iw),-2,{edge})'"
         fps = info.get('fps')
         if fps is not None and not IG_FPS_RANGE[0] <= fps <= IG_FPS_RANGE[1]:
             vf += ',fps=' + ('60' if fps > IG_FPS_RANGE[1] else '30')
@@ -523,10 +552,12 @@ def job_prepare(b):
                       checkedAt=_now())
         if trim:
             result.update(trimmedFrom=info['duration'], trimmedTo=trim)
-            if not trim - 0.5 <= result['duration'] < rules.STORY_MAX_SECONDS:
+            if not trim - 0.5 <= result['duration'] < float((b.get('policy') or {}).get('story_max_seconds',
+                                                                                         rules.STORY_MAX_SECONDS)):
                 return {**base, 'ready': False, 'reason': f"Automatic Story trim produced {result['duration']:g} "
                         'seconds instead of about 59.9; supply an edit under 60 seconds'}
-        bad = rules.media_failure(result, b['format']) or platform_failure(result, b['format'])
+        bad = rules.media_failure(result, b['format'], b.get('policy'), _waived(b)) or \
+            platform_failure(result, b['format'])
         if bad:
             return {**base, 'ready': False, 'reason': bad}
         with store().tx() as c:
@@ -567,7 +598,7 @@ def job_reverify(b):
                                        'audioChannels')}, checkedAt=_now(), recheckOf=_token(b))
     with store().tx() as c:
         c.execute('UPDATE media SET metadata=? WHERE id=?', (dumps(info), mid))
-    bad = rules.media_failure(info, b['format']) or platform_failure(info, b['format'])
+    bad = rules.media_failure(info, b['format'], b.get('policy'), _waived(b)) or platform_failure(info, b['format'])
     if bad:
         return {'ready': False, 'reason': bad, 'failureClass': 'verdict', 'assetKey': b['assetKey'],
                 'format': b['format'], 'reverify': True}

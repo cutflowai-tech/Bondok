@@ -46,6 +46,8 @@ class SchedMixin:
         ids = self.content_identities(c, it)
         if not ids:
             return None
+        if not self.policy(c)['duplicate_video_block'] or 'duplicate_video_block' in self.waived(c, it):
+            return None                  # the owner allows publishing this video again (rule or exemption)
         marks = ','.join('?' * len(ids))
         for j in c.execute(f'SELECT DISTINCT item FROM assets WHERE identity IN ({marks}) AND item!=?',
                            (*ids, it['item_id'])).fetchall():
@@ -86,7 +88,7 @@ class SchedMixin:
             return (loads(it['hold'], {}) or {}).get('reason') or 'waiting for owner decision'
         if it['readiness'] != 'ready':
             return it['block_reason'] or 'media is not verified yet'
-        if it['format'] == 'Post' and it['caption_state'] != 'approved':
+        if it['format'] == 'Post' and it['caption_state'] != 'approved' and self.policy(c)['post_caption_approval']:
             return 'caption is not approved'
         if self.active_attempt(c, it['item_id']):
             return 'a publication attempt is active'
@@ -130,7 +132,8 @@ class SchedMixin:
 
     def deadline(self, c, res):
         """Latest publication moment for a reservation (R5 M29)."""
-        return rules.late_deadline(res['slot'], self.next_reserved_after(c, res['format'], res['slot'], res['item_id']))
+        return rules.late_deadline(res['slot'], self.next_reserved_after(c, res['format'], res['slot'], res['item_id']),
+                                   self.policy(c))
 
     def window(self, it) -> dict | None:
         return (loads(it.get('observed'), {}) or {}).get('_window') or None
@@ -217,8 +220,8 @@ class SchedMixin:
         if it['requested_at']:
             legacy = not self.owner_request(it)
             try:
-                at = (rules.validate_requested_slot if legacy else rules.validate_owner_time)(
-                    now, it['format'], it['requested_at'])
+                at = rules.validate_requested_slot(now, it['format'], it['requested_at'], self.policy(c)) if legacy \
+                    else rules.validate_owner_time(now, it['format'], it['requested_at'])
             except rules.RuleError as e:
                 if legacy:
                     audit(c, item_id, 'legacy_request_dropped', actor, {'at': it['requested_at'], 'why': str(e)})
@@ -236,7 +239,7 @@ class SchedMixin:
         win = self.window(it)
         key = rules.rotation_key(it['format'], it['code'], it['name'], it['variety'])
         at = rules.choose_slot(now, it['format'], key, self.occupied(c, it['format'], item_id),
-                               self.taken(c, it['format'], item_id), window=win)
+                               self.taken(c, it['format'], item_id), window=win, policy=self.policy(c))
         if at is None:
             where = (' ' + self.window_text(win)) if win else ' in the next 84 days'
             self.notify(c, f"no-slot:{item_id}:{self.window_text(win)}", f"No free {it['format']} slot{where} for "
@@ -354,13 +357,14 @@ class SchedMixin:
                     **({'publication': 'stopped_before_commit'} if att else {})}
         owner = cmd.actor_kind in (OWNER, MONDAY)
         try:
-            at = (rules.validate_owner_time if owner else rules.validate_requested_slot)(self.now_dt(), it['format'],
-                                                                                      at_raw)
+            at = rules.validate_owner_time(self.now_dt(), it['format'], at_raw) if owner else \
+                rules.validate_requested_slot(self.now_dt(), it['format'], at_raw, self.policy(c))
         except (rules.RuleError, ValueError) as e:
             due = self._order_time_due(c, cmd, it, at_raw) if owner and cmd.args.get('order') else None
             if due is not None:
                 return due
-            alts = rules.alternatives(self.now_dt(), it['format'], self.taken(c, it['format'], it['item_id']))
+            alts = rules.alternatives(self.now_dt(), it['format'], self.taken(c, it['format'], it['item_id']),
+                                      policy=self.policy(c))
             msg = f"{e}. Free times on the usual schedule: " + ', '.join(rules.display(a) for a in alts)
             raise Rejected('Requested time rejected: ' + msg, 'invalid_slot', alternatives=[rules.iso(a) for a in alts])
         slot = rules.iso(at)
@@ -419,7 +423,7 @@ class SchedMixin:
         it = self._clear_time_hold(c, it, cmd.actor)    # the order answers an open time question
         why = self.eligible(c, it)
         taken = slot in self.reserved_slots(c, it['format'], it['item_id'])
-        end = rules.late_deadline(at, self.next_reserved_after(c, it['format'], slot, it['item_id']))
+        end = rules.late_deadline(at, self.next_reserved_after(c, it['format'], slot, it['item_id']), self.policy(c))
         if why is None and not taken and now < end:
             self._store_window(c, it['item_id'], None, cmd.actor)
             if res:
@@ -463,7 +467,7 @@ class SchedMixin:
             new_for_other, swap = rules.instant(cur['slot']), True
         else:
             exclude = self.taken(c, it['format']) | {rules.iso(at)}
-            new_for_other = next((g for g in rules.grid(now, it['format'], rules.NEAR_DUE)
+            new_for_other = next((g for g in rules.grid(now, it['format'], rules.NEAR_DUE, policy=self.policy(c))
                                   if rules.iso(g) not in exclude), None)
             swap = False
             if new_for_other is None:
@@ -551,7 +555,7 @@ class SchedMixin:
                     **({'window': win} if win else {})}
         if why:
             raise Rejected('Cannot schedule yet: ' + why, 'not_eligible')
-        for at in rules.grid(self.now_dt(), it['format'], rules.NEAR_DUE, window=win):
+        for at in rules.grid(self.now_dt(), it['format'], rules.NEAR_DUE, window=win, policy=self.policy(c)):
             if rules.iso(at) not in self.taken(c, it['format'], it['item_id']):
                 self._reserve(c, it, at, 'owner', False, cmd.actor)
                 return {'scheduled': rules.iso(at), 'display': rules.display(at)}

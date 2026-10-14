@@ -91,6 +91,28 @@ TOOLS = [
         {**ITEM, 'destination': {'type': 'string', 'enum': ['studio_account', 'other', 'unclear']}, **MEANING}),
     _fn('request_rework', 'Owner sends the item back to the editor for a new edit (never a resume).',
         {**ITEM, 'reason': {'type': 'string'}, **MEANING}),
+    # ---- owner rules (agent migration P1): the rules are the owner's preferences
+    _fn('get_rules', 'Every business rule with its current value, default, version and who set it, plus the real '
+        'platform limits that are not rules. Read-only.'),
+    _fn('explain_item', 'Why an item is waiting or blocked, which rule holds it and how the owner can change that. '
+        'Read-only.', ITEM),
+    _fn('waive_rule', 'Owner exempts ONE item from a rule, e.g. "publish it without Topaz" (rule topaz_required), '
+        '"publish it even under 1080" (min_short_edge), "publish the same video again" (duplicate_video_block). '
+        'This is an exemption, never a claim that the rule was satisfied.',
+        {**ITEM, 'rule': {'type': 'string', 'enum': ['topaz_required', 'min_short_edge', 'duplicate_video_block']},
+         'this_file_only': {'type': 'boolean', 'description': 'true when the owner limits it to the current file'},
+         'reason': {'type': 'string'}, **MEANING}),
+    _fn('restore_rule', 'Owner withdraws an exemption: the rule applies to the item again.',
+        {**ITEM, 'rule': {'type': 'string', 'enum': ['topaz_required', 'min_short_edge', 'duplicate_video_block']},
+         **MEANING}),
+    _fn('set_rule', 'Owner changes a rule for every item from now on, e.g. "from today Topaz is not required" '
+        '(topaz_required=false), "Story slots 12:00, 15:00, 21:00" (story_slots), "allow publishing up to 3 hours '
+        'late" (late_window_minutes=180). Values: bool for on/off rules, numbers, ["HH:MM",...] for story_slots, '
+        '{"sat":"21:00",...} for post_slots. Existing reservations are not moved.',
+        {'rule': {'type': 'string', 'enum': sorted(rules.POLICY)},
+         'value': {'type': 'string', 'description': 'New value as text: "true"/"false", a number, "12:00, 15:00" '
+                                                     'for story_slots, \'{"sat": "21:00"}\' (JSON) for post_slots'},
+         'reason': {'type': ['string', 'null']}, **MEANING}),
 ]
 TOOL_NAMES = {t['name'] for t in TOOLS}
 
@@ -190,6 +212,14 @@ class Agent:
             return {'reservations': ops.schedule(max(1, min(int(args.get('days') or 14), 84)))}
         if name == 'get_system_health':
             return ops.health()
+        if name == 'get_rules':
+            return ops.policy_report()
+        if name == 'explain_item':
+            r = self.bridge.resolve(args.get('item'))
+            if 'item_id' not in r:
+                return r
+            self._shown(r['item_id'], ctx)
+            return ops.explain(r['item_id'])
         if name == 'get_operation_status':
             ref = str(args.get('id') or '')
             if ref.startswith('B-'):

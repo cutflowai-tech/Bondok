@@ -356,6 +356,7 @@ class ItemsMixin:
         if snap.get('source_item'):
             c.execute("INSERT OR IGNORE INTO ops_source_map VALUES(?,?, 'active', ?)", (snap['source_item'], iid, now))
         self.restore_side_effects(c, iid, rec, f)
+        self.restore_overrides(c, iid, rec)
         audit(c, iid, 'restore_from_record', 'service:migration', {'record': rec})
 
     def _diff(self, c, it, snap, floor=None) -> list[dict]:
@@ -1098,7 +1099,7 @@ class ItemsMixin:
             return 'Verified file was checked for a different format'
         if info.get('qaPolicy') != rules.QA_POLICY:
             return 'Verification predates the current quality rules'
-        bad = rules.media_failure(info, it['format'])
+        bad = rules.media_failure(info, it['format'], self.policy(c), self.waived(c, it))
         if bad:
             return bad
         if not info.get('url'):
@@ -1131,7 +1132,7 @@ class ItemsMixin:
             if problem:
                 fields = dict(readiness='checking', verification_id=None, block_kind=None, block_reason=None,
                               block_key=None)
-            elif it['topaz_asset'] != it['asset_key']:
+            elif not self.topaz_ok(c, it):
                 fields = dict(readiness='blocked', block_kind='editor', block_key='topaz:' + str(it['asset_key']),
                               block_reason='Topaz confirmation is required for the selected file version')
             elif self.duplicate_of(c, it):
@@ -1146,7 +1147,7 @@ class ItemsMixin:
         elif it['readiness'] == 'blocked' and it['block_key'] in ('invalid_code', 'collab'):
             fields = dict(readiness='checking', block_kind=None, block_reason=None, block_key=None)
         elif it['readiness'] == 'blocked' and (it['block_key'] or '').startswith('topaz:') and \
-                it['topaz_asset'] == it['asset_key'] and it['asset_key']:
+                it['asset_key'] and self.topaz_ok(c, it):
             fields = dict(readiness='checking', block_kind=None, block_reason=None, block_key=None)
         changed = {k: v for k, v in fields.items() if it.get(k) != v}
         if changed:
@@ -1373,6 +1374,13 @@ class ItemsMixin:
         body = {'itemId': it['item_id'], 'format': it['format'], 'sourceUrl': a.get('url') or it['file_url'],
                 'fileId': f['id'], 'revision': f['rev'], 'contentHash': f['content_hash'], 'assetKey': asset,
                 'topazed': it['topaz_asset'] == asset, 'recheck': recheck}
+        pol = self.policy(c)
+        edge = 0 if 'min_short_edge' in self.waived(c, it) else int(pol['min_short_edge'])
+        if edge != rules.MIN_SHORT_EDGE:
+            body['minShortEdge'] = edge          # owner rule or exemption (agent migration P1); default omitted
+        for k in ('max_bytes', 'story_max_seconds', 'story_trim_max_seconds'):
+            if pol[k] != rules.POLICY[k]['default']:
+                body.setdefault('policy', {})[k] = pol[k]
         if it['readiness'] == 'blocked' and (it['block_key'] or '').startswith('duplicate:') and not changed \
                 and not recheck:
             self._touch_prep(c, it, True)
@@ -1389,13 +1397,14 @@ class ItemsMixin:
         if it['format'] == 'Story' and not self._duration_ok(c, it['item_id'], asset, f['content_hash']):
             self._touch_prep(c, it, False)
             return {'next': 'preflight', 'media': body}
-        if it['topaz_asset'] != asset:
+        if not self.topaz_ok(c, it):
             trim = self._story_trim(c, it)
             note = (f' The Story is {trim[0]:g} seconds and will be trimmed automatically to {trim[1]:g} seconds;'
                     ' no shorter edit is needed.') if trim else ''
             self.update_item(c, it['item_id'], cmd.actor, 'awaiting topaz', readiness='blocked', block_kind='editor',
                              block_key='topaz:' + asset, block_reason='Topaz confirmation is required for the '
-                             'selected file version (the filename is not proof)')
+                             'selected file version (the owner confirms it in Slack or with Topazed on the board; '
+                             'the file name does not matter)')
             self.editor_task(c, it['item_id'], 'topaz:' + asset,
                              'Apply Topaz, export at least 1080p short edge and under 300 MB, then confirm '
                              'Topazed on the social board for the selected file version.' + note)

@@ -26,7 +26,10 @@ RECENT_FILE_CHANGE = 6 * 3600
 # Tools that change state. All but the last three are protected owner decisions and need structured meaning.
 PROTECTED = {'pause_item', 'resume_item', 'skip_item', 'request_reschedule', 'request_publish', 'change_format',
              'replace_source', 'update_caption', 'approve_existing_caption', 'approve_caption_draft', 'confirm_topaz',
-             'resolve_publication', 'report_published', 'set_window', 'request_rework'}
+             'resolve_publication', 'report_published', 'set_window', 'request_rework', 'waive_rule', 'restore_rule',
+             'set_rule'}
+# Protected tools that are not about one item.
+GLOBAL = {'set_rule'}
 MUTATING = PROTECTED | {'request_recheck', 'draft_caption', 'approve_all_existing_captions'}
 EXECUTABLE_ACTS = ('imperative', 'completed_statement')
 # Reader kind per tool (language.contradiction / supports).
@@ -34,7 +37,8 @@ KIND = {'pause_item': 'pause', 'skip_item': 'skip', 'resume_item': 'resume', 're
         'request_reschedule': 'request_reschedule', 'change_format': 'change_format', 'replace_source': 'replace_source',
         'update_caption': 'update_caption', 'approve_existing_caption': 'approve_caption',
         'approve_caption_draft': 'approve_caption', 'confirm_topaz': 'confirm_topaz',
-        'report_published': 'report_published', 'set_window': 'set_window', 'request_rework': 'request_rework'}
+        'report_published': 'report_published', 'set_window': 'set_window', 'request_rework': 'request_rework',
+        'waive_rule': 'waive_rule', 'restore_rule': 'restore_rule', 'set_rule': 'set_policy'}
 
 
 def key(text: str) -> str:
@@ -174,7 +178,7 @@ class Bridge:
             return self._draft(item, args, cid)
         if tool not in PROTECTED:
             raise Rejected('Unknown tool', 'unsupported')
-        if item is None:
+        if item is None and tool not in GLOBAL:
             return {'state': 'needs_clarification', 'error': 'Which item? Name, code or id.'}
 
         if not isinstance(meaning, dict) or not meaning.get('speech_act'):
@@ -218,9 +222,18 @@ class Bridge:
             q = f'Was it published on the studio Instagram account? If yes: {summary}؟'
             turn.ask(q, action)
             return {'state': 'needs_confirmation', 'question': q}
-        if not lang.supports(kind, text, quote, action['args'] if kind == 'update_caption' else args):
+        if not lang.supports(kind, text, quote, action['args'] if kind in ('update_caption', 'set_policy') else args):
             return self._clarify(f'{summary}: not done, your words do not ask for that. Which item, and what '
                                  'exactly should I do?')
+
+        if tool == 'set_rule':
+            # A lasting rule change needs lasting words; otherwise one question: this item only, or the rule?
+            if not lang.permanent(text) and not args.get('confirmed_permanent'):
+                q = (f'{summary}: is this a lasting rule for every item from now on? (For one video only, tell me '
+                     'which video and I will exempt just that one.)')
+                turn.ask(q + '؟', action)
+                return {'state': 'needs_confirmation', 'question': q + '؟'}
+            return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id)
 
         # ---- targets: the owner's words and the thread's named set, never extra items (R5 B6, A14)
         m = lang.markers(text, quote)
@@ -266,7 +279,7 @@ class Bridge:
 
     def _plan(self, tool, item, args, meaning, turn) -> tuple[dict, str]:
         """(action, summary) for a protected tool call."""
-        label = self._label(item)
+        label = self._label(item) if item is not None else ''
         act = {'tool': tool, 'item': item}
         if tool == 'pause_item':
             return {**act, 'op': 'pause', 'args': {'reason': args.get('reason') or 'Paused by owner in Slack'}}, \
@@ -329,6 +342,37 @@ class Bridge:
             quote = str(meaning.get('evidence_quote') or '')[:300]
             return {**act, 'op': 'report_published', 'args': {'source': 'slack', 'value': quote}}, \
                 f'Record {label} as published by you on the studio account (it will not be published again)'
+        if tool in ('waive_rule', 'restore_rule'):
+            rule = str(args.get('rule') or '')
+            if rule not in rules.POLICY:
+                raise Rejected(f'Unknown rule "{rule}"; rules: ' + ', '.join(sorted(rules.POLICY)))
+            label = rules.POLICY[rule]['label']
+            if tool == 'waive_rule':
+                a = {'rule': rule, 'reason': args.get('reason') or 'Exempted by the owner in Slack'}
+                if args.get('this_file_only'):
+                    with self.ops.store.read() as c:
+                        a['asset_key'] = self.ops.item(c, item)['asset_key']
+                return {**act, 'op': 'waive_rule', 'args': a}, \
+                    f'Exempt {self._label(item)} from: {label} (the rule stays for other items' + \
+                    ('; this is not a Topaz confirmation)' if rule == 'topaz_required' else ')')
+            return {**act, 'op': 'restore_rule', 'args': {'rule': rule}}, f'Apply again to {self._label(item)}: {label}'
+        if tool == 'set_rule':
+            rule = str(args.get('rule') or '')
+            raw = args.get('value')
+            if isinstance(raw, str) and raw.strip().startswith(('{', '[')):
+                try:
+                    raw = json.loads(raw)
+                except ValueError:
+                    pass
+            try:
+                value = rules.coerce_policy(rule, raw)
+            except rules.RuleError as e:
+                raise Rejected(str(e))
+            a = {'rule': rule, 'value': value, 'reason': args.get('reason') or 'Owner instruction in Slack'}
+            if args.get('effective_at'):
+                a['effective_at'] = args['effective_at']
+            return {'tool': tool, 'item': None, 'op': 'set_policy', 'args': a}, \
+                f"Change the rule \"{rules.POLICY[rule]['label']}\" to {value!r}"
         if tool == 'request_rework':
             return {**act, 'op': 'request_rework',
                     'args': {'reason': args.get('reason') or 'The owner asked for a new edit'}}, \

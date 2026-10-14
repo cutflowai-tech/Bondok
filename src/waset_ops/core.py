@@ -202,6 +202,9 @@ class CoreMixin:
         'request_recheck': {OWNER, MONDAY, BONDOK, 'service:wf3'},
         'request_publish': {OWNER, MONDAY},  # Slack "publish it" / the owner's Scheduled on the board
         'set_window': {OWNER},
+        'set_policy': {OWNER},          # owner changes a rule (versioned; agent migration P1)
+        'waive_rule': {OWNER},          # owner exempts one item from a rule
+        'restore_rule': {OWNER},
         'request_rework': {OWNER},
         'approve_caption_draft': {OWNER},
         'repair_missed': {'service:wf3'},
@@ -405,6 +408,10 @@ class CoreMixin:
         system = []
         if it.get('infra_issue'):
             system.append('Temporary system issue (content not rejected): ' + it['infra_issue'])
+        waived = self.waived(c, it) if hasattr(self, 'waived') else set()
+        for rule in sorted(waived):
+            system.append('Owner exemption: ' + rules.POLICY[rule]['label'] + ' does not apply to this item'
+                          + (' (Topaz was not confirmed)' if rule == 'topaz_required' else ''))
         if ver and ver.get('trimmedFrom') and it['readiness'] == 'ready':
             system.append(f"Story trimmed automatically from {float(ver['trimmedFrom']):.3f} s to "
                           f"{float(ver['duration']):.3f} s (end cut; original Dropbox file unchanged)")

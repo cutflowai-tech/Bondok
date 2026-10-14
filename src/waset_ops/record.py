@@ -57,6 +57,8 @@ class RecordMixin:
             'cap': caption_fp(it.get('caption')) if it.get('caption_state') == 'approved' else None,
             'co': it.get('caption_origin') if it.get('caption_state') == 'approved' else None,
             'tz': it.get('topaz_asset'), 'src': it.get('source_override_url'),
+            # Owner exemptions (rule -> bound file version or '*'): owner decisions a rebuild must not lose.
+            'wv': {o['rule']: o['asset_key'] or '*' for o in self.overrides(c, it['item_id'])} or None,
             'req': it.get('requested_at'), 'rb': it.get('requested_by'),
             'os': it.get('owner_state'), 'osr': (it.get('owner_state_reason') or '')[:120] or None,
             'hold': {'kind': hold.get('kind'), 'reason': str(hold.get('reason') or '')[:240]} if hold else None,
@@ -107,6 +109,20 @@ class RecordMixin:
             'publication': pub, 'legacy_posted': 1 if (rec.get('lp') or pub == 'published') else 0,
             'content_hash': rec.get('ch') if same_format else None,
         }
+
+    def restore_overrides(self, c, iid, rec):
+        """Owner exemptions written in the board record come back as exemptions (agent migration P1)."""
+        from .policy import _ensure
+        wv = rec.get('wv') if isinstance(rec.get('wv'), dict) else {}
+        if not wv:
+            return
+        _ensure(c)
+        for rule, asset in wv.items():
+            if rule in rules.WAIVABLE and not any(o['rule'] == rule for o in self.overrides(c, iid)):
+                c.execute('INSERT INTO ops_overrides(id,item_id,rule,asset_key,state,reason,set_by,source,created) '
+                          "VALUES(?,?,?,?,'active',?,?,?,?)",
+                          (f'W-R{iid}-{rule}', str(iid), rule, None if asset == '*' else asset,
+                           'restored from the board record', 'record', '{}', self.now()))
 
     def restore_side_effects(self, c, iid, rec, fields):
         """Journal identities of published content (duplicate protection). Reservations are not restored: the media

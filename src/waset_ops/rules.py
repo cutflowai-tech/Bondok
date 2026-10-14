@@ -51,6 +51,119 @@ VARIETY_FALLBACK = {'Post': timedelta(days=7), 'Story': timedelta(days=1)}  # DE
 CODE_RE = re.compile(r'^\s*([a-z]{2,3})\s*[#_\- ]?\s*\d+', re.I)
 
 
+# ---------------------------------------------------------------- owner policy (preferences the owner can change)
+# Every business rule above that is the owner's preference is also a named policy. The values here are the defaults
+# carried over unchanged from the rules in force before the agent migration (2026-10-14, P1-02): no rule changes
+# value by being moved. The owner changes a policy (versioned, ``Ops.op_set_policy``) or exempts one item from it
+# (``Ops.op_waive_rule``). Platform limits (PLATFORM below) are facts of Instagram/Dropbox, not preferences: an owner
+# instruction cannot move them, and the reason given says so.
+POLICY = {
+    'topaz_required': {'default': True, 'type': 'bool', 'waivable': True,
+                       'label': 'Topaz confirmation is required before publishing'},
+    'min_short_edge': {'default': MIN_SHORT_EDGE, 'type': 'int', 'min': 240, 'max': 1920, 'waivable': True,
+                       'label': 'Minimum short edge of the published video (pixels)'},
+    'max_bytes': {'default': BUSINESS_MAX_BYTES, 'type': 'int', 'min': 1_000_000, 'max': 300_000_000,
+                  'label': 'Maximum size of the published video (bytes, strictly below)'},
+    'story_max_seconds': {'default': STORY_MAX_SECONDS, 'type': 'float', 'min': 3.0, 'max': 60.0,
+                          'label': 'Story length limit (seconds, strictly below; Instagram allows 60 at most)'},
+    'story_trim_max_seconds': {'default': STORY_TRIM_MAX_SECONDS, 'type': 'float', 'min': 0.0, 'max': 600.0,
+                               'label': 'Longest Story source that is trimmed automatically at the end (seconds)'},
+    'post_caption_approval': {'default': True, 'type': 'bool',
+                              'label': 'A Post needs an owner-approved caption before it is scheduled'},
+    'duplicate_video_block': {'default': True, 'type': 'bool', 'waivable': True,
+                              'label': 'The same video is not published twice on the account'},
+    'story_slots': {'default': [f'{h:02d}:{m:02d}' for h, m in STORY_SLOTS], 'type': 'times',
+                    'label': 'Daily Story slots for automatic scheduling (Cairo)'},
+    'post_slots': {'default': {'sat': '21:00', 'mon': '21:00', 'wed': '22:45', 'thu': '21:00'}, 'type': 'weekly',
+                   'label': 'Weekly Post/Reel slots for automatic scheduling (Cairo)'},
+    'late_window_minutes': {'default': int(LATE_WINDOW.total_seconds() // 60), 'type': 'int', 'min': 0,
+                            'max': 24 * 60, 'label': 'How late a missed slot may still be published (minutes)'},
+}
+WAIVABLE = tuple(k for k, v in POLICY.items() if v.get('waivable'))
+# Instagram Graph API (IG User Media reference, read 2026-10-14) and the current transfer path. Not owner policy.
+PLATFORM = {
+    'story_max_seconds': 60.0, 'story_max_bytes': 100_000_000, 'reel_max_bytes': 300_000_000,
+    'min_seconds': 3.0, 'reel_max_seconds': 900.0, 'max_columns': 1920, 'transfer_max_bytes': TRANSFER_MAX_BYTES,
+    'containers_per_day': 400, 'posts_per_day': 100,
+}
+_WEEKDAY_KEYS = ('mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun')
+
+
+def policy_defaults() -> dict:
+    import copy
+    return {k: copy.deepcopy(v['default']) for k, v in POLICY.items()}
+
+
+def _hhmm(v) -> str:
+    m = re.fullmatch(r'\s*([01]?\d|2[0-3])[:.]([0-5]\d)\s*', str(v))
+    if not m:
+        raise RuleError(f'"{v}" is not a time (HH:MM)')
+    return f'{int(m[1]):02d}:{m[2]}'
+
+
+def coerce_policy(name: str, value):
+    """Validated value for a policy, or RuleError naming the problem (and the platform limit when that is the cause)."""
+    spec = POLICY.get(name)
+    if spec is None:
+        raise RuleError(f'Unknown rule "{name}". Known rules: ' + ', '.join(sorted(POLICY)))
+    t = spec['type']
+    if t == 'bool':
+        if isinstance(value, bool):
+            return value
+        s = str(value).strip().lower()
+        if s in ('true', 'yes', 'on', '1', 'required', 'مطلوب', 'شرط'):
+            return True
+        if s in ('false', 'no', 'off', '0', 'not_required', 'مش شرط', 'مش مطلوب'):
+            return False
+        raise RuleError(f'{name} is on/off (true or false)')
+    if t in ('int', 'float'):
+        try:
+            v = int(value) if t == 'int' else float(value)
+        except (TypeError, ValueError):
+            raise RuleError(f'{name} must be a number') from None
+        if v < spec.get('min', v) or v > spec.get('max', v):
+            limit = (' (Instagram/platform limit)' if name in ('story_max_seconds', 'max_bytes') else '')
+            raise RuleError(f"{name} must be between {spec['min']:g} and {spec['max']:g}{limit}")
+        return v
+    if t == 'times':
+        vals = sorted({_hhmm(x) for x in (value if isinstance(value, (list, tuple)) else str(value).split(','))
+                       if str(x).strip()})
+        if not vals:
+            raise RuleError(f'{name} needs at least one time')
+        return vals
+    if t == 'weekly':
+        if not isinstance(value, dict):
+            raise RuleError(f'{name} is a map of weekday to time, e.g. {{"sat": "21:00"}}')
+        out = {}
+        for k, v in value.items():
+            k = str(k).strip().lower()[:3]
+            if k not in _WEEKDAY_KEYS:
+                raise RuleError(f'"{k}" is not a weekday (mon..sun)')
+            if v not in (None, ''):
+                out[k] = _hhmm(v)
+        if not out:
+            raise RuleError(f'{name} needs at least one weekday slot')
+        return out
+    raise RuleError(f'{name} cannot be set')
+
+
+def story_slots(policy=None):
+    vals = (policy or {}).get('story_slots')
+    return tuple(tuple(map(int, x.split(':'))) for x in vals) if vals else STORY_SLOTS
+
+
+def post_slots(policy=None):
+    vals = (policy or {}).get('post_slots')
+    if not vals:
+        return POST_SLOTS
+    return {_WEEKDAY_KEYS.index(k): tuple(map(int, v.split(':'))) for k, v in vals.items()}
+
+
+def late_window(policy=None) -> timedelta:
+    v = (policy or {}).get('late_window_minutes')
+    return LATE_WINDOW if v is None else timedelta(minutes=int(v))
+
+
 class RuleError(ValueError):
     """A request that violates a business rule. Message is owner-facing."""
 
@@ -142,15 +255,15 @@ def parse_monday_legacy(date_value, hour_value) -> datetime | None:
 
 
 # ---------------------------------------------------------------- slots
-def on_grid(fmt: str, d: datetime) -> bool:
+def on_grid(fmt: str, d: datetime, policy=None) -> bool:
     local = instant(d).astimezone(TZ)
     if local.second:
         return False
     hm = (local.hour, local.minute)
     if fmt == 'Story':
-        return hm in STORY_SLOTS
+        return hm in story_slots(policy)
     if fmt == 'Post':
-        return POST_SLOTS.get(local.weekday()) == hm
+        return post_slots(policy).get(local.weekday()) == hm
     return False
 
 
@@ -167,16 +280,18 @@ def in_window(at: datetime, window: dict | None) -> bool:
     return True
 
 
-def grid(now: datetime, fmt: str, lead: timedelta = RESERVE_LEAD, horizon: int = HORIZON_DAYS, window=None):
+def grid(now: datetime, fmt: str, lead: timedelta = RESERVE_LEAD, horizon: int = HORIZON_DAYS, window=None,
+         policy=None):
     """Yield every valid slot after now+lead in ascending order (UTC), inside the owner's window if any."""
     now = instant(now)
     start = now.astimezone(TZ).date()
+    stories, posts = story_slots(policy), post_slots(policy)
     for offset in range(horizon):
         day = start + timedelta(days=offset)
         if fmt == 'Story':
-            times = STORY_SLOTS
+            times = stories
         else:
-            times = [POST_SLOTS[day.weekday()]] if day.weekday() in POST_SLOTS else []
+            times = [posts[day.weekday()]] if day.weekday() in posts else []
         for hour, minute in times:
             try:
                 at = cairo_local(day.year, day.month, day.day, hour, minute)
@@ -186,9 +301,9 @@ def grid(now: datetime, fmt: str, lead: timedelta = RESERVE_LEAD, horizon: int =
                 yield at
 
 
-def alternatives(now, fmt, taken: set[str], limit=3, lead=NEAR_DUE, window=None):
+def alternatives(now, fmt, taken: set[str], limit=3, lead=NEAR_DUE, window=None, policy=None):
     out = []
-    for at in grid(now, fmt, lead, window=window):
+    for at in grid(now, fmt, lead, window=window, policy=policy):
         if iso(at) not in taken:
             out.append(at)
             if len(out) >= limit:
@@ -196,11 +311,11 @@ def alternatives(now, fmt, taken: set[str], limit=3, lead=NEAR_DUE, window=None)
     return out
 
 
-def validate_requested_slot(now, fmt, at) -> datetime:
+def validate_requested_slot(now, fmt, at, policy=None) -> datetime:
     at = instant(at)
     if fmt not in FORMATS:
         raise RuleError('Format must be Post or Story')
-    if not on_grid(fmt, at):
+    if not on_grid(fmt, at, policy):
         raise RuleError('Requested time is outside the agreed ' + fmt + ' schedule')
     if at <= instant(now) + NEAR_DUE:
         raise RuleError('Requested time is in the past or within 10 minutes of publication')
@@ -230,11 +345,11 @@ def validate_owner_time(now, fmt, at) -> datetime:
     return at
 
 
-def late_deadline(slot, next_slot=None) -> datetime:
+def late_deadline(slot, next_slot=None, policy=None) -> datetime:
     """Latest moment a reserved item may still be published: 2 hours after its slot, and never at or after the
     next reserved slot of the same format (R5 M29: a 21:00 Story must not land on the 22:00 one)."""
     slot = instant(slot)
-    end = slot + LATE_WINDOW
+    end = slot + late_window(policy)
     if next_slot is not None and slot < instant(next_slot) < end:
         end = instant(next_slot)
     return end
@@ -260,7 +375,7 @@ def rotation_key(fmt: str, code: str, name: str, variety: str | None) -> str:
     return prefix
 
 
-def choose_slot(now, fmt, key, occupied: list[tuple[datetime, str]], taken: set[str], window=None):
+def choose_slot(now, fmt, key, occupied: list[tuple[datetime, str]], taken: set[str], window=None, policy=None):
     """Deterministic variety preference with bounded fallback (no LLM).
 
     Prefers the earliest free slot whose neighbours do not share the same
@@ -269,7 +384,7 @@ def choose_slot(now, fmt, key, occupied: list[tuple[datetime, str]], taken: set[
     """
     events = sorted(occupied, key=lambda e: e[0])
     fallback = None
-    for at in grid(now, fmt, window=window):
+    for at in grid(now, fmt, window=window, policy=policy):
         if iso(at) in taken:
             continue
         if fallback is None:
@@ -303,44 +418,54 @@ def fair_order(entries: list[dict]) -> list[dict]:
 
 
 # ---------------------------------------------------------------- media gates
-def story_duration_failure(duration) -> str | None:
+def _pv(policy, name):
+    v = (policy or {}).get(name)
+    return POLICY[name]['default'] if v is None else v
+
+
+def story_duration_failure(duration, policy=None) -> str | None:
     try:
         d = float(duration)
     except (TypeError, ValueError):
         return 'Story duration could not be measured'
     if not math.isfinite(d) or d <= 0:
         return 'Story duration could not be measured'
-    if d >= STORY_MAX_SECONDS:
-        return f'Story is {d:g} seconds; it must be strictly under 60 seconds. Supply a shorter edit or ask the owner to convert it to Post'
+    limit = float(_pv(policy, 'story_max_seconds'))
+    if d >= limit:
+        return (f'Story is {d:g} seconds; it must be strictly under {limit:g} seconds. Supply a shorter edit or ask '
+                'the owner to convert it to Post')
     return None
 
 
-def story_trim_target(duration) -> float | None:
+def story_trim_target(duration, policy=None) -> float | None:
     """Target length when a Story source needs the automatic end trim, else None."""
     try:
         d = float(duration)
     except (TypeError, ValueError):
         return None
-    if math.isfinite(d) and STORY_MAX_SECONDS <= d <= STORY_TRIM_MAX_SECONDS:
-        return STORY_TRIM_SECONDS
+    limit = float(_pv(policy, 'story_max_seconds'))
+    if math.isfinite(d) and limit <= d <= float(_pv(policy, 'story_trim_max_seconds')):
+        return min(STORY_TRIM_SECONDS, round(limit - 0.1, 3))
     return None
 
 
-def story_source_failure(duration) -> str | None:
+def story_source_failure(duration, policy=None) -> str | None:
     """Story gate on the selected SOURCE file: under 60 s as is, 60-65 s trimmed automatically,
     longer needs a shorter edit. The prepared file is still held to story_duration_failure."""
-    if story_trim_target(duration) is not None:
+    if story_trim_target(duration, policy) is not None:
         return None
-    bad = story_duration_failure(duration)
+    bad = story_duration_failure(duration, policy)
     if bad and bad.startswith('Story is '):
-        return (f'Story is {float(duration):g} seconds; automatic trimming covers up to 65 seconds. '
-                'Supply an edit under 60 seconds or ask the owner to convert it to Post')
+        return (f"Story is {float(duration):g} seconds; automatic trimming covers up to "
+                f"{float(_pv(policy, 'story_trim_max_seconds')):g} seconds. Supply an edit under "
+                f"{float(_pv(policy, 'story_max_seconds')):g} seconds or ask the owner to convert it to Post")
     return bad
 
 
-def media_failure(info: dict, fmt: str) -> str | None:
+def media_failure(info: dict, fmt: str, policy=None, waived=()) -> str | None:
     """Fail closed on the final prepared file. Topaz is checked separately
-    because it is human evidence bound to the source asset, not a measurement."""
+    because it is human evidence bound to the source asset, not a measurement. ``waived`` names owner exemptions
+    for this item (e.g. ``min_short_edge``); platform limits are never waived."""
     if fmt not in FORMATS:
         return 'A valid Post or Story format is required'
     try:
@@ -350,14 +475,16 @@ def media_failure(info: dict, fmt: str) -> str | None:
         return 'Video measurements are missing or invalid'
     if not all(math.isfinite(x) and x > 0 for x in (width, height, size, duration)):
         return 'Video measurements are missing or invalid'
-    if min(width, height) < MIN_SHORT_EDGE:
-        return 'Video short edge must be at least 1080 pixels'
-    if size >= BUSINESS_MAX_BYTES:
-        return 'Final video must be strictly under 300,000,000 bytes'
+    edge = int(_pv(policy, 'min_short_edge'))
+    if min(width, height) < edge and 'min_short_edge' not in waived:
+        return f'Video short edge must be at least {edge} pixels'
+    limit = int(_pv(policy, 'max_bytes'))
+    if size >= limit:
+        return f'Final video must be strictly under {limit:,} bytes'
     if size >= TRANSFER_MAX_BYTES:
         return 'Final video exceeds the current single-request Dropbox transfer path (145 MB)'
     if fmt == 'Story':
-        return story_duration_failure(duration)
+        return story_duration_failure(duration, policy)
     return None
 
 

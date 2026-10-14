@@ -151,6 +151,25 @@ CREATE TABLE IF NOT EXISTS ops_audit (
 CREATE TABLE IF NOT EXISTS ops_counters (name TEXT PRIMARY KEY, value INTEGER NOT NULL);
 '''
 
+# Owner policy (agent migration P1, 2026-10-14). Additive tables without a schema-version bump: code that predates
+# them ignores them, which fails safe (an exemption it cannot see keeps the default rule; nothing is published that
+# the default rules would refuse).
+OPS_POLICY = '''
+CREATE TABLE IF NOT EXISTS ops_policies (
+  name TEXT NOT NULL, version INTEGER NOT NULL, value TEXT NOT NULL, previous TEXT,
+  effective REAL NOT NULL, set_by TEXT NOT NULL, source TEXT, reason TEXT, created REAL NOT NULL,
+  PRIMARY KEY(name, version)
+);
+CREATE TABLE IF NOT EXISTS ops_overrides (
+  id TEXT PRIMARY KEY, item_id TEXT NOT NULL, rule TEXT NOT NULL, asset_key TEXT,
+  state TEXT NOT NULL,            -- active | revoked
+  reason TEXT, set_by TEXT NOT NULL, source TEXT, created REAL NOT NULL,
+  revoked REAL, revoked_by TEXT
+);
+CREATE INDEX IF NOT EXISTS ops_overrides_item ON ops_overrides(item_id, state);
+'''
+
+
 
 def dumps(x) -> str:
     return json.dumps(x, ensure_ascii=False, sort_keys=True, separators=(',', ':'))
@@ -216,6 +235,7 @@ class Store:
             c.execute('PRAGMA journal_mode=WAL')
             c.executescript(LEGACY)
             c.executescript(OPS_V1)
+            c.executescript(OPS_POLICY)
             c.execute('BEGIN IMMEDIATE')
             row = c.execute("SELECT value FROM ops_meta WHERE key='schema_version'").fetchone()
             current = int(row[0]) if row else 0

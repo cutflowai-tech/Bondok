@@ -163,7 +163,10 @@ REWORK = _lex('مونتير', 'المونتير', 'مونتاج', 'المونت�
               'rework', 'reedit', 'edit', 'edits', 'montage')
 NON_ITEM_OBJECT = _lex('كابشن', 'كابشين', 'caption', 'وصف', 'معاد', 'ميعاد', 'وقت', 'فحص', 'check', 'recheck',
                        'time', 'تشيك', 'الكلام')
-TOPAZ = _lex('توباز', 'topaz', 'topazed')
+TOPAZ = _lex('توباز', 'topaz', 'topazed', 'توبز', 'توبزت', 'توبزنا', 'اتوبز', 'اتوبزت', 'متوبز', 'متوبزه',
+             'topazd')
+# Completed Topaz verbs ("توبزته", "اتوبز"): the word itself says it was done (agent migration P1-07).
+TOPAZ_DONE = _lex('topazed', 'توبزت', 'توبزنا', 'اتوبز', 'اتوبزت', 'متوبز', 'متوبزه', 'topazd')
 DONE = _lex('خلص', 'خلصت', 'خلصنا', 'خلصناه', 'خلصو', 'خلصوا', 'خلصان', 'خلاص', 'اتعمل', 'اتعملت', 'عملنا', 'عملناه',
             'عملت', 'عملته', 'عملو', 'عملوا', 'تم', 'اتم', 'اتمت', 'جاهز', 'جاهزه', 'done', 'finished', 'completed',
             'complete', 'ready', 'did', 'topazed')
@@ -459,6 +462,14 @@ def contradiction(op: str, text: str, quote: str) -> str | None:
         if op != 'confirm_topaz' and m['other_destination']:
             return 'it mentions another account or platform'
         return None
+    if op in POLICY_OPS:
+        # Negation is part of these instructions ("من غير توباز", "مش شرط"): only questions, conditions,
+        # quotations, missed expectations and suggestions ("ممكن", "maybe") stop them.
+        if m['missed']:
+            return 'it says what should have happened, not an instruction'
+        if any(t in _MAYBE for t in m['sentence']):
+            return 'it is a suggestion, not an instruction'
+        return None
     if op in ('pause', 'skip'):
         if m['missed']:
             return 'it says what should have happened'
@@ -547,7 +558,9 @@ def supports(op: str, text: str, quote: str, args: dict | None = None) -> bool:
     if op == 'request_rework':
         return m['rework']
     if op == 'confirm_topaz':
-        return has(sent, TOPAZ) and (has(conj, DONE, _VERB_PRE) or 'topazed' in conj)
+        return has(sent, TOPAZ) and (has(conj, DONE, _VERB_PRE) or has(conj, TOPAZ_DONE, _VERB_PRE))
+    if op in ('waive_rule', 'restore_rule', 'set_policy'):
+        return rule_supports(op, text, quote, args)
     if op in ('report_published', 'resolve_published'):
         return has(conj, COMPLETED_PUBLISH, _VERB_PRE) or _phrase(conj, ('went', 'live')) or \
             _phrase(conj, ('is', 'up')) or _phrase(conj, ('its', 'up'))
@@ -603,6 +616,73 @@ def explicit(op: str, args: dict, text: str) -> bool:
     if contradiction(kind, text, text):
         return False
     return supports(kind, text, text, args)
+
+
+# ---------------------------------------------------------------------------------------------- owner rules
+POLICY_OPS = ('waive_rule', 'restore_rule', 'set_policy')
+_MAYBE = _lex('ممكن', 'يمكن', 'ياريت', 'maybe', 'perhaps', 'might', 'could')
+# Words that name each rule (any one is enough with an exemption/change marker).
+RULE_WORDS = {
+    'topaz_required': TOPAZ,
+    'min_short_edge': _lex('1080', '1080p', 'دقه', 'الدقه', 'ريزوليوشن', 'resolution', 'جوده', 'الجوده', 'quality',
+                           'بكسل', 'pixels', 'pixel', 'px', 'edge', 'hd', 'full'),
+    'max_bytes': _lex('حجم', 'الحجم', 'size', 'mb', 'ميجا', 'ميجابايت', 'megabytes', 'bytes'),
+    'story_max_seconds': _lex('ثانيه', 'ثواني', 'seconds', 'second', 'مده', 'المده', 'طول', 'الطول', 'duration',
+                              'length', 'دقيقه', 'minute'),
+    'story_trim_max_seconds': _lex('قص', 'القص', 'قصه', 'trim', 'trimming', 'اقطع', 'تقطيع', 'cut'),
+    'post_caption_approval': CAPTION | APPROVE,
+    'duplicate_video_block': _lex('مكرر', 'متكرر', 'نفس', 'duplicate', 'same', 'twice', 'مرتين', 'again', 'تكرار'),
+    'story_slots': _lex('مواعيد', 'معاد', 'ميعاد', 'المواعيد', 'slots', 'slot', 'times', 'schedule', 'وقت', 'اوقات',
+                        'ستوري', 'الستوري', 'story', 'stories', 'ستوريز'),
+    'post_slots': _lex('مواعيد', 'معاد', 'ميعاد', 'المواعيد', 'slots', 'slot', 'times', 'schedule', 'وقت', 'اوقات',
+                       'بوست', 'البوست', 'ريل', 'ريلز', 'post', 'posts', 'reel', 'reels', 'البوستات'),
+    'late_window_minutes': _lex('متاخر', 'التاخير', 'تاخير', 'متأخر', 'late', 'delay', 'window', 'ساعتين', 'فات'),
+}
+_EXEMPT = _lex('غير', 'بدون', 'without', 'skip', 'شيل', 'سيبك', 'تجاهل', 'ignore', 'استثني', 'استثناء', 'exempt',
+               'waive', 'waived', 'لازم', 'شرط', 'required', 'need', 'necessary', 'كده', 'override', 'bypass',
+               'عادي', 'okay', 'ok', 'fine', 'allow', 'allowed', 'سماح', 'اسمح', 'مسموح')
+_RESTORE = _lex('رجع', 'ارجع', 'رجعه', 'restore', 'again', 'تاني', 'لازم', 'شرط', 'required', 'enable', 'reenable',
+                'الغي', 'cancel', 'undo')
+_PERMANENT = (('من', 'النهارده'), ('من', 'النهارد'), ('من', 'دلوقتي'), ('من', 'هنا', 'ورايح'), ('دايما',), ('دايماً',),
+              ('علي', 'طول'), ('عموما',), ('خالص',), ('بعد', 'كده'), ('كل', 'الفيديوهات'), ('كل', 'الستوريز'),
+              ('كل', 'البوستات'), ('كل', 'حاجه'), ('القاعده',), ('قاعده',), ('السياسه',), ('from', 'now'),
+              ('always',), ('anymore',), ('any', 'more'), ('permanently',), ('in', 'general'), ('all', 'videos'),
+              ('all', 'stories'), ('all', 'posts'), ('every', 'video'), ('rule',), ('policy',), ('default',),
+              ('generally',), ('للابد',), ('نهائي',), ('نهائيا',), ('خلاص', 'مش'))
+
+
+def rule_words(rule: str, text: str) -> bool:
+    lex = RULE_WORDS.get(rule)
+    return bool(lex) and has(tokens(text), lex)
+
+
+def permanent(text: str) -> bool:
+    """The owner's words say the change is lasting ("من النهارده", "always"), not about one item."""
+    T = tokens(text)
+    return any(_phrase(T, p) for p in _PERMANENT)
+
+
+def rule_supports(op: str, text: str, quote: str, args: dict | None = None) -> bool:
+    """Waive / restore / change a rule: the clause names the rule (or carries the new value) and says what to do
+    with it. A miss costs one question."""
+    args = args or {}
+    m = markers(text, quote)
+    if not m.get('located'):
+        return False
+    sent = m['sentence']
+    rule = str(args.get('rule') or '')
+    named = has(sent, RULE_WORDS.get(rule, frozenset()))
+    if op == 'waive_rule':
+        return named and (has(sent, _EXEMPT) or bool(_negations(sent)) or has(sent, PUBLISH, _VERB_PRE))
+    if op == 'restore_rule':
+        return named and has(sent, _RESTORE)
+    # set_policy: the rule is named, or the new value is in the words (times, numbers)
+    value = args.get('value')
+    said = compact(text)
+    vals = value if isinstance(value, (list, tuple)) else list(value.values()) if isinstance(value, dict) else [value]
+    literal = all(str(v).lower() in said or str(v).lstrip('0') in said for v in vals if v not in (None, '')) and \
+        any(str(v).strip() for v in vals if not isinstance(v, bool))
+    return named or literal
 
 
 # ---------------------------------------------------------------------------------------------- bare answers
