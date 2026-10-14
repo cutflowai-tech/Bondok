@@ -1,23 +1,40 @@
-# Bondok runtime: the scheduled work that n8n WF1/WF2/WF3 ran (agent migration P4). Template; paths are examples.
-# Starts idle: it executes nothing until the owner switches scheduled work to it (Ops command set_runtime_owner).
+# Bondok runtime: the scheduled work that n8n WF1/WF2/WF3 ran (agent migration P4).
+# Starts idle: it executes nothing until scheduled work is switched to it (ops_meta.runtime_owner = bondok).
 [Unit]
-Description=Waset Bondok runtime (preparation, publishing, supervision)
-After=network-online.target
+Description=Waset Bondok runtime (import, preparation, publishing, reconciliation, supervision)
+After=network-online.target docker.service
 Wants=network-online.target
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
 User=bondok
-Environment=WASET_RUNTIME_ENV=/opt/waset-bondok/runtime.env
-ExecStart=/usr/bin/python3 -m waset_runtime.service
+Group=bondok
 WorkingDirectory=/opt/waset-bondok
+Environment=WASET_RUNTIME_ENV=/opt/waset-bondok/runtime.env
+Environment=WASET_HELPER=/var/lib/bondok/pipeline/helper.py
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 -m waset_runtime.service
 Restart=always
 RestartSec=10
-# The store and the prepared media live in the shared data directory (same as the helper).
-ReadWritePaths=/var/lib/bondok
+TimeoutStopSec=960
+UMask=0007
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/bondok
+BindPaths=/var/lib/docker/volumes/waset_social_data/_data:/var/lib/bondok/pipeline
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryMax=3G
+TasksMax=256
 
 [Install]
 WantedBy=multi-user.target
