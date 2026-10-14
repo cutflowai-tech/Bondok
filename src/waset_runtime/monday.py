@@ -90,7 +90,7 @@ class Monday:
 
     def items(self, ids, columns=None) -> list[dict]:
         cols = '' if columns is None else f'(ids:{json.dumps(columns)})'
-        d = self.query('query($ids:[ID!]){items(ids:$ids){id name group{id} board{id} column_values' + cols +
+        d = self.query('query($ids:[ID!]){items(ids:$ids){id name state group{id} board{id} column_values' + cols +
                        '{id text value}}}', {'ids': [str(i) for i in ids]})
         return d.get('items') or []
 
@@ -102,6 +102,9 @@ class Monday:
         it = rows[0]
         if str((it.get('board') or {}).get('id')) != rules.BOARD:
             raise MondayError('Item is not on the social board')
+        if it.get('state') not in (None, 'active'):
+            # Monday still answers for archived/deleted items: they are not on the board (no publication).
+            raise MondayError(f"Item is {it['state']} on Monday, not on the board")
         return it
 
     def source_status(self, source_item_id) -> str | None:

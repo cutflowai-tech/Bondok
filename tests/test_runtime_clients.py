@@ -58,6 +58,13 @@ class MondayClient(unittest.TestCase):
         self.assertFalse(e.exception.answered)
         self.assertEqual(len(t.requests), 1)
 
+    def test_fresh_item_refuses_deleted_or_archived_items(self):
+        for state in ('deleted', 'archived'):
+            t = Transport((200, {'data': {'items': [{'id': '1', 'state': state, 'board': {'id': '5105608159'},
+                                                     'column_values': []}]}}))
+            with self.assertRaises(MondayError):
+                Monday('t', Http(t), sleep=lambda s: None).fresh_item('1')
+
     def test_fresh_item_refuses_other_boards(self):
         t = Transport((200, {'data': {'items': [{'id': '1', 'board': {'id': '999'}, 'column_values': []}]}}))
         with self.assertRaises(MondayError):
