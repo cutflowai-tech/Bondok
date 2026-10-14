@@ -462,6 +462,18 @@ def contradiction(op: str, text: str, quote: str) -> str | None:
         if op != 'confirm_topaz' and m['other_destination']:
             return 'it mentions another account or platform'
         return None
+    if op == 'generic':
+        # Board/file administration and "publish now": questions, conditions, quotations (above), plans, negation
+        # and missed expectations are not instructions; the words of a clear instruction are not second-guessed.
+        if m['missed']:
+            return 'it says what should have happened, not an instruction'
+        if m['future'] or m['future_day'] and not has(m['conjunct'], PUBLISH, _VERB_PRE):
+            return 'it is about the future, not an instruction now'
+        if m['negation']:
+            return 'it is negated'
+        if any(t in _MAYBE for t in m['sentence']):
+            return 'it is a suggestion, not an instruction'
+        return None
     if op in POLICY_OPS:
         # Negation is part of these instructions ("من غير توباز", "مش شرط"): only questions, conditions,
         # quotations, missed expectations and suggestions ("ممكن", "maybe") stop them.
@@ -561,6 +573,8 @@ def supports(op: str, text: str, quote: str, args: dict | None = None) -> bool:
         return has(sent, TOPAZ) and (has(conj, DONE, _VERB_PRE) or has(conj, TOPAZ_DONE, _VERB_PRE))
     if op in ('waive_rule', 'restore_rule', 'set_policy'):
         return rule_supports(op, text, quote, args)
+    if op == 'generic':
+        return True
     if op in ('report_published', 'resolve_published'):
         return has(conj, COMPLETED_PUBLISH, _VERB_PRE) or _phrase(conj, ('went', 'live')) or \
             _phrase(conj, ('is', 'up')) or _phrase(conj, ('its', 'up'))

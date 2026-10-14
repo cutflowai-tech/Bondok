@@ -91,8 +91,8 @@ class R5_LOW19_ReleasePackaging(ReleaseFixture):
         tops = {n.split('/')[0] for n in self.manifest['files']}
         self.assertEqual(tops, {'helper', 'bondok', 'workflows'})
         for n in self.manifest['files']:
-            self.assertRegex(n, r'^(helper/(helper\.py|drain_probe\.py|RELEASE\.json|waset_ops/[a-z_]+\.py)|'
-                                r'bondok/([a-z_]+\.py|policy\.txt|RELEASE\.json|waset_ops/[a-z_]+\.py)|'
+            self.assertRegex(n, r'^(helper/(helper\.py|drain_probe\.py|RELEASE\.json|waset_(ops|runtime)/[a-z_]+\.py)|'
+                                r'bondok/([a-z_]+\.py|policy\.txt|RELEASE\.json|waset_(ops|runtime)/[a-z_]+\.py)|'
                                 r'workflows/[A-Za-z0-9_]+\.v2\.json)$')
         rel = json.loads((self.release / 'helper' / 'RELEASE.json').read_text())
         self.assertEqual(rel['release'], self.manifest['release'])

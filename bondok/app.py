@@ -53,7 +53,7 @@ def accept_event(body, channel, team, known_thread, bot) -> bool:
 class Core:
     """Everything except the Slack transport, so it can be tested offline."""
 
-    def __init__(self, env: dict, *, model=None, monday=None, post=None, ops=None):
+    def __init__(self, env: dict, *, model=None, monday=None, post=None, ops=None, clients=None):
         self.env = env
         self._undo, self._new_offset, self._defer_offset = [], None, False
         self.store = Store(Path(env.get('BONDOK_STATE_DIR', '/var/lib/bondok')) / 'bondok.sqlite')
@@ -62,7 +62,8 @@ class Core:
         self.bridge = Bridge(self.ops, self.owner, self.store)
         self.model = model or Model(env['OPENROUTER_API_KEY'], env.get('OPENROUTER_MODEL') or 'openai/gpt-6.1-sol',
                                     policy_text())
-        self.agent = Agent(self.bridge, self.model, monday)
+        self.clients = clients or {}       # runtime clients (monday writer, dropbox, instagram) when configured
+        self.agent = Agent(self.bridge, self.model, monday, clients=self.clients)
         self.post = post
         self.wake = threading.Event()
         self.stop = threading.Event()
@@ -307,6 +308,14 @@ class Core:
                 self.ops.outbox_ack(job['id'], 'bondok', False, type(ex).__name__)
         return n
 
+    # ------------------------------------------------------------------ board/file administration (P2-04/05)
+    def run_admin(self) -> list:
+        """The owner's queued board and file changes, applied with the runtime clients (n8n never takes these)."""
+        if not (self.clients.get('monday') or self.clients.get('dropbox')):
+            return []
+        from waset_runtime.admin import run_admin_jobs
+        return run_admin_jobs(self.ops, self.clients.get('monday'), self.clients.get('dropbox'))
+
     # ------------------------------------------------------------------ watchdog (independent of the helper)
     def watchdog(self, defer_offset=False) -> list[str]:
         """Alerts on transitions only; unchanged states stay quiet."""
@@ -322,13 +331,21 @@ class Core:
                               'n8n automation may also be failing.')
         if db_ok and self._flip('db_down', False):
             alerts.append('✅ Operational database is readable again.')
+        owner = self.ops.runtime_owner() if db_ok else 'n8n'
+        where = 'the Bondok runtime service (waset-runtime)' if owner == 'bondok' else 'n8n executions'
         for name, limit in HEARTBEAT_LIMITS.items():
             if name not in ages:
                 continue
             stale = ages[name] > limit
             if self._flip('stale:' + name, stale):
-                alerts.append(f'⚠️ {name.upper()} has not reported for {ages[name] // 60} min. Check n8n executions; '
+                alerts.append(f'⚠️ {name.upper()} has not reported for {ages[name] // 60} min. Check {where}; '
                               'publishing safety checks remain in place.' if stale else f'✅ {name.upper()} is reporting again.')
+        if db_ok and owner == 'bondok' and 'runtime' in ages:
+            stale = ages['runtime'] > 300
+            if self._flip('stale:runtime', stale):
+                alerts.append(f"⚠️ The Bondok runtime has not reported for {ages['runtime'] // 60} min; scheduled "
+                              'publishing is not running. Restart waset-runtime.' if stale else
+                              '✅ The Bondok runtime is reporting again.')
         alerts += self._helper_errors()
         return alerts
 
@@ -434,7 +451,7 @@ class Core:
 class Runtime(Core):
     def __init__(self, env):
         from slack_bolt import App
-        super().__init__(env, monday=MondayReader(env['MONDAY_API_TOKEN']), post=self._post)
+        super().__init__(env, monday=MondayReader(env['MONDAY_API_TOKEN']), post=self._post, clients=runtime_clients(env))
         self.channel, self.team = env['SLACK_CHANNEL_ID'], env['SLACK_TEAM_ID']
         self.app = App(token=env['SLACK_BOT_TOKEN'], ignoring_self_events_enabled=True)
         auth = self.app.client.auth_test()
@@ -499,6 +516,10 @@ class Runtime(Core):
                 self.deliver_notifications()
             except Exception as ex:  # noqa: BLE001 - must not stop the watchdog (audit H4)
                 LOG.error('background_failed part=notifications type=%s', type(ex).__name__)
+            try:
+                self.run_admin()
+            except Exception as ex:  # noqa: BLE001
+                LOG.error('background_failed part=admin type=%s', type(ex).__name__)
             if int(time.time()) % 60 >= 20:
                 continue
             try:
@@ -512,6 +533,24 @@ class Runtime(Core):
         threading.Thread(target=self.background, daemon=True, name='bondok-notify').start()
         LOG.info('ready model=%s board=5105608159 ops_schema=%s', self.model.model, self.ops.store.schema_version())
         SocketModeHandler(self.app, self.env['SLACK_APP_TOKEN']).start()
+
+
+def runtime_clients(env) -> dict:
+    """Execution clients (agent migration P2), each only when its credentials are configured in the .env."""
+    out = {}
+    try:
+        from waset_runtime.monday import Monday
+        out['monday'] = Monday(env['MONDAY_API_TOKEN'])
+        if env.get('DROPBOX_REFRESH_TOKEN') or env.get('DROPBOX_TOKEN'):
+            from waset_runtime.dropbox import Dropbox
+            out['dropbox'] = Dropbox(token=env.get('DROPBOX_TOKEN'), refresh_token=env.get('DROPBOX_REFRESH_TOKEN'),
+                                     app_key=env.get('DROPBOX_APP_KEY'), app_secret=env.get('DROPBOX_APP_SECRET'))
+        if env.get('INSTAGRAM_TOKEN') and env.get('INSTAGRAM_ACCOUNT_ID'):
+            from waset_runtime.instagram import Instagram
+            out['instagram'] = Instagram(env['INSTAGRAM_TOKEN'], env['INSTAGRAM_ACCOUNT_ID'])
+    except (ImportError, ValueError) as ex:
+        LOG.warning('runtime_clients_unavailable type=%s', type(ex).__name__)
+    return out
 
 
 def main():

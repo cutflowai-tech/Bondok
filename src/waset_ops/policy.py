@@ -279,3 +279,27 @@ class PolicyMixin:
                 'owner_state': it['owner_state'], 'publication': it['publication'],
                 'scheduled': res['slot'] if res else None, 'reason': reason, 'rule': with_rule,
                 'waived_rules': waived, 'how_to_change': how}
+
+    def history(self, item_id, limit=40) -> dict:
+        """Decision and execution log of one item (01-authority.md "سجل القرار"), newest first."""
+        with self.store.read() as c:
+            it = self.item(c, item_id)
+            cmds = [{'at': self.iso_ts(r['created']), 'op': r['op'], 'by': r['actor'], 'kind': r['actor_kind'],
+                     'state': r['state'], 'result': (loads(r['result'], {}) or {}).get('reason') or
+                     (loads(r['result'], {}) or {}).get('message')}
+                    for r in c.execute('SELECT * FROM ops_commands WHERE item_id=? ORDER BY created DESC LIMIT ?',
+                                       (it['item_id'], limit))]
+            attempts = [{'at': self.iso_ts(r['created']), 'stage': r['stage'], 'slot': r['slot'],
+                         'media_id': r['media_id'], 'permalink': r['permalink'],
+                         'evidence': loads(r['evidence'], {}) or {}}
+                        for r in c.execute('SELECT * FROM ops_attempts WHERE item_id=? ORDER BY created DESC',
+                                           (it['item_id'],))]
+            exemptions = [dict(r) for r in c.execute('SELECT rule, asset_key, state, reason, set_by, created, '
+                                                     'revoked, revoked_by FROM ops_overrides WHERE item_id=?',
+                                                     (it['item_id'],))] if self._has_overrides(c) else []
+        return {'item_id': it['item_id'], 'name': it['name'], 'decisions': cmds, 'attempts': attempts,
+                'exemptions': exemptions}
+
+    @staticmethod
+    def _has_overrides(c) -> bool:
+        return bool(c.execute("SELECT 1 FROM sqlite_master WHERE name='ops_overrides'").fetchone())

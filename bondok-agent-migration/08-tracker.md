@@ -7,10 +7,10 @@
 | المرحلة | عدد المهام | الحالة | دليل التسليم |
 |---|---:|---|---|
 | P0 — حصر الواقع وتثبيت نقطة البداية | 7 | 5 مكتملة، 2 جزئية (تحتاج قراءة حية) | `P0-baseline.md` |
-| P1 — إصلاح السلطة وإثبات سيناريو Topaz | 8 | جارية | `tests/test_agent_authority.py` |
-| P2 — أدوات APIs والذاكرة التشغيلية | 10 | لم تبدأ | — |
-| P3 — الإيجنت صاحب أدوات التنفيذ | 7 | لم تبدأ | — |
-| P4 — تشغيل دائم بديل n8n | 9 | لم تبدأ | — |
+| P1 — إصلاح السلطة وإثبات سيناريو Topaz | 8 | 6 مكتملة، 2 جزئية | `tests/test_agent_authority.py` |
+| P2 — أدوات APIs والذاكرة التشغيلية | 10 | 7 مكتملة محليًا، 3 جزئية | `tests/test_runtime_clients.py`, `test_agent_tools.py` |
+| P3 — الإيجنت صاحب أدوات التنفيذ | 7 | 4 مكتملة محليًا، 3 جزئية | `test_agent_tools.py`, `test_agent_authority.py` |
+| P4 — تشغيل دائم بديل n8n | 9 | 6 مكتملة محليًا، 3 جزئية | `tests/test_runtime.py` |
 | P5 — إثبات القبول والاستعداد للإنتاج | 7 | لم تبدأ | — |
 | P6 — الانتقال وإزالة n8n | 8 | لم تبدأ (يحتاج تفويض المالك) | — |
 
@@ -31,10 +31,36 @@
 | P1-02 | مكتملة | `rules.POLICY` (10 قواعد بقيمها الحالية) + `ops_policies` بإصدارات + `set_policy` + أثر على العناصر المنتظرة؛ تغيير المواعيد لا يحرك الحجوزات القائمة | `A03_LastingRuleChange` (4 اختبارات)، `test_defaults_unchanged_*`، `test_rule_report_*` | — |
 | P1-03 | مكتملة | `ops_overrides` + `waive_rule`/`restore_rule` (Topaz، 1080، الفيديو المكرر)، مسجلة في عمود السجل على Monday | `A02_ExemptionIsNotAnAttestation` (4)، `test_short_edge_*`، `test_duplicate_exemption_*` | — |
 | P1-04 | مكتملة | تأكيد Topaz من المالك مرتبط بالنسخة، يقبل اسم ملف عادي وصيغ «توبزته/I did Topaz»، رسالة الحجب لا تذكر الاسم كشرط | `A01_*` (3)، `A04_A05_*` | — |
-| P1-05 | لم تبدأ | — | — | عمود طلب منفصل عن حالة التنفيذ (بورد تجريبي) |
-| P1-06 | لم تبدأ | — | — | قيم سياسة الانقطاع/الموعد الفائت/الحذف الجماعي/التكلفة |
+| P1-05 | مكتملة (موجودة من R5، تحققت) | أعمدة المالك (Status للأوامر، Publish at للطلب) منفصلة عن أعمدة النظام (Action، System update)؛ كتابة العرض compare-before-write ولا تمسح قيمة كتبها شخص | `R5_B7_StatusWriteGuardedWhenEmpty`, `StaleBoardSnapshot`, `R5_M3_*`, `A16_A17_*.test_pause_typed_on_the_board_*` | — |
+| P1-06 | مكتملة (قيم مقترحة قابلة للتغيير) | قواعد تشغيل: `publish_without_fresh_board`=false (السلوك الحالي)، `late_window_minutes`=120، `bulk_confirm_threshold`=10 (جديد)، `delete_means_archive`=true (جديد)، `agent_max_steps`=6، `publish_attempts_per_slot`=3 | `A21_*.test_owner_policy_publishes_from_last_known_state`، `BulkLimit`، `test_delete_means_archive_unless_permanent` | **قرار المالك**: القيمتان الجديدتان (10 عناصر، الحذف = أرشفة) افتراضيات مقترحة؛ تتغير بأمر |
 | P1-07 | جزئية | أوامر الاستثناء العامية («من غير توباز»، «مش لازم توباز») تُنفذ رغم النفي؛ الأسئلة والاقتراحات («ينفع…؟»، «ممكن») لا تُنفذ؛ مرجعان محتملان → سؤال واحد؛ تغيير دائم بلا كلمات دوام → سؤال واحد | `A06_A07_A08_Language` (3)، `test_rule_change_without_lasting_words_asks_once` | مراجعة باقي قوائم الكلمات المانعة |
-| P1-08 | جزئية | A01–A08 ناجحة محليًا بالمعالج الحقيقي ونموذج مسجّل | 529 اختبار OK على 3.12 و3.14 | تجربة المالك في بيئة تحقق حقيقية تحتاج نشر الفرع |
+| P1-08 | جزئية | A01–A08 ناجحة محليًا بالمعالج الحقيقي ونموذج مسجّل | 584 اختبار OK على 3.12 و3.14 | تجربة المالك في بيئة تحقق حقيقية تحتاج نشر الفرع |
+| P2-01 | مكتملة | عقود الأدوات: كل أمر يرجع `state` (completed/accepted/needs_confirmation/needs_clarification/rejected/unsupported) و`command_id`؛ «مقبول» لا يُعرض كتم | `AcceptedIsNotCompleted`، `test_create_item_on_the_board` (🕒) | — |
+| P2-02 | جزئية | الهوية من Slack فقط (بلا تغيير)؛ أسرار APIs في `.env`/`runtime.env` خارج المستودع؛ توكن Instagram في ترويسة لا في URL؛ تجديد توكن Dropbox | `test_member_cannot_change_rules`، `test_identity_claim_in_text_*`، `test_reel_payload_and_token_never_in_url`، `test_refresh_token_and_retry_on_401` | تجديد توكن Instagram طويل الأجل غير منفذ (يعتمد على نوع الدخول؛ غير متحقق) |
+| P2-03 | مكتملة (موجودة، تحققت) | سجل الأوامر `ops_commands`: نفس المعرف → نفس النتيجة، محتوى مختلف → `id_reuse` | `Scenario07SlackDuplicates`، `test_redelivered_slack_event_runs_once` | — |
+| P2-04 | مكتملة محليًا | `waset_runtime.monday`: قراءة بصفحات، عناصر، تعديل أعمدة + نقل مجموعة، إنشاء دفعات، subitems، أرشفة/حذف؛ إعادة محاولة لحدود المعدل؛ أوامر المالك `board_create/board_remove/board_set_field` عبر outbox | `MondayClient` (5)، `BoardAdministration` (6) | تجربة حية للقراءة فقط مطلوبة |
+| P2-05 | مكتملة محليًا | `waset_runtime.dropbox` + `selection` (نقل حرفي لقواعد اختيار الملف) + رفع بجلسة لأكثر من 150 MiB + `file_action` (إعادة تسمية/نقل/حذف قابل للاسترجاع) + `list_files` | `DropboxClient` (5)، `Selection`، `FileAdministration` | حد 145 MB ما زال قاعدة نقل؛ رفعه قرار بعد اختبار حي |
+| P2-06 | مكتملة محليًا | `waset_runtime.instagram` + دورة النشر الكاملة في `cycles.publish_one` بنفس نقاط الالتزام؛ حذف/تعديل منشور غير مدعوم ويُعلن كذلك | `InstagramClient` (5)، `A13_A24_*`، `A18_A19_A20_*` | التحقق من نوع التوكن والصلاحيات الفعلية (قراءة حية) |
+| P2-07 | مكتملة محليًا | أدوات نافذة: `publish_now`, `cancel_schedule`, `waive_rule`, `set_rule`, `board_*`, `file_action`, `get_history`, `instagram_recent`, `explain_item` | `test_agent_tools.py` (14) | — |
+| P2-08 | جزئية | جداول إضافية فقط (`ops_policies`, `ops_overrides`, `ops_meta.runtime_owner`) بدون رفع رقم المخطط → الكود القديم يعمل على نفس القاعدة | 584 OK (يشمل اختبارات الترحيل والرجوع الموجودة) | ترحيل الإنتاج نفسه = P6 |
+| P2-09 | مكتملة (موجودة) + امتداد | outbox في نفس المعاملة؛ أنواع جديدة `monday_admin`/`dropbox_admin` يطبقها بندق ويؤكدها | `A22_DisplayFailureAfterPublish`، `BoardAdministration` | — |
+| P2-10 | جزئية | adapters وهمية قابلة للفشل: A09, A11, A12, A13, A14(B7), A21, A22, A31, A32 ناجحة | `tests/runtime_fakes.py` + الملفات أعلاه | اختبارات اتصال محدودة بالحسابات الحقيقية تحتاج تفويضًا |
+| P3-01 | مكتملة (موجودة) | أحداث Slack تُحفظ وتُزال تكراراتها قبل أي استدعاء للموديل والرد في نفس الخيط | `Scenario07SlackDuplicates`، `test_event_queue_dedupes_before_model` | — |
+| P3-02 | مكتملة | تعليمات جديدة تمنح السلطة وتربط كل أمر شائع بأداته | `test_policy_prompt_gives_authority` | تجربة الموديل الحي (OpenRouter) تحتاج تفويضًا |
+| P3-03 | مكتملة | الموديل يختار الأداة؛ النتيجة الموثقة فقط تُعرض (trusted render)، و«مقبول» ليس «تم» | `AcceptedIsNotCompleted`، اختبارات A13 | — |
+| P3-04 | مكتملة | الحالة من قاعدة التشغيل (`get_history`, `explain_item`, `get_operation_status`) لا من المحادثة | `HistoryAndMemory` | — |
+| P3-05 | مكتملة محليًا | نص الكابشن/الملف لا يمنح سلطة: الاقتباس يجب أن يكون من رسالة المالك | `A11_InstructionsInsideData`، `R5_B5_*` | — |
+| P3-06 | جزئية | حد خطوات الموديل قاعدة مالك (`agent_max_steps`)، حد الدفعات `bulk_confirm_threshold` | `BulkLimit` | حد تكلفة بالمال لم يُنفذ (يحتاج بيانات استهلاك OpenRouter) |
+| P3-07 | جزئية | تأكيد معالجة، تغيير قاعدة، جدولة، نشر فوري، إيقاف، تصحيح حالة: كلها بالأدوات الفعلية على fakes | `test_agent_authority.py`، `test_agent_tools.py` | بيئة تحقق حقيقية |
+| P4-01 | مكتملة محليًا | `waset_runtime.service.Scheduler`: نفس إيقاع n8n (1 د / 10 د / :05 و:35)، تخطي دورة ما زالت تعمل، بدون موديل | `A29_A30_RuntimeOwnership` | خدمة systemd (`deploy/waset-runtime.service`) لم تُركّب |
+| P4-02 | مكتملة محليًا | `prepare_cycle`: لقطة المصادر والبورد، import_plan/record (بدون إعادة إنشاء)، observe بقطع 60 KB، board_missing | `P4_02_*` (5) | — |
+| P4-03 | جزئية | نفس عامل الوسائط المنفصل (فتحتان، تنظيف الملفات) يُستدعى من الخدمة؛ لا يعطل النشر | `test_long_preparation_does_not_block_publication` | **عائق**: ffmpeg/ffprobe كانا داخل حاوية n8n؛ يجب تثبيتهما على مضيف بندق قبل الانتقال |
+| P4-04 | مكتملة محليًا | `supervise_cycle` = WF3 بنفس الـlease | `test_scheduler_idle_until_owner_switches` | — |
+| P4-05 | مكتملة محليًا | `publish_cycle`: مزامنة العرض ثم المصالحة ثم النشر (claim→container→poll→commit→intent→publish→result→permalink) | `A13_A24_*`، `A15_*`، `A16_A17_*`، `A18_A19_A20_*`، `A21_*` | — |
+| P4-06 | مكتملة محليًا | عاملان متوازيان → container واحد وطلب نشر واحد؛ الإيقاف قبل نقطة الإرسال محترم | `A15_TwoRunnersOneAttempt`، `A16_A17_*` | — |
+| P4-07 | مكتملة محليًا | مزامنة العرض (guard مطابق لـGUARD_JS)، Posted في بورد المصادر، مهام المونتير، التنبيهات (بندق أصلًا) | `GuardPort`، `test_wf1_cycle_end_to_end` | — |
+| P4-08 | مكتملة محليًا | المصالحة من حالة الـcontainer؛ نتيجة غامضة لا تُعاد؛ قرار المالك عبر `resolve_publication` | `test_lost_answer_is_reconciled_never_republished`، `test_process_dies_after_commit` | — |
+| P4-09 | جزئية | heartbeat `runtime` + تنبيه الـwatchdog حسب مالك التشغيل؛ نسخة ظل `--dry-run` على نسخة متسقة من القاعدة | `test_shadow_copy_*`، `DryRun` | النسخ الاحتياطي الدوري خارج المضيف وتجربة الاستعادة تحتاج السيرفر |
 
 ## قرارات البداية
 

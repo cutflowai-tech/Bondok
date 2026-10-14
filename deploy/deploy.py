@@ -122,18 +122,23 @@ def write_private(path: Path, text: str, mode=0o600):
 
 
 def package_files(base: Path, rel_prefix: str, top: list[str]) -> dict[str, Path]:
-    """Managed code files under base: the given top-level names plus waset_ops/**/*.py (no caches)."""
+    """Managed code files under base: the given top-level names plus the packages (waset_ops, waset_runtime; no
+    caches)."""
     out = {}
     for name in top:
         p = base / name
         if p.is_file():
             out[f'{rel_prefix}/{name}'] = p
-    pkg = base / 'waset_ops'
-    if pkg.is_dir():
-        for p in sorted(pkg.rglob('*')):
-            if p.is_file() and '__pycache__' not in p.parts and not p.name.endswith('.pyc'):
-                out[f'{rel_prefix}/waset_ops/{p.relative_to(pkg).as_posix()}'] = p
+    for pkg_name in PACKAGES:
+        pkg = base / pkg_name
+        if pkg.is_dir():
+            for p in sorted(pkg.rglob('*')):
+                if p.is_file() and '__pycache__' not in p.parts and not p.name.endswith('.pyc'):
+                    out[f'{rel_prefix}/{pkg_name}/{p.relative_to(pkg).as_posix()}'] = p
     return out
+
+
+PACKAGES = ('waset_ops', 'waset_runtime')
 
 
 class Deployer:
@@ -485,7 +490,7 @@ class Deployer:
             rel_d = Path(d).relative_to(live)
             skip = {n for n in names if n == '__pycache__'}
             if rel_d == Path('.'):
-                skip |= {n for n in names if n in managed or n == 'waset_ops'}
+                skip |= {n for n in names if n in managed or n in PACKAGES}
             return skip
 
         def link(src, dst):

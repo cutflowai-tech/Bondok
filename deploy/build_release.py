@@ -6,8 +6,8 @@
 Content comes from ``git archive HEAD`` (committed files only), so a local .env, database or scratch file can
 never ship (R5 LOW-19), and only these paths are taken:
 
-  helper/     helper.py, waset_ops/*.py, drain_probe.py, RELEASE.json -> <data dir>/releases/<id>/ (deploy.py)
-  bondok/     *.py, policy.txt, waset_ops/*.py, RELEASE.json         -> Bondok code dir (runtime files kept)
+  helper/     helper.py, waset_ops/*.py, waset_runtime/*.py, drain_probe.py, RELEASE.json -> <data dir>/releases/<id>/
+  bondok/     *.py, policy.txt, waset_ops/*.py, waset_runtime/*.py, RELEASE.json -> Bondok code dir (runtime files kept)
   workflows/  *.v2.json (must equal a fresh workflows/build.py run of the same commit)
 
 Refuses (exit 1): uncommitted changes to tracked files (the release would not be its commit), stale
@@ -38,6 +38,7 @@ from pathlib import Path
 ALLOW = [  # (pattern in the repository, destination prefixes)
     (re.compile(r'src/helper\.py'), ['helper/helper.py']),
     (re.compile(r'src/waset_ops/([a-z_]+\.py)'), ['helper/waset_ops/{0}', 'bondok/waset_ops/{0}']),
+    (re.compile(r'src/waset_runtime/([a-z_]+\.py)'), ['helper/waset_runtime/{0}', 'bondok/waset_runtime/{0}']),
     (re.compile(r'deploy/drain_probe\.py'), ['helper/drain_probe.py']),
     (re.compile(r'bondok/([a-z_]+\.py)'), ['bondok/{0}']),
     (re.compile(r'bondok/policy\.txt'), ['bondok/policy.txt']),

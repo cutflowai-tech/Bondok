@@ -33,7 +33,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 from waset_ops import Command, Ops, Rejected, __version__  # noqa: E402
-from waset_ops import media  # noqa: E402
+from waset_ops import media, pipeline  # noqa: E402
 from waset_ops.db import SCHEMA_VERSION  # noqa: E402
 
 ROOT = media.ROOT
@@ -177,39 +177,17 @@ def cmd(o, b, op, item, args, kind):
 
 
 def prep_step(o, b):
-    """WF1 per-item preparation step. Network/media work happens between
-    handler transactions, never inside one."""
-    base = {'run_id': b['runId'], 'fence': b.get('fence'), 'expected_format': b.get('expectedFormat')}
-    args = {**base, 'file': b.get('file') or {}, 'url': b.get('url'), 'folder_url': b.get('folderUrl'),
-            'error': b.get('error'), 'error_kind': b.get('errorKind'), 'selection': b.get('selection')}
-    rid = str(b['requestId'])
-    r = o.submit(Command(rid + ':source', 'prep_source', 'service:wf1', 'service:wf1', b['itemId'], args))
-    for step in range(3):
-        if r.get('state') != 'completed' or r.get('next') not in ('preflight', 'prepare'):
-            return r
-        body = r['media']
-        if body.get('recheck'):
-            with o.store.read() as c:
-                chk = c.execute("SELECT requested FROM ops_checks WHERE item_id=? AND kind='media'",
-                                (str(b['itemId']),)).fetchone()
-            body['recheckRequestedAt'] = chk['requested'] if chk else time.time()
-        if r['next'] == 'preflight':
-            res = media.preflight(body)
-            r = o.submit(Command(f'{rid}:preflight:{step}', 'prep_preflight', 'service:wf1', 'service:wf1',
-                                 b['itemId'], {**base, 'result': res}))
-            if r.get('next') == 'continue':
-                r = o.submit(Command(f'{rid}:source:{step}', 'prep_source', 'service:wf1', 'service:wf1',
-                                     b['itemId'], args))
-            continue
-        res = media.prepare(body)
-        return o.submit(Command(rid + ':media', 'prep_media', 'service:wf1', 'service:wf1', b['itemId'],
-                                {**base, 'result': res}))
-    return r
+    """WF1 per-item preparation step (shared implementation: waset_ops.pipeline)."""
+    return pipeline.prep_step(o, b)
 
 
 def gate(o, path, b):
     """Deployment fence and run fencing, before any route acts. Returns a response to send instead, or None."""
     fence = deploy_fence()
+    if fence is None and path not in FENCE_ALLOWED and path in FENCE_IDLE and o.runtime_owner() != 'n8n':
+        # Agent migration: the Bondok runtime owns scheduled work; n8n starts nothing new (results of work it
+        # already has in flight are still accepted through FENCE_ALLOWED routes).
+        return {**FENCE_IDLE[path], 'retired': True, 'reason': 'scheduled work runs on the Bondok runtime'}
     ctx = run_context(b)
     if fence is not None and path not in FENCE_ALLOWED:
         if path in FENCE_IDLE:              # also for a run already in flight: it finishes without new work
@@ -223,20 +201,8 @@ def gate(o, path, b):
 
 
 def delivered_args(o, b):
-    """WF1 delivery stage report: an upload/identification with its Dropbox metadata, the registered share link, or
-    a failure at one stage (R5 M9/M17). The local file's Dropbox content hash is computed here, outside any
-    handler transaction, when the prepared file's record does not carry it yet."""
-    args = {'run_id': b['runId'], 'fence': b.get('fence'), 'mediaId': b['mediaId'], 'url': b.get('url'),
-            'stage': b.get('stage'), 'error': b.get('error'), 'error_kind': b.get('errorKind'),
-            'upload': b.get('upload')}
-    if b.get('upload') and b.get('stage') in ('uploaded', 'identified'):
-        with o.store.read() as c:
-            m = o.media_row(c, b['mediaId'])
-        info = json.loads(m['metadata'] or '{}') if m else {}
-        if m and not info.get('dropboxHash'):
-            local = o.local_media(m)
-            args['local_hash'] = media.dropbox_hash(local) if local else None
-    return {k: v for k, v in args.items() if v is not None}
+    """WF1 delivery stage report (shared implementation: waset_ops.pipeline)."""
+    return pipeline.delivered_args(o, b)
 
 
 def action(path, b):

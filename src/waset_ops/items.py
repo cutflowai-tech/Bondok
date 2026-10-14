@@ -273,7 +273,8 @@ class ItemsMixin:
                                "kind='missing_on_board'").fetchall():
                 if r['item_id'] in seen:
                     self.resolve_finding(c, r['fingerprint'])        # it is back on the board
-            for r in c.execute("SELECT item_id FROM ops_items WHERE publication!='published'").fetchall():
+            for r in c.execute("SELECT item_id FROM ops_items WHERE publication!='published' AND "
+                               "COALESCE(owner_state_reason,'')!='Removed from the board by the owner'").fetchall():
                 if r['item_id'] not in seen:
                     missing.append(r['item_id'])
                     self.finding(c, 'missing_on_board:' + r['item_id'], r['item_id'], 'missing_on_board',

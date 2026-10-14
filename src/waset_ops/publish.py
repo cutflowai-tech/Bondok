@@ -273,7 +273,7 @@ class PublishMixin:
                 audit(c, item_id, 'attempt_abandoned', worker, {'attempt': stale['id'], 'why': 'no container saved'})
             tries = c.execute("SELECT COUNT(*) FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned'",
                               (str(item_id), res['slot'])).fetchone()[0]
-            if tries >= MAX_ATTEMPTS_PER_SLOT and not self.active_attempt(c, item_id) and \
+            if tries >= int(self.policy(c)['publish_attempts_per_slot']) and not self.active_attempt(c, item_id) and \
                     all('could not be checked' in (r['evidence'] or '') for r in c.execute(
                         "SELECT evidence FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned'",
                         (str(item_id), res['slot']))):
@@ -298,7 +298,7 @@ class PublishMixin:
                             f"Next slot: {rules.display(rules.instant(out['scheduled'])) if out.get('scheduled') else 'none yet'}.",
                             it['item_id'])
                 return {'claimed': False, 'reason': 'Dropbox unreadable at publication time', 'rescheduled': out}
-            if tries >= MAX_ATTEMPTS_PER_SLOT and not self.active_attempt(c, item_id):
+            if tries >= int(self.policy(c)['publish_attempts_per_slot']) and not self.active_attempt(c, item_id):
                 # Container errors or commit refusals repeat every minute, each with a new Instagram container.
                 last = c.execute("SELECT evidence FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned' "
                                  'ORDER BY updated DESC LIMIT 1', (str(item_id), res['slot'])).fetchone()

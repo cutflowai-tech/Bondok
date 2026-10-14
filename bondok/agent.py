@@ -113,6 +113,33 @@ TOOLS = [
          'value': {'type': 'string', 'description': 'New value as text: "true"/"false", a number, "12:00, 15:00" '
                                                      'for story_slots, \'{"sat": "21:00"}\' (JSON) for post_slots'},
          'reason': {'type': ['string', 'null']}, **MEANING}),
+    # ---- execution tools (agent migration P2): the owner's instruction is carried out, the result is reported
+    _fn('publish_now', 'Owner request: publish an item now (in about two minutes, as soon as it is ready). Use '
+        'request_publish for "the next free slot" and request_reschedule for an exact time.', {**ITEM, **MEANING}),
+    _fn('cancel_schedule', 'Owner request: remove the item\'s publication time; it stays unscheduled until a new time '
+        'or "publish it".', {**ITEM, **MEANING}),
+    _fn('board_create_item', 'Owner request: create a new item on the social board.',
+        {'name': {'type': 'string'}, 'format': {'type': 'string', 'enum': ['Post', 'Story']},
+         'code': {'type': ['string', 'null']}, 'dropbox_url': {'type': ['string', 'null']},
+         'caption': {'type': ['string', 'null']}, **MEANING}),
+    _fn('board_remove_item', 'Owner request: remove an item from the board (archive by default; delete only when the '
+        'owner says permanently). It will not be published.',
+        {**ITEM, 'mode': {'type': 'string', 'enum': ['archive', 'delete']}, 'permanent': {'type': 'boolean'},
+         **MEANING}),
+    _fn('set_item_field', 'Owner request: set Notes, Code, Story variety or IG Colab of an item (exact value the '
+        'owner typed).', {**ITEM, 'field': {'type': 'string', 'enum': ['notes', 'code', 'variety', 'collab']},
+                          'value': {'type': 'string'}, **MEANING}),
+    _fn('list_files', 'The videos in an item\'s Dropbox project folder, with which one is selected. Read-only.', ITEM),
+    _fn('file_action', 'Owner request: rename, move or delete (to Dropbox\'s deleted files) one Dropbox file. Use the '
+        'exact path from list_files.',
+        {'item': {'type': ['string', 'null'], 'description': 'The item the file belongs to, if any'},
+         'action': {'type': 'string', 'enum': ['rename', 'move', 'delete']}, 'path': {'type': 'string'},
+         'to': {'type': ['string', 'null'], 'description': 'New name (rename) or full new path (move)'},
+         **MEANING}),
+    _fn('get_history', 'What happened to an item: decisions, publication attempts and results, with who and when. '
+        'Read-only.', ITEM),
+    _fn('instagram_recent', 'Recent posts on the studio Instagram account, and the 24-hour publishing quota. '
+        'Read-only.'),
 ]
 TOOL_NAMES = {t['name'] for t in TOOLS}
 
@@ -180,8 +207,9 @@ def _error_message(r) -> str:
 
 
 class Agent:
-    def __init__(self, bridge: Bridge, model, monday=None, store=None):
+    def __init__(self, bridge: Bridge, model, monday=None, store=None, clients=None):
         self.bridge, self.model, self.monday, self.store = bridge, model, monday, store
+        self.clients = clients or {}       # optional runtime clients: dropbox, instagram (read tools)
 
     # ------------------------------------------------------------------ tools
     def tool(self, name, args, ctx) -> dict:
@@ -214,6 +242,24 @@ class Agent:
             return ops.health()
         if name == 'get_rules':
             return ops.policy_report()
+        if name == 'get_history':
+            r = self.bridge.resolve(args.get('item'))
+            if 'item_id' not in r:
+                return r
+            return ops.history(r['item_id'])
+        if name == 'list_files':
+            r = self.bridge.resolve(args.get('item'))
+            if 'item_id' not in r:
+                return r
+            return self._files(r['item_id'])
+        if name == 'instagram_recent':
+            ig = self.clients.get('instagram')
+            if ig is None:
+                return {'error': 'Instagram is not connected to Bondok on this host (configuration).'}
+            try:
+                return {'recent': ig.media(10), 'quota': ig.publishing_limit()}
+            except Exception as e:  # noqa: BLE001 - reported, never guessed
+                return {'error': f'Instagram read failed: {str(e)[:200]}'}
         if name == 'explain_item':
             r = self.bridge.resolve(args.get('item'))
             if 'item_id' not in r:
@@ -231,6 +277,26 @@ class Agent:
         return self.bridge.run(name, args, actor=ctx['actor'], event_id=ctx['event_id'], text=ctx['text'],
                                thread=ctx['thread'], turn=ctx.get('turn'))
 
+    def _files(self, item_id) -> dict:
+        dbx = self.clients.get('dropbox')
+        if dbx is None:
+            return {'error': 'Dropbox is not connected to Bondok on this host (configuration).'}
+        from waset_runtime import selection
+        with self.bridge.ops.store.read() as c:
+            it = self.bridge.ops.item(c, item_id)
+        folder = it.get('folder_url') or it.get('file_url')
+        if not folder:
+            return {'error': 'This item has no Dropbox folder or file link yet.'}
+        try:
+            plan = selection.plan_listing(dbx.link_metadata(folder))
+            entries = dbx.list_folder(plan['list']['path'], recursive=plan['list']['recursive'])
+        except Exception as e:  # noqa: BLE001
+            return {'error': f'Dropbox read failed: {str(e)[:200]}'}
+        vids = [{'name': e['name'], 'path': e['path_lower'], 'modified': e.get('client_modified'),
+                 'selected': bool(it.get('file_id') and e.get('id') == it['file_id'])}
+                for e in entries if e.get('.tag') == 'file' and selection.VID.search(e.get('name') or '')]
+        return {'folder': plan['folderPath'], 'videos': vids[:50], 'selected_version': it.get('asset_key')}
+
     def _shown(self, item_id, ctx):
         with self.bridge.ops.store.read() as c:
             it = self.bridge.ops.item(c, item_id)
@@ -243,7 +309,12 @@ class Agent:
         ctx = {'actor': actor, 'thread': thread, 'event_id': event_id, 'text': text, 'turn': turn}
         convo = list(history)[-HISTORY:] + [{'role': 'user', 'content': speaker(actor, self.bridge.owner) + text[:6000]}]
         outcomes = []
-        for _ in range(MAX_STEPS):
+        try:
+            with self.bridge.ops.store.read() as c:
+                steps = int(self.bridge.ops.policy(c)['agent_max_steps'])   # owner's cost/loop limit (P3-06)
+        except Exception:  # noqa: BLE001 - an unreadable store keeps the default
+            steps = MAX_STEPS
+        for _ in range(steps):
             try:
                 data = self.model(convo, TOOLS)
             except ServiceError as e:
@@ -309,7 +380,7 @@ def render_outcome(o) -> str:
         return '❓ Which item? ' + ', '.join(f"{a['name']} ({a['code']}, {a['item_id']})" for a in r.get('ambiguous', []))
     else:
         head = f'⛔ Not done: {name}'
-    detail = r.get('message') or r.get('reason') or ''
+    detail = r.get('message') or r.get('reason') or r.get('error') or ''
     if r.get('scheduled'):
         detail += f" Slot: {rules.display(rules.instant(r['scheduled']))}."
     return (head + ('\n' + detail.strip() if detail.strip() else '')).strip()

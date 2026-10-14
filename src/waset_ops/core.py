@@ -203,6 +203,11 @@ class CoreMixin:
         'request_publish': {OWNER, MONDAY},  # Slack "publish it" / the owner's Scheduled on the board
         'set_window': {OWNER},
         'set_policy': {OWNER},          # owner changes a rule (versioned; agent migration P1)
+        'set_runtime_owner': {OWNER},
+        'board_create': {OWNER},         # owner administration of the board and files (admin.py)
+        'board_remove': {OWNER},
+        'board_set_field': {OWNER},
+        'file_action': {OWNER},   # which runner executes scheduled work: n8n or the Bondok runtime (P6)
         'waive_rule': {OWNER},          # owner exempts one item from a rule
         'restore_rule': {OWNER},
         'request_rework': {OWNER},
@@ -258,6 +263,38 @@ class CoreMixin:
                 raise Rejected('A publish order from the board is Status set to Scheduled', 'forbidden')
         if cmd.item_id is not None and cmd.op not in ('approve_proposal', 'reject_proposal', 'propose'):
             self.item(c, cmd.item_id)  # membership: only registered social-board items
+
+    # ------------------------------------------------------------ runtime ownership (agent migration P4/P6)
+    # Exactly one runner executes scheduled work (preparation, display sync, publication, supervision): 'n8n' (the
+    # helper routes) or 'bondok' (waset_runtime). The leases and the attempt claim already exclude concurrent work;
+    # this switch makes the owner explicit, so the runner that is not the owner starts nothing new. Work already in
+    # flight (claimed attempts, outbox jobs taken) may still report its results.
+    RUNTIME_OWNERS = ('n8n', 'bondok')
+
+    def runtime_owner(self) -> str:
+        try:
+            with self.store.read() as c:
+                r = c.execute("SELECT value FROM ops_meta WHERE key='runtime_owner'").fetchone()
+        except sqlite3.Error:
+            return 'n8n'
+        return r['value'] if r and r['value'] in self.RUNTIME_OWNERS else 'n8n'
+
+    def op_set_runtime_owner(self, c, cmd: Command):
+        new = str(cmd.args.get('owner') or '')
+        if new not in self.RUNTIME_OWNERS:
+            raise Rejected('Runtime owner is n8n or bondok', 'invalid')
+        r = c.execute("SELECT value FROM ops_meta WHERE key='runtime_owner'").fetchone()
+        old = r['value'] if r else 'n8n'
+        if old == new:
+            return {'owner': new, 'unchanged': True}
+        c.execute("INSERT OR REPLACE INTO ops_meta VALUES('runtime_owner',?)", (new,))
+        c.execute("INSERT OR REPLACE INTO ops_meta VALUES('runtime_owner_since',?)", (str(self.now()),))
+        active = c.execute("SELECT COUNT(*) FROM ops_attempts WHERE stage IN ('claimed','container_created',"
+                           "'committed')").fetchone()[0]
+        audit(c, None, 'runtime_owner', cmd.actor, {'from': old, 'to': new, 'active_attempts': active})
+        self.notify(c, f'runtime-owner:{new}:{int(self.now())}', f'⚙️ Scheduled work now runs on {new} (was {old}).'
+                    + (f' {active} publication attempt(s) already in flight finish on {old}.' if active else ''))
+        return {'owner': new, 'previous': old, 'active_attempts': active}
 
     # ------------------------------------------------------------ worker runs (fencing + lifecycle, R5 A13)
     # Lifecycle records live in ops_heartbeat (no schema change), one row per stage and kind:

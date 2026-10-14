@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from datetime import date
+from datetime import date, timedelta
 
 import language as lang
 from waset_ops import Command, Ops, Rejected, rules
@@ -27,9 +27,12 @@ RECENT_FILE_CHANGE = 6 * 3600
 PROTECTED = {'pause_item', 'resume_item', 'skip_item', 'request_reschedule', 'request_publish', 'change_format',
              'replace_source', 'update_caption', 'approve_existing_caption', 'approve_caption_draft', 'confirm_topaz',
              'resolve_publication', 'report_published', 'set_window', 'request_rework', 'waive_rule', 'restore_rule',
-             'set_rule'}
+             'set_rule', 'publish_now', 'cancel_schedule', 'board_create_item', 'board_remove_item', 'set_item_field',
+             'file_action'}
 # Protected tools that are not about one item.
-GLOBAL = {'set_rule'}
+GLOBAL = {'set_rule', 'board_create_item', 'file_action'}
+# Board/file administration and publish-now: read by the generic reader (language.contradiction 'generic').
+GENERIC = {'publish_now', 'board_create_item', 'board_remove_item', 'set_item_field', 'file_action'}
 MUTATING = PROTECTED | {'request_recheck', 'draft_caption', 'approve_all_existing_captions'}
 EXECUTABLE_ACTS = ('imperative', 'completed_statement')
 # Reader kind per tool (language.contradiction / supports).
@@ -38,7 +41,8 @@ KIND = {'pause_item': 'pause', 'skip_item': 'skip', 'resume_item': 'resume', 're
         'update_caption': 'update_caption', 'approve_existing_caption': 'approve_caption',
         'approve_caption_draft': 'approve_caption', 'confirm_topaz': 'confirm_topaz',
         'report_published': 'report_published', 'set_window': 'set_window', 'request_rework': 'request_rework',
-        'waive_rule': 'waive_rule', 'restore_rule': 'restore_rule', 'set_rule': 'set_policy'}
+        'waive_rule': 'waive_rule', 'restore_rule': 'restore_rule', 'set_rule': 'set_policy',
+        'cancel_schedule': 'cancel_time', **{t: 'generic' for t in GENERIC}}
 
 
 def key(text: str) -> str:
@@ -60,6 +64,7 @@ class Turn:
         self.history_text = history_text
         self.questions: list[str] = []
         self.actions: list[dict] = []
+        self.executed = 0                 # protected actions executed for this message (bulk limit, P1-06)
         self._named_now = self._named_set = None
 
     def ask(self, question: str, action: dict | None = None):
@@ -146,8 +151,17 @@ class Bridge:
             else f"{it['name']} ({it['item_id']})"
 
     # ------------------------------------------------------------------ execution
-    def execute(self, action: dict, *, actor, cid, thread, event_id) -> dict:
-        """Submit one validated owner decision to the handler (the only writer)."""
+    def execute(self, action: dict, *, actor, cid, thread, event_id, turn: Turn | None = None) -> dict:
+        """Submit one validated owner decision to the handler (the only writer). One message acting on more items
+        than the owner's bulk limit asks once before the rest run (the answer "اه" executes them)."""
+        if turn is not None:
+            with self.ops.store.read() as c:
+                limit = int(self.ops.policy(c)['bulk_confirm_threshold'])
+            if turn.executed >= limit:
+                q = f'This message asks for more than {limit} changes. Do the rest too?'
+                turn.ask(q, action)
+                return {'state': 'needs_confirmation', 'question': q}
+            turn.executed += 1
         return self.ops.submit(Command(cid, action['op'], actor, 'owner', action['item'], action['args'],
                                        auth={'thread': thread, 'event': event_id, 'explicit': True}))
 
@@ -233,7 +247,9 @@ class Bridge:
                      'which video and I will exempt just that one.)')
                 turn.ask(q + '؟', action)
                 return {'state': 'needs_confirmation', 'question': q + '؟'}
-            return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id)
+            return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn)
+        if tool in ('board_create_item', 'file_action'):
+            return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn)
 
         # ---- targets: the owner's words and the thread's named set, never extra items (R5 B6, A14)
         m = lang.markers(text, quote)
@@ -258,7 +274,7 @@ class Bridge:
             if ask:
                 turn.ask(ask, action)
                 return {'state': 'needs_confirmation', 'question': ask}
-        return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id)
+        return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn)
 
     @staticmethod
     def _clarify(question: str) -> dict:
@@ -373,6 +389,34 @@ class Bridge:
                 a['effective_at'] = args['effective_at']
             return {'tool': tool, 'item': None, 'op': 'set_policy', 'args': a}, \
                 f"Change the rule \"{rules.POLICY[rule]['label']}\" to {value!r}"
+        if tool == 'publish_now':
+            now = self.ops.now_dt()
+            at = (now + timedelta(seconds=125)).replace(second=0)
+            return {**act, 'op': 'request_reschedule', 'args': {'at': rules.iso(at)}}, \
+                f'Publish {label} now (at {rules.display(at)}, as soon as it is ready)'
+        if tool == 'cancel_schedule':
+            return {**act, 'op': 'request_reschedule', 'args': {'at': None}}, \
+                f'Cancel the publication time of {label} (it stays unscheduled until you give a new time)'
+        if tool == 'board_create_item':
+            a = {k: args.get(k) for k in ('name', 'format', 'code', 'dropbox_url', 'caption') if args.get(k)}
+            return {'tool': tool, 'item': None, 'op': 'board_create', 'args': a}, \
+                f"Create the {args.get('format')} \"{args.get('name')}\" on the board"
+        if tool == 'board_remove_item':
+            a = {'mode': 'delete' if args.get('mode') == 'delete' else 'archive', 'permanent': bool(args.get('permanent'))}
+            return {**act, 'op': 'board_remove', 'args': a}, \
+                f"{'Delete' if a['mode'] == 'delete' else 'Archive'} {label} on the board (it will not be published)"
+        if tool == 'set_item_field':
+            value = str(args.get('value') or '')
+            if value and not lang.contains(turn.text, value):
+                raise Rejected('Not done: the new value is not in your message; type it exactly')
+            return {**act, 'op': 'board_set_field', 'args': {'field': args.get('field'), 'value': value}}, \
+                f"Set {args.get('field')} of {label} to \"{value}\""
+        if tool == 'file_action':
+            a = {k: args.get(k) for k in ('action', 'path', 'to') if args.get(k)}
+            if a.get('to') and not lang.contains(turn.text, a['to'].rsplit('/', 1)[-1]):
+                raise Rejected('Not done: the new name or folder is not in your message; type it exactly')
+            return {'tool': tool, 'item': item, 'op': 'file_action', 'args': a}, \
+                f"{str(a.get('action') or '').capitalize()} {a.get('path')}" + (f" → {a['to']}" if a.get('to') else '')
         if tool == 'request_rework':
             return {**act, 'op': 'request_rework',
                     'args': {'reason': args.get('reason') or 'The owner asked for a new edit'}}, \
