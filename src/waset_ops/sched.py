@@ -493,7 +493,7 @@ class SchedMixin:
                                'It is reserved for that time once the item is ready.'}
         if res:
             c.execute('DELETE FROM ops_reservations WHERE item_id=?', (it['item_id'],))
-        self._reserve(c, self.item(c, it['item_id']), at, 'owner', True, cmd.actor)
+        self._reserve(c, self.item(c, it['item_id']), at, self.origin_of(cmd), True, cmd.actor)
         out = {'scheduled': slot, 'display': rules.display(at)}
         if att:
             out['message'] = ('The publisher had already started on the previous time; that attempt stops before '
@@ -525,7 +525,7 @@ class SchedMixin:
             self._store_window(c, it['item_id'], None, cmd.actor)
             if res:
                 self.release(c, it, 'owner chose another time', keep_request=False)
-            self._reserve(c, self.item(c, it['item_id']), at, 'owner', True, cmd.actor)
+            self._reserve(c, self.item(c, it['item_id']), at, self.origin_of(cmd), True, cmd.actor)
             return {'scheduled': slot, 'display': rules.display(at),
                     'message': (f'Published late at the requested time {rules.display(at)} (inside the 2-hour late '
                                 'window).') if at <= now else f'Scheduled for {rules.display(at)}.'}
@@ -626,11 +626,20 @@ class SchedMixin:
         self._reserve(c, self.item(c, it['item_id']), rules.instant(payload['slot']), 'owner', True, cmd.actor)
         return {'moved': moved}
 
+    @staticmethod
+    def origin_of(cmd) -> str:
+        """Reservation origin from who asked: the owner's instruction, or a board edit (Monday does not say who)."""
+        return 'owner' if cmd.actor_kind == OWNER else 'board' if cmd.actor_kind == MONDAY else 'auto'
+
     def op_request_publish(self, c, cmd: Command):
         """Owner asks to get an item out: the earliest free slot on the usual schedule (inside any day/not-before
-        constraint given with the instruction) through the normal publisher. Never a direct publish."""
+        constraint given with the instruction) through the normal publisher. Never a direct publish. "Publish it" on
+        an item the owner paused or skipped is the decision to resume it (owner review 2026-10-16)."""
         it = self.item(c, cmd.item_id)
         self._guard_mutable(c, it, allow_paused=True)
+        if it['owner_state'] in ('paused', 'skipped') and cmd.actor_kind == OWNER:
+            it = self.update_item(c, it['item_id'], cmd.actor, 'resumed by the owner\'s publish request',
+                                  owner_state='active', owner_state_reason=None)
         if it['publication'] == 'failed':
             # Explicit owner retry after a definitive rejection (nothing was published) (R5 M7).
             it = self.update_item(c, it['item_id'], cmd.actor, 'owner retry after rejection', publication='not_started')
@@ -659,6 +668,6 @@ class SchedMixin:
             raise Rejected('Cannot schedule yet: ' + why, 'not_eligible')
         for at in rules.grid(self.now_dt(), it['format'], rules.NEAR_DUE, window=win, policy=self.policy(c)):
             if rules.iso(at) not in self.taken(c, it['format'], it['item_id']):
-                self._reserve(c, it, at, 'owner', False, cmd.actor)
+                self._reserve(c, it, at, self.origin_of(cmd), False, cmd.actor)
                 return {'scheduled': rules.iso(at), 'display': rules.display(at)}
         raise Rejected('No free slot ' + (self.window_text(win) if win else 'in the scheduling horizon'), 'no_slot')

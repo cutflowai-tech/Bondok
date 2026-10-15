@@ -190,6 +190,8 @@ def main(argv=None):
                    help='cutover/rollback step, run only with the owner\'s authorization: which runner executes the '
                         'scheduled work')
     p.add_argument('--authorized-by', help='reference of the owner authorization for --switch-owner')
+    p.add_argument('--legacy-rollback', action='store_true',
+                   help='only with --switch-owner n8n after the n8n workflows, credential and data were restored')
     a = p.parse_args(argv)
     if a.switch_owner:
         from waset_ops import OWNER, Command
@@ -197,7 +199,8 @@ def main(argv=None):
             raise SystemExit('--switch-owner needs --authorized-by (the owner\'s authorization reference)')
         ops = Ops(read_env(a.env)['PIPELINE_DB'])
         print(json.dumps(ops.submit(Command(f'switch-owner:{a.switch_owner}:{int(time.time())}', 'set_runtime_owner',
-                                            'operator', OWNER, None, {'owner': a.switch_owner},
+                                            'operator', OWNER, None, {'owner': a.switch_owner,
+                                                                      'legacy_rollback': bool(a.legacy_rollback)},
                                             auth={'authorized_by': a.authorized_by}))))
         return
     if a.mark_restored:

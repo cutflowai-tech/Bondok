@@ -330,7 +330,7 @@ class GuardPort(unittest.TestCase):
 class A29_A30_RuntimeOwnership(RuntimeCase):
     def test_scheduler_idle_until_owner_switches(self):
         self.assertEqual(self.ops.runtime_owner(), 'bondok')         # n8n is retired: Bondok's by default
-        self.ops.submit(owner_cmd('back', 'set_runtime_owner', None, explicit=True, owner='n8n'))   # a rollback
+        self.ops.submit(owner_cmd('back', 'set_runtime_owner', None, explicit=True, owner='n8n', legacy_rollback=True))   # a rollback
         s = Scheduler(self.ops, self.runner, clock=self.clock)
         self.assertEqual(s.tick(), [])
         r = self.ops.submit(owner_cmd('own', 'set_runtime_owner', None, explicit=True, owner='bondok'))

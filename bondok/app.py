@@ -19,10 +19,11 @@ from pathlib import Path
 
 import acceptance
 import language as lang
-from agent import Agent, Model, ServiceError, policy_text, render_outcome, speaker
+from agent import Agent, Model, ServiceError, policy_text, render_outcome, render_outcomes, speaker
 from bridge import Bridge, Turn
 from monday_read import MondayReader
 from store import Store
+from verifier import Verifier
 from waset_ops import Ops
 
 LOG = logging.getLogger('bondok')
@@ -54,7 +55,7 @@ def accept_event(body, channel, team, known_thread, bot) -> bool:
 class Core:
     """Everything except the Slack transport, so it can be tested offline."""
 
-    def __init__(self, env: dict, *, model=None, monday=None, post=None, ops=None, clients=None):
+    def __init__(self, env: dict, *, model=None, monday=None, post=None, ops=None, clients=None, verifier=None):
         self.env = env
         self._undo, self._new_offset, self._defer_offset = [], None, False
         self.store = Store(Path(env.get('BONDOK_STATE_DIR', '/var/lib/bondok')) / 'bondok.sqlite')
@@ -63,6 +64,10 @@ class Core:
         self.bridge = Bridge(self.ops, self.owner, self.store)
         self.model = model or Model(env['OPENROUTER_API_KEY'], env.get('OPENROUTER_MODEL') or 'openai/gpt-6.1-sol',
                                     policy_text())
+        # Every protected action is read for meaning by an independent call of the real model (verifier.py); a
+        # scripted test model keeps the deterministic word rules unless a verifier is given.
+        self.bridge.verifier = verifier if verifier is not None else (
+            Verifier(self.model) if isinstance(self.model, Model) else None)
         self.clients = clients or {}       # runtime clients (monday writer, dropbox, instagram) when configured
         self.agent = Agent(self.bridge, self.model, monday, clients=self.clients)
         self.post = post
@@ -113,8 +118,8 @@ class Core:
             LOG.warning('model_low_credit reduced_output_budget=%s', self.model.last_budget)
         self.store.kv('fallback:' + thread, {'code': None, 'at': 0})
         reply = PLACEHOLDER_ID.sub('رقم المقترح', (reply or '').strip())   # never show a made-up approval id
-        for o in outcomes:
-            reply += '\n\n' + render_outcome(o)
+        if outcomes:
+            reply += '\n\n' + render_outcomes(outcomes)
         self.store.remember(thread, 'assistant', reply)
         return reply or 'No reply.'
 

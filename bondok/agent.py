@@ -173,13 +173,14 @@ class Model:
         self.calls = 0
         self.last_budget = None          # reduced output budget used after a credit refusal, for logging
 
-    def __call__(self, history, tools):
-        budget, self.last_budget = MAX_OUTPUT_TOKENS, None
+    def __call__(self, history, tools, *, instructions=None, tool_choice='auto', effort='medium', budget=None):
+        budget, self.last_budget = budget or MAX_OUTPUT_TOKENS, None
         for attempt in range(2):
             self.calls += 1
-            payload = {'model': self.model, 'input': history, 'store': False, 'reasoning': {'effort': 'medium'},
-                       'instructions': self.policy + '\nCurrent time: ' + datetime.now(rules.TZ).isoformat(),
-                       'tools': tools, 'tool_choice': 'auto', 'max_output_tokens': budget}
+            payload = {'model': self.model, 'input': history, 'store': False, 'reasoning': {'effort': effort},
+                       'instructions': (instructions or self.policy) + '\nCurrent time: ' +
+                       datetime.now(rules.TZ).isoformat(),
+                       'tools': tools, 'tool_choice': tool_choice, 'max_output_tokens': budget}
             try:
                 r = self.http.post('https://openrouter.ai/api/v1/responses', json=payload,
                                    headers={'Authorization': 'Bearer ' + self.key, 'X-Title': 'Waset Bondok'})
@@ -190,7 +191,7 @@ class Model:
                 # can afford. Retry once within that budget; otherwise report the credit problem as such.
                 m = re.search(r'can only afford (\d+)', r.text)
                 afford = int(m.group(1)) if m else 0
-                if attempt == 0 and afford - 100 >= MIN_OUTPUT_TOKENS:
+                if attempt == 0 and afford - 100 >= min(MIN_OUTPUT_TOKENS, budget):
                     budget = self.last_budget = afford - 100
                     continue
                 raise ServiceError('model_credits', _error_message(r))
@@ -387,6 +388,8 @@ def render_outcome(o) -> str:
     name = o['tool'].replace('_', ' ')
     if st == 'completed':
         head = f'✅ Done: {name}'
+        if r.get('unchanged'):
+            head = f'ℹ️ No change needed: {name}'
         if r.get('duplicate'):
             head = f'↩️ Already handled earlier: {name}'
         if r.get('publication') == 'may_already_be_in_progress':
@@ -410,6 +413,20 @@ def render_outcome(o) -> str:
     if r.get('scheduled'):
         detail += f" Slot: {rules.display(rules.instant(r['scheduled']))}."
     return (head + ('\n' + detail.strip() if detail.strip() else '')).strip()
+
+
+def render_outcomes(outcomes) -> str:
+    """All outcomes of one owner message, with at most ONE question: several actions waiting for "اه" are asked
+    together, numbered, in a single question (owner review 2026-10-16)."""
+    asks = [o for o in outcomes if (o.get('result') or {}).get('state') == 'needs_confirmation']
+    rest = [render_outcome(o) for o in outcomes if o not in asks]
+    if len(asks) == 1:
+        rest.append(render_outcome(asks[0]))
+    elif asks:
+        rest.append('❓ سؤال واحد قبل ما أنفذ:\n' + '\n'.join(f"{n}) {o['result']['question']}"
+                                                      for n, o in enumerate(asks, 1))
+                    + '\nرد بـ «اه» عشان أنفذهم كلهم، أو «لا».')
+    return '\n\n'.join(rest)
 
 
 def policy_text():

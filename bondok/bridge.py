@@ -82,8 +82,9 @@ class Turn:
 
 
 class Bridge:
-    def __init__(self, ops: Ops, owner_id: str, store=None):
+    def __init__(self, ops: Ops, owner_id: str, store=None, verifier=None):
         self.ops, self.owner, self.store = ops, owner_id, store
+        self.verifier = verifier          # independent meaning check (verifier.py); None: the word rules decide
 
     # ------------------------------------------------------------------ resolution
     def resolve(self, ref) -> dict:
@@ -210,6 +211,9 @@ class Bridge:
                 return self._clarify(e.reason)
             return {'state': 'rejected', 'reason': e.reason}
         speech = str(meaning.get('speech_act'))
+        if speech != 'bondok_offer' and self.verifier is not None:
+            return self._verified(tool, item, args, meaning, action, summary, text, thread, turn, actor, cid,
+                                  event_id)
         if speech == 'bondok_offer':
             # Bondok's own suggestion: one question naming the exact action; "اه" executes exactly this.
             q = f'{summary}؟'
@@ -447,6 +451,42 @@ class Bridge:
                     'args': {'reason': args.get('reason') or 'The owner asked for a new edit'}}, \
                 f'Send {label} back to the editor for a new edit'
         raise Rejected('Unknown tool', 'unsupported')
+
+    def _verified(self, tool, item, args, meaning, action, summary, text, thread, turn, actor, cid, event_id):
+        """The owner's words decide, read for meaning by the independent verifier (not word lists). Deterministic
+        checks that stay: the quote is the owner's own words; values the owner must type are in the message."""
+        quote = str(meaning.get('evidence_quote') or '').strip()
+        if not quote or lang.markers(text, quote).get('located') is not True:
+            return self._clarify(f'{summary}: not done, I could not find that request in your message. '
+                                 'Say exactly what to do.')
+        quoted = [ln.lstrip('> ').strip() for ln in text.splitlines() if ln.lstrip().startswith('>')]
+        if quoted and any(lang.compact(quote) in lang.compact(q) for q in quoted):
+            return self._clarify(f'{summary}: not done, those words are quoted text (a line starting with ">"), '
+                                 'not your instruction.')
+        prev = ''
+        if self.store is not None:
+            hist = [m for m in self.store.history(thread, limit=4) if m.get('role') == 'assistant']
+            prev = hist[-1]['content'] if hist else ''
+        try:
+            v = self.verifier.check(text, prev, summary, {k: v for k, v in (action.get('args') or {}).items()})
+        except Exception as e:  # noqa: BLE001 - verifier unavailable: nothing is guessed
+            return self._clarify(f'{summary}: not done, I could not check the meaning of your message right now '
+                                 f'({type(e).__name__}). Say it again in a moment.')
+        if v.get('decision') == 'ask':
+            q = (v.get('question') or f'{summary}؟').strip()
+            turn.ask(q, action)
+            return {'state': 'needs_confirmation', 'question': q}
+        if v.get('decision') != 'execute':
+            return self._clarify(f"{summary}: not done, {v.get('reason') or 'your message does not ask for it'}.")
+        if tool == 'resolve_publication' and args.get('published') is not True:
+            q = f'{summary} (it becomes schedulable again)؟'
+            turn.ask(q, action)
+            return {'state': 'needs_confirmation', 'question': q}
+        if tool == 'report_published' and args.get('destination') not in (None, 'studio_account'):
+            q = f'Was it published on the studio Instagram account? If yes: {summary}؟'
+            turn.ask(q, action)
+            return {'state': 'needs_confirmation', 'question': q}
+        return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn)
 
     # ------------------------------------------------------------------ constraints
     @staticmethod

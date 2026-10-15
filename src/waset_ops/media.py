@@ -671,6 +671,18 @@ def reap_orphans(grace=ORPHAN_GRACE_SECONDS) -> int:
     return removed
 
 
+LEGACY_ROOTS = ('/home/node/.n8n-files/waset-social/',)   # prepared files recorded by the retired n8n helper
+
+
+def _local(path) -> Path:
+    """The file on this host: records written inside the n8n container name the same file under its mount point."""
+    s = str(path or '')
+    for old in LEGACY_ROOTS:
+        if s.startswith(old):
+            return ROOT / s[len(old):]
+    return Path(s)
+
+
 def maintenance(retain_days=30) -> dict:
     """Delete local prepared files only for confirmed publications older than
     the retention period. Receipts and records are retained indefinitely."""
@@ -680,7 +692,7 @@ def maintenance(retain_days=30) -> dict:
         rows = c.execute("SELECT m.path FROM media m JOIN ops_attempts a ON a.item_id=m.item "
                          "WHERE a.stage='published' AND a.updated<?", (cutoff,)).fetchall()
     for r in rows:
-        f = Path(r['path'])
+        f = _local(r['path'])
         if f.parent == ROOT / 'media' and f.exists():
             f.unlink()
             removed += 1
@@ -696,7 +708,7 @@ def maintenance(retain_days=30) -> dict:
                            'LEFT JOIN ops_items i ON i.item_id=m.item').fetchall():
             info = loads(m['metadata'], {}) or {}
             current = info.get('assetKey') == m['asset_key'] and info.get('format') == m['format']
-            f = Path(m['path'])
+            f = _local(m['path'])
             if current or m['id'] == m['verification_id'] or m['id'] in live or f.parent != ROOT / 'media':
                 continue
             if f.exists() and f.stat().st_mtime > old:

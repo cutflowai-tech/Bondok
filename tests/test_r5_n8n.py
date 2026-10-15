@@ -97,7 +97,7 @@ class N8nHelperPath(OpsCase):
         self.clock.set(datetime.now(timezone.utc).replace(microsecond=0))    # helper subprocesses use real time
         self.env = {**os.environ, 'WASET_SOCIAL_DATA_DIR': str(self.dir)}
         self.commands = []
-        self.ops.submit(owner_cmd('legacy-owner', 'set_runtime_owner', None, explicit=True, owner='n8n'))   # the retired n8n path, set explicitly
+        self.ops.submit(owner_cmd('legacy-owner', 'set_runtime_owner', None, explicit=True, owner='n8n', legacy_rollback=True))   # the retired n8n path, set explicitly
         # WF1's first helper call (Run Start) precedes every body-file write; any helper call keeps inbox/ ready.
         arg = base64.b64encode(b'{"path":"/v2/health","body":{}}').decode()
         subprocess.run([sys.executable, str(HELPER), arg], capture_output=True, env=self.env, check=True, timeout=60)

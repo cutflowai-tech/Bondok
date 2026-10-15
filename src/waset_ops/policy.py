@@ -265,9 +265,12 @@ class PolicyMixin:
         audit(c, None, 'send_isolation_set', cmd.actor, {**value, 'command': cmd.id, 'moved_to_test_account': moved})
         return {'isolation': value, 'moved_to_test_account': moved}
 
+    ACCEPTANCE_REMOVED = 'Acceptance test item removed after the test'
+
     def op_release_isolated(self, c, cmd: Command):
-        """Cleanup of the test only: releases the reservations of isolated items; nothing else is touched."""
-        out = []
+        """Cleanup of the test only: releases the reservations of isolated items (and with ``finalize`` retires them
+        from the store before their board items are deleted); real content is never touched."""
+        out, retired = [], []
         for r in c.execute('SELECT item_id, slot FROM ops_reservations').fetchall():
             it = self.item(c, r['item_id'], required=False)
             if it and it['publication'] == 'not_started' and self.send_isolated(c, r['item_id']):
@@ -276,8 +279,17 @@ class PolicyMixin:
                                  requested_by=None)
                 self.project(c, it['item_id'])
                 out.append({'item_id': r['item_id'], 'slot': r['slot']})
-        audit(c, None, 'isolated_reservations_released', cmd.actor, {'released': out, 'command': cmd.id})
-        return {'released': out}
+        if cmd.args.get('finalize'):
+            for r in c.execute('SELECT item_id FROM ops_items').fetchall():
+                it = self.item(c, r['item_id'])
+                if self.send_isolated(c, it['item_id']) and it['owner_state_reason'] != self.ACCEPTANCE_REMOVED:
+                    self.update_item(c, it['item_id'], cmd.actor, 'acceptance cleanup', owner_state='skipped',
+                                     owner_state_reason=self.ACCEPTANCE_REMOVED, requested_at=None,
+                                     requested_by=None)
+                    retired.append(it['item_id'])
+        audit(c, None, 'isolated_reservations_released', cmd.actor, {'released': out, 'retired': retired,
+                                                                     'command': cmd.id})
+        return {'released': out, 'retired': retired}
 
     # ------------------------------------------------------------------ owner directive: never publish this item
     PUBLISH_BLOCK = 'publish_block'

@@ -20,7 +20,7 @@ from .service import read_env
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument('action', choices=['set', 'show', 'release', 'clear'])
+    ap.add_argument('action', choices=['set', 'show', 'release', 'finalize', 'clear'])
     ap.add_argument('--code-prefix', action='append', default=[])
     ap.add_argument('--name-prefix', action='append', default=[])
     ap.add_argument('--id', action='append', default=[])
@@ -38,8 +38,9 @@ def main(argv=None):
                     if ops.send_isolated(c, r['item_id'])]
         print(json.dumps({'isolation': iso, 'isolated_items': hits}, ensure_ascii=False, indent=1))
         return 0
-    if a.action == 'release':
-        r = ops.submit(Command(f'isolation-release:{stamp}', 'release_isolated', actor, actor, None, {}))
+    if a.action in ('release', 'finalize'):
+        r = ops.submit(Command(f'isolation-{a.action}:{stamp}', 'release_isolated', actor, actor, None,
+                               {'finalize': a.action == 'finalize'}))
     else:
         args = {} if a.action == 'clear' else {'item_ids': a.id, 'code_prefixes': a.code_prefix,
                                                  'name_prefixes': a.name_prefix, 'reason': a.reason}

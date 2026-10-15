@@ -286,8 +286,8 @@ class MonitorMixin:
         audit(c, it['item_id'], 'missed_slot', cmd.actor, {'slot': res['slot'], 'cause': cause,
                                                            'pinned': res['owner_pinned']})
         if res['owner_pinned'] and it['owner_state'] == 'active' and not loads(it['hold'], None):
-            c.execute("UPDATE ops_items SET requested_at=?, requested_by='owner' WHERE item_id=?",
-                      (res['slot'], it['item_id']))
+            c.execute('UPDATE ops_items SET requested_at=?, requested_by=? WHERE item_id=?',
+                      (res['slot'], 'owner' if res['origin'] == 'owner' else 'board', it['item_id']))
             out = self._missed_request(c, self.item(c, it['item_id']), cmd.actor, cause)
             self.project(c, it['item_id'])
             return {'missed': res['slot'], 'question': True, **out}

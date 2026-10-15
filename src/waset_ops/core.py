@@ -304,6 +304,11 @@ class CoreMixin:
         new = str(cmd.args.get('owner') or '')
         if new not in self.RUNTIME_OWNERS:
             raise Rejected('Runtime owner is n8n or bondok', 'invalid')
+        if new == 'n8n' and not cmd.args.get('legacy_rollback'):
+            raise Rejected('n8n is retired (its Bondok workflows are archived, its Instagram credential deleted and its '
+                           'data volume holds only a refusing tombstone): switching scheduled work to it would stop '
+                           'all publishing. Only a full legacy rollback (restored workflows, credential and data) may '
+                           'pass legacy_rollback.', 'retired')
         r = c.execute("SELECT value FROM ops_meta WHERE key='runtime_owner'").fetchone()
         old = r['value'] if r else 'bondok'
         if old == new:
