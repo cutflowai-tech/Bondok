@@ -546,6 +546,9 @@ class ItemsMixin:
             it = self.item(c, iid)
             if it['publication'] != 'not_started':
                 return None
+            general = self._after_owner_instruction(c, it, e)
+            if general:
+                return general
             aspect = self.ASPECT_OPS.get('request_reschedule' if k in TIME_KEYS else
                                          {'topaz': 'confirm_topaz', 'caption': 'update_caption'}.get(k, ''))
             if e.get('read_at') is not None and aspect:
@@ -589,6 +592,59 @@ class ItemsMixin:
                 return {'what': 'the approved caption', 'since': last['created'] if last else 0,
                         'decision': last['id'] if last else None, 'op': 'update_caption', 'args': {'text': ''}}
         return None
+
+    KEY_OP = {**{k: 'request_reschedule' for k in TIME_KEYS}, 'topaz': 'confirm_topaz', 'caption': 'update_caption',
+              'notes': 'set_notes', 'code': 'set_code', 'variety': 'set_variety', 'collab': 'set_collab',
+              'format': 'change_format', 'status': 'resume'}
+
+    def _after_owner_instruction(self, c, it, e) -> dict | None:
+        """A board value that differs from what the owner explicitly instructed for the same thing (time, caption,
+        Topaz, notes, code, variety, collab, format, or lifting the owner's pause) is not applied from a read alone:
+        it waits for activity-log evidence of a person's edit after the instruction (owner review 2026-10-16:
+        "board reads never replace my commands"). Changes toward safety (pause, skip, posted) are not held."""
+        k, new = e['key'], e['new']
+        op = self.KEY_OP.get(k)
+        if not op:
+            return None
+        if k == 'status':
+            if new in ('Paused', 'Skipped', 'Posted', None, ''):
+                return None
+            if it['owner_state'] not in ('paused', 'skipped'):
+                return None
+            last = c.execute("SELECT id, created FROM ops_commands WHERE item_id=? AND actor_kind=? AND op IN "
+                             "('pause','skip') AND state='completed' ORDER BY created DESC LIMIT 1",
+                             (it['item_id'], OWNER)).fetchone()
+            if not last:
+                return None
+            return {'what': "the owner's pause", 'since': last['created'], 'decision': last['id'], 'op': 'resume',
+                    'args': {'source': 'board', 'from_label': new}}
+        aspect = self.ASPECT_OPS.get(op) or (op,)
+        last = c.execute(f"SELECT id, op, created FROM ops_commands WHERE item_id=? AND actor_kind=? AND state IN "
+                         f"('completed','accepted') AND op IN ({','.join('?' * len(aspect))}) ORDER BY created DESC "
+                         'LIMIT 1', (it['item_id'], OWNER, *aspect)).fetchone()
+        if not last:
+            return None
+        if e.get('read_at') is not None and float(last['created']) > float(e['read_at']):
+            return None                    # the read predates the instruction: refused as stale when applied
+        if k in TIME_KEYS:
+            try:
+                at = board.requested_instant(e.get('snap') or {})
+            except Exception:  # noqa: BLE001 - unreadable: not applied from a read
+                at = None
+            args = {'at': rules.iso(at) if at else None}
+        elif k == 'topaz':
+            args = {'confirmed': new == 'Topazed', 'asset_key': e.get('asset_shown'),
+                    'candidates': e.get('asset_candidates') or []}
+        elif k == 'caption':
+            args = {'text': new or ''}
+        elif k == 'format':
+            if new not in rules.FORMATS:
+                return None
+            args = {'format': new}
+        else:
+            args = {'value': new or ''}
+        return {'what': f"the owner's instruction ({last['op']})", 'since': last['created'], 'decision': last['id'],
+                'op': op, 'args': args}
 
     def _hold_for_evidence(self, iid, e, cid, guard) -> dict:
         """Keep the decision, ask the runtime to look for the edit in Monday's activity log, restore the display."""

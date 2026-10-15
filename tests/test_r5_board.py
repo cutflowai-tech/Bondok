@@ -135,6 +135,7 @@ class R5_A7_RejectedEditsDoNotLeaveStaleHolds(BoardCase):
         bad = 'Too many tags ' + ' '.join(f'#t{i}' for i in range(31))
         setcell(brd, '21', 'caption', bad, {'text': bad})
         self.cycle(brd)
+        self.prove_board_edits()                          # Monday's log: a person typed it
         it = self.item('21')
         self.assertNotEqual(it['caption_state'], 'approved')
         self.assertIsNone(self.res('21'))                 # the board caption is never silently replaced by the old one
@@ -142,6 +143,7 @@ class R5_A7_RejectedEditsDoNotLeaveStaleHolds(BoardCase):
         good = 'Fixed caption, DM us. 🔥\n\n#reels'
         setcell(brd, '21', 'caption', good, {'text': good})
         self.cycle(brd)
+        self.prove_board_edits()
         self.assertEqual(self.item('21')['caption'], good)
         self.assertEqual(self.item('21')['caption_state'], 'approved')
         self.assertIsNotNone(self.res('21'))
@@ -174,6 +176,7 @@ class R5_M3_RepeatedOwnerValuesAreSeparateEvents(BoardCase):
         self.clock.advance(300)
         setcell(brd, '40', 'caption', X, {'text': X})                               # board: X
         self.cycle(brd)
+        self.prove_board_edits()                                                    # a person typed it
         self.sync(brd)
         self.ops.submit(owner_cmd(self.rid(), 'update_caption', '40', text=A))      # Slack: A again
         self.sync(brd)

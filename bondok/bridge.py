@@ -48,8 +48,12 @@ KIND = {'pause_item': 'pause', 'skip_item': 'skip', 'resume_item': 'resume', 're
 
 
 def key(text: str) -> str:
-    """Matching form of a name/code: normalised letters and digits, single spaces."""
-    return re.sub(r'\s+', ' ', lang.norm(text or '')).strip()
+    """Matching form of a name/code: normalised letters and digits, single spaces. An Arabic one-letter prefix
+    written onto a Latin code or a number ("وLIP11", "لـACC15", "بACC2") is separated from it, so the code is a word of
+    its own (owner review 2026-10-16: "وقف LIP10 وLIP11" paused only the first item)."""
+    t = lang.norm(str(text or '').replace('ـ', ''))
+    t = re.sub(r'(?<![^\W_])([وبلف])(?=[a-z0-9])', r'\1 ', t)
+    return re.sub(r'\s+', ' ', t).strip()
 
 
 def _bounded(needle: str, hay: str) -> bool:

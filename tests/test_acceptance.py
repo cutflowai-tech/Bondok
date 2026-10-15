@@ -1018,6 +1018,8 @@ class StaleBoardSnapshot(OpsCase):
         self.clock.advance(25 * 60)                 # a later snapshot: the person really typed the old text again
         r = self.observe(board_from_projection(self.ops, '192', fmt='Post', caption=self.OLD))
         self.assertEqual(len(r['edits']), 1, r)
+        self.assertEqual(self.item('192')['caption'], self.NEW)          # a read alone never replaces the owner's text
+        self.prove_board_edits()                                         # Monday's log: the person typed it again
         self.assertEqual(self.item('192')['caption'], self.OLD)
 
 
@@ -1820,7 +1822,8 @@ class FuzzRoundThree(OpsCase):
         h = [j for j in self.ops.outbox_take(['monday'], 'w', 10) if j['payload']['compare'].get('h:caption')][0]
         self.clock.advance(25 * 60)
         b = board_from_projection(self.ops, '1300', fmt='Post', caption='Person typed this on the board, DM us 🔥\n\n#reels')
-        self.observe(b)                                                   # WF1 records the person's caption
+        self.observe(b)                                                   # WF1 reads the person's caption
+        self.prove_board_edits()                                          # Monday's log: a person typed it
         r = self.ops.outbox_ack(h['id'], 'w', False, 'conflict: changed on the board by a person (long_text)')
         self.assertTrue(r.get('superseded'), r)
         self.assertEqual(self.item('1300')['caption'], 'Person typed this on the board, DM us 🔥\n\n#reels')

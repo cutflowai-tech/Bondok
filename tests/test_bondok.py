@@ -393,11 +393,15 @@ class SlackAuditHigh(BondokCase):
                 outs = {x['call_id'] for x in history if isinstance(x, dict) and x.get('type') == 'function_call_output'}
                 seen.append(calls - outs)
                 return FailAfter.__call__(s, history, tools)
-        core = self.core(Strict([{'tools': [('pause_item', {'item': str(710 + i)}) for i in range(7)]},
-                                 {'say': 'وقفت ٦ والسابع محتاج طلب تاني'}], fail_at=99))
-        reply = self.msg(core, 'وقف كل دول')
+        text = 'وقف ' + ' و'.join('LIP%d' % (10 + i) for i in range(7))
+        core = self.core(Strict([{'tools': [('pause_item', {'item': str(710 + i), 'reason': None,
+                                                            'meaning': M(text)}) for i in range(7)]},
+                                 {'say': 'وقفت السبعة'}], fail_at=99))
+        reply = self.msg(core, text)
         self.assertEqual(seen[-1], set())                     # no unanswered function_call is sent back
         self.assertIn('وقفت', reply)
+        # no item-count limit: all seven are paused (the test used to pass with none of them paused)
+        self.assertEqual({self.item(str(710 + i))['owner_state'] for i in range(7)}, {'paused'})
 
     def test_replies_in_proposal_notification_thread_are_accepted(self):          # H3
         posted = []

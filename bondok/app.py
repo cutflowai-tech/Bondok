@@ -364,7 +364,7 @@ class Core:
             ages, db_ok = {}, False
             if self._flip('db_down', True):
                 alerts.append(f'⚠️ Operational database is not readable by Bondok ({type(ex).__name__}). '
-                              'n8n automation may also be failing.')
+                              'Scheduled work (waset-runtime) may also be failing.')
         if db_ok and self._flip('db_down', False):
             alerts.append('✅ Operational database is readable again.')
         owner = self.ops.runtime_owner() if db_ok else 'bondok'
