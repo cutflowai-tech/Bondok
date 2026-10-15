@@ -544,6 +544,8 @@ class Runtime(Core):
     def run(self):
         from slack_bolt.adapter.socket_mode import SocketModeHandler
         threading.Thread(target=self.worker, daemon=True, name='bondok-worker').start()
+        if acceptance.resume(self):
+            LOG.info('acceptance_resumed')
         threading.Thread(target=self.background, daemon=True, name='bondok-notify').start()
         LOG.info('ready model=%s board=5105608159 ops_schema=%s', self.model.model, self.ops.store.schema_version())
         SocketModeHandler(self.app, self.env['SLACK_APP_TOKEN']).start()

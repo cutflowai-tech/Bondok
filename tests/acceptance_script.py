@@ -1,6 +1,6 @@
 """Build the owner-approved acceptance script (bondok/acceptance.py) from the fixtures file (server only).
 
-    python3 tests/acceptance_script.py <fixtures.json> <out dir> <script id> <not_before UTC ISO>
+    python3 tests/acceptance_script.py <fixtures.json> <out dir> <script id> [unused]
 
 Prints the sha256 prefix the owner puts in the trigger message. Steps are natural owner commands, one Slack message
 each, grouped in threads so "this video" has the context a real conversation gives it.
@@ -67,9 +67,7 @@ def steps(fx):
         {'thread': 'T3', 'text': 'خلّي توباز مش شرط للعنصر ده بس'},
         # the rule for a named set of test items
         {'thread': 'TG', 'text': 'خلّي توباز مش شرط لعناصر الاختبار ACC4 وACC5 وACC6'},
-        # a lasting global rule change and its restoration (a rule with no effect on live items now)
-        {'thread': 'TR', 'text': 'من النهارده خلي التأخير المسموح في النشر 3 ساعات بدل ساعتين'},
-        {'thread': 'TR', 'text': 'رجّع التأخير المسموح في النشر ساعتين زي ما كان'},
+        # (global rule changes are tested by the real model on an isolated store: tests/live_agent_check.py)
         # scheduling at a Cairo time, change, cancel, pause
         {'thread': 'T1', 'wait_ready': 'ACC1', 'timeout': 1500, 'text': 'جدوله بكرة الساعة 9 مساءً'},
         {'thread': 'T1', 'text': 'غيّر معاده لبكرة الساعة 11 بالليل'},
@@ -82,6 +80,10 @@ def steps(fx):
         {'thread': 'T8', 'text': 'غيّر الكود بتاعه لـ ACC80'},
         {'thread': 'T8', 'text': 'اكتب له كابشن مقترح قصير'},
         {'thread': 'T8', 'text': 'اعتمد الكابشن المقترح'},
+        # cross-cutting: Topaz confirmed, board synced, caption edited, then scheduled (test account: no real slot)
+        {'thread': 'T8', 'text': 'أنا عملت توباز للفيديو بتاع ACC80'},
+        {'thread': 'T8', 'wait_ready': 'ACC80', 'timeout': 1500,
+         'text': 'جدوله يوم 20 نوفمبر 2026 الساعة 9 بالليل'},
         # create, then archive
         {'thread': 'T9', 'text': f'اعمل ستوري جديدة اسمها Acceptance 9 Bondok check بكود ACC9 وفولدرها {url9}'},
         {'thread': 'T9', 'wait_item': 'ACC9', 'timeout': 1500, 'text': 'أرشف Acceptance 9 Bondok check'},
@@ -118,7 +120,6 @@ def steps(fx):
         {'thread': 'T7', 'text': 'شيكت على انستجرام وACC7 ما اتنشرش'},
         {'thread': 'T7', 'text': 'رجّع ACC7 للمونتير يعدله، الصوت عالي'},
         {'thread': 'T12', 'text': 'أنا نزلت ACC12 بنفسي على حساب الاستوديو'},
-        {'thread': 'T12', 'text': 'ورّيني الكابشنات القديمة اللي محتاجة اعتماد'},
         # a real item held after the correction: the reason, its source, the policy and the options (read only)
         {'thread': 'TW', 'text': 'ليه Thai 2 Will Filing A Claim واقف؟'},
         # stop everything left (bulk > 10)
@@ -129,8 +130,8 @@ def steps(fx):
 
 def main():
     fx = json.loads(Path(sys.argv[1]).read_text())
-    out_dir, sid, not_before = Path(sys.argv[2]), sys.argv[3], sys.argv[4]
-    spec = {'id': sid, 'not_before': not_before, 'quiet_minutes': 45,
+    out_dir, sid = Path(sys.argv[2]), sys.argv[3]
+    spec = {'id': sid, 'quiet_minutes': 45, 'require_isolation': True,
             'test_items': [v['item_id'] for v in fx['items'].values() if v.get('item_id')], 'steps': steps(fx)}
     raw = json.dumps(spec, ensure_ascii=False, indent=1).encode()
     out_dir.mkdir(mode=0o755, exist_ok=True)

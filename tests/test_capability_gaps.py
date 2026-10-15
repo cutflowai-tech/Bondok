@@ -220,5 +220,47 @@ class CommandPathFixes(LangCase):
         self.assertIn('MB3', core.store.thread_text('th'))
 
 
+class ReadToolsMore(LangCase):
+    def tool(self, core, name, args):
+        return core.agent.tool(name, args, {'thread': 't', 'actor': 'U1', 'event_id': 'e', 'text': 'x'})
+
+    def test_schedule_health_and_history_through_the_agent_tools(self):
+        self.make_ready('960', 'Story', code='RM1')
+        core = self.core(Script())
+        sched = self.tool(core, 'get_schedule', {'days': 14})
+        self.assertIn('960', [r['item_id'] for r in sched['reservations']])
+        health = self.tool(core, 'get_system_health', {})
+        self.assertIn('heartbeat_age_seconds', health)
+        self.ops.submit(owner_cmd('p60', 'pause', '960', explicit=True))
+        hist = self.tool(core, 'get_history', {'item': 'RM1'})
+        self.assertIn('pause', [d['op'] for d in hist['decisions']])
+
+    def test_approve_existing_caption_approves_it(self):
+        self.make_ready('961', 'Post', code='RM2', approve_caption=False)
+        with self.ops.store.tx() as c:
+            c.execute("UPDATE ops_items SET caption='Existing caption, DM us 🔥', caption_state='legacy_unapproved' "
+                      "WHERE item_id='961'")
+        text = 'اعتمد الكابشن اللي على RM2'
+        core = self.core(Script([act('approve_existing_caption', text, 'imperative', 'RM2', item='RM2')], 'تمام'))
+        self.say(core, text)
+        self.assertEqual(self.item('961')['caption_state'], 'approved')
+        self.assertIsNotNone(self.res('961'))
+
+
+class FileChangedDuringPreparation(OpsCase):
+    def test_a_new_file_version_during_preparation_is_not_published_as_the_old_one(self):
+        from support import monday_item
+        self.observe(monday_item('970', fmt='Story', code='FC1', name='Item970 FC1'))
+        self.select('970', 1, 'c970-')
+        self.duration('970', 30.0, 1, 'c970-')
+        self.topaz('970', 1)
+        self.select('970', 1, 'c970-')
+        self.select('970', 2, 'c970b-')                    # the editor uploads v2 while v1 is being prepared
+        mid = self.add_media('970', 'Story', 1, duration=30.0)
+        r = self.wf1('prep_media', '970', result={'ready': True, 'mediaId': mid})   # v1's result arrives late
+        self.assertNotEqual(self.item('970')['readiness'], 'ready', r)            # never ready on the old version
+        self.assertIsNone(self.res('970'))
+
+
 if __name__ == '__main__':
     unittest.main()

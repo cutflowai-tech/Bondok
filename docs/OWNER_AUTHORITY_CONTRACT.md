@@ -25,6 +25,13 @@ These are requirements, not deviations. The ADR §5 publication-journal exceptio
   * **automation write**: a value the handler queued, WF2 applied and acknowledged (outbox receipt);
   * **owner decision**: any other change to an owner column, observed in a snapshot that was read after
     every earlier automation write to that column was acknowledged (causal order, not a time window).
+  * **(Owner review 2026-10-15/16)** A board read alone is never proof: an absent column or partial response is no
+    edit; an empty value that would erase a decision, and any board value that differs from what the owner
+    explicitly instructed in Slack for the same thing, is applied only when Monday's activity log shows an edit
+    after that decision that is not one of Bondok's own writes; otherwise the decision stays, the display is
+    restored and the owner is told. A read that started before the owner's latest instruction about the same thing
+    never replaces it. Pause, skip and "posted" typed on the board are never held. Holds, requests and reservations
+    record their true source (owner / board / system).
   Snapshot columns with an automation write acknowledged after the snapshot read started are ambiguous for that
   item and are re-read on the next cycle (never guessed).
 * **Provenance (release review 2026-10-12).** A command in the Monday actor kind exists only as the result of an
@@ -111,9 +118,12 @@ These are requirements, not deviations. The ADR §5 publication-journal exceptio
 * A trimmed or downscaled derivative inherits Topaz only from its exact confirmed source.
 * Publication binds the delivered Dropbox copy (what Instagram fetches); a missing local cache is not a lost
   delivery.
-* The publication intent (attempt, payload and content fingerprints; Status `Publishing`) is written on Monday,
-  compare-before-write on Status, before Instagram is asked to publish (ADR decision 4). A refused or failed write
-  publishes nothing: a person's change since (e.g. Paused typed into an empty Status cell) wins.
+* **(Owner decision 2026-10-14, replaces the Monday-first intent.)** The publication intent (authorization, attempt,
+  payload and content fingerprints, file version) is recorded in Bondok's store at the commitment point; Monday shows
+  it afterwards through the display sync, with retries. A failed Monday write never stops an approved publication.
+  The owner's latest board decisions are read just before the commitment point (a Pause typed meanwhile wins); when
+  Monday cannot be read, the owner's freshness rule (`board_freshness_minutes`) decides. The retired n8n path's
+  Monday-first intent remains only for that path (`record='monday'`).
 
 ## 7. Approvals and holds
 

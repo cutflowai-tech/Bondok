@@ -152,7 +152,13 @@ class Run:
             start = rules.instant(self.spec['not_before']).timestamp()
             while self.clock() < start and not self.stopped():
                 self.sleep(min(300, start - self.clock()))
+        pkey = f"acceptance:progress:{self.spec['id']}:{self.spec['sha256'][:12]}"
+        prog = self.core.store.kv(pkey) or {'done': [], 'roots': {}, 'posted': {}}
+        self.roots.update(prog.get('roots') or {})
+        self.core.store.kv('acceptance:active', {'id': self.spec['id'], 'sha': self.spec['sha256'][:12]})
         for i, step in enumerate(self.spec['steps'], 1):
+            if i in prog['done']:
+                continue                                   # resumed run: a step with effect is never repeated
             if self.stopped():
                 self.log(stopped_before=i)
                 break
@@ -169,16 +175,24 @@ class Run:
                 self.sleep(int(step['wait_seconds']))
             label = step['thread']
             root = self.roots.get(label)
-            shown = f"🧪 {self.spec['id']} · {i}/{n} · أمر المالك من خطة الاختبار المعتمدة " \
-                    f"({self.spec['sha256'][:12]}):\n{step['text']}"
-            posted = self.core.post(shown, root)
-            ts = (posted or {}).get('ts')
+            ts = (prog['posted'].get(str(i)) or {}).get('ts')     # posted before a restart: the same event again
             if not ts:
-                self.log(step=i, error='could not post the step')
-                break
+                shown = f"🧪 {self.spec['id']} · {i}/{n} · أمر المالك من خطة الاختبار المعتمدة " \
+                        f"({self.spec['sha256'][:12]}):\n{step['text']}"
+                posted = self.core.post(shown, root)
+                ts = (posted or {}).get('ts')
+                if not ts:
+                    self.log(step=i, error='could not post the step')
+                    break
+                prog['posted'][str(i)] = {'ts': ts, 'root': root}
+                self.core.store.kv(pkey, prog)
+            else:
+                root = prog['posted'][str(i)].get('root')
             if root is None:
                 self.roots[label] = root = ts
+                prog['roots'] = self.roots
                 self.core.store.kv('thread:' + ts, True)
+                self.core.store.kv(pkey, prog)
             event = {'user': self.core.owner, 'text': step['text'], 'ts': ts, 'channel': env['SLACK_CHANNEL_ID'],
                      'thread_ts': None if root == ts else root, 'type': 'message',
                      'acceptance': {'script': self.spec['id'], 'sha256': self.spec['sha256'], 'step': i}}
@@ -191,8 +205,29 @@ class Run:
                 again = self.core.store.enqueue_event(key, event)
                 entry['redelivered_accepted'] = again           # False: the duplicate collapsed before any work
             self.log(**entry)
+            prog['done'].append(i)
+            self.core.store.kv(pkey, prog)
+        else:
+            self.core.store.kv('acceptance:active', False)
         self.log(end=self.spec['id'])
         self.core.post(f"🧪 {self.spec['id']}: انتهى التشغيل. السجل: {self.log_path.name}", None)
+
+
+def resume(core) -> bool:
+    """After a restart, an approved run that had not finished continues with the same script and hash (the owner's
+    authorization is bound to that exact script; nothing is widened), from the first step not done."""
+    act = core.store.kv('acceptance:active')
+    if not act:
+        return False
+    try:
+        spec = load(core.env.get('ACCEPTANCE_DIR') or DEFAULT_DIR, act['id'], act['sha'],
+                    trust=getattr(core, 'acceptance_trust', _trusted))
+    except (Refused, OSError, ValueError):
+        core.store.kv('acceptance:active', False)
+        return False
+    core._acceptance = threading.Thread(target=Run(core, spec).run, daemon=True, name='bondok-acceptance')
+    core._acceptance.start()
+    return True
 
 
 def handle(core, text, actor) -> str | None:

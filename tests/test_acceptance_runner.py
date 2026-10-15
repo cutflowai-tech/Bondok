@@ -134,5 +134,38 @@ class TriggerChecksNow(AcceptanceCase):
         self.assertIn('أقرب نشر حقيقي', reply)
 
 
+
+class Resume(AcceptanceCase):
+    def test_a_restarted_run_continues_without_repeating_done_steps(self):
+        self.make_ready('870', 'Story', code='PZ7')
+        self.make_ready('871', 'Story', code='PZ8')
+        digest = self.script([{'thread': 'A', 'text': 'وقف PZ7'}, {'thread': 'A', 'text': 'وقف PZ8'}])
+        spec = acceptance.load(self.adir, 'ACC-T1', digest, trust=lambda p: None)
+        model = Script([act('pause_item', 'وقف PZ7', 'imperative', 'PZ7', item='PZ7', reason=None)], 'تمام',
+                       [act('pause_item', 'وقف PZ8', 'imperative', 'PZ8', item='PZ8', reason=None)], 'تمام')
+        core = self.trusted_core(model)
+        run = acceptance.Run(core, spec, pump=core.process_one, sleep=lambda s: None)
+        orig = run._deliver
+        calls = {'n': 0}
+
+        def crash_after_first(key, event, timeout=600):
+            calls['n'] += 1
+            out = orig(key, event, timeout)
+            if calls['n'] == 1:
+                raise SystemExit('service restarted')
+            return out
+        run._deliver = crash_after_first
+        with self.assertRaises(SystemExit):
+            run.run()
+        self.assertEqual(self.item('870')['owner_state'], 'paused')
+        posted = len([t for t, _, _ in self.sent if t.startswith('🧪 ACC-T1 · 1/')])
+        run2 = acceptance.Run(core, spec, pump=core.process_one, sleep=lambda s: None)   # what resume() starts
+        run2.run()
+        self.assertEqual(self.item('871')['owner_state'], 'paused')
+        self.assertEqual(len([t for t, _, _ in self.sent if t.startswith('🧪 ACC-T1 · 1/')]), posted)  # not reposted
+        self.assertEqual(model.calls, 4)                        # step 1 not sent to the model again
+        self.assertFalse(core.store.kv('acceptance:active'))
+
+
 if __name__ == '__main__':
     unittest.main()
