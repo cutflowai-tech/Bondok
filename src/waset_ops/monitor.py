@@ -350,6 +350,7 @@ class MonitorMixin:
                 'requested_at': it['requested_at'], 'requested_by': it['requested_by'],
                 'requested_cairo': rules.display(rules.instant(it['requested_at'])) if it['requested_at'] else None,
                 'publish_block': self.publish_block(c, item_id),
+                'test_isolation': self.send_isolated(c, item_id),
                 'topaz_confirmation': self.topaz_confirmation(c, it),
                 'exemptions': self.exemptions(c, it),
                 'last_attempt': dict(att) if att else None,

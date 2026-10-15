@@ -542,6 +542,11 @@ class ItemsMixin:
             it = self.item(c, iid)
             if it['publication'] != 'not_started':
                 return None
+            if e.get('read_at') is not None:
+                last = c.execute("SELECT MAX(created) FROM ops_commands WHERE item_id=? AND actor_kind=? AND "
+                                 "state IN ('completed','accepted')", (iid, OWNER)).fetchone()[0]
+                if last is not None and float(last) > float(e['read_at']):
+                    return None            # older than the owner's instruction: refused as stale when applied
             clears = (k == 'publish_at' and not new) or (k in TIME_KEYS and not new and
                                                          not any((e.get('snap') or {}).values()))
             if clears:

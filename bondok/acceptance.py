@@ -61,6 +61,27 @@ def load(directory, script_id, digest, trust=_trusted) -> dict:
     return spec
 
 
+def live_slots(ops) -> list[float]:
+    """Reserved times of real content (test items isolated from Instagram excluded), read now."""
+    from waset_ops import rules
+    with ops.store.read() as c:
+        return [rules.instant(r['slot']).timestamp() for r in c.execute(
+            "SELECT r.slot, r.item_id FROM ops_reservations r JOIN ops_items i USING(item_id) "
+            "WHERE i.publication='not_started'").fetchall() if not ops.send_isolated(c, r['item_id'])]
+
+
+def window_text(ops, quiet_minutes, now) -> str:
+    from waset_ops import rules
+    import datetime as _dt
+    future = sorted(s for s in live_slots(ops) if s > now - quiet_minutes * 60)
+    if not future:
+        return 'لا يوجد نشر حقيقي محجوز.'
+    nxt = rules.display(_dt.datetime.fromtimestamp(future[0], _dt.timezone.utc))
+    near = future[0] - now < quiet_minutes * 60
+    return (f'أقرب نشر حقيقي: {nxt}.' + (f' الاختبار هيستنى لحد ما يعدي بـ{quiet_minutes} دقيقة.' if near else
+                                        f' الاختبار بيتوقف تلقائيًا لو قرب نشر حقيقي بأقل من {quiet_minutes} دقيقة.'))
+
+
 class Run:
     def __init__(self, core, spec, *, pump=None, sleep=time.sleep, clock=time.time):
         self.core, self.spec = core, spec
@@ -81,14 +102,9 @@ class Run:
     def _quiet(self):
         """Wait while a live publication (not one of the script's items) is due within quiet_minutes."""
         quiet = int(self.spec.get('quiet_minutes', 45)) * 60
-        mine = set(self.spec.get('test_items') or [])
         while not self.stopped():
-            from waset_ops import rules
             now = self.clock()
-            with self.core.ops.store.read() as c:
-                slots = [rules.instant(r['slot']).timestamp() for r in c.execute(
-                    "SELECT r.slot, r.item_id FROM ops_reservations r JOIN ops_items i USING(item_id) "
-                    "WHERE i.publication IN ('not_started','in_progress')") if r['item_id'] not in mine]
+            slots = live_slots(self.core.ops)
             near = [s for s in slots if -quiet < s - now < quiet]
             if not near:
                 return
@@ -200,8 +216,14 @@ def handle(core, text, actor) -> str | None:
         return f'❌ مش هبدأ الاختبار: {e}.'
     except (OSError, ValueError) as e:
         return f'❌ مش هبدأ الاختبار: {type(e).__name__}.'
+    with core.ops.store.read() as c:
+        iso = core.ops.isolation(c)
+    if spec.get('require_isolation', True) and not iso:
+        return '❌ مش هبدأ الاختبار: عناصر الاختبار مش معزولة عن Instagram.'
     run = Run(core, spec)
+    window = window_text(core.ops, int(spec.get('quiet_minutes', 45)), core.ops.now())   # checked now, at the trigger
     core._acceptance = threading.Thread(target=run.run, daemon=True, name='bondok-acceptance')
     core._acceptance.start()
     return (f"🧪 بدأ اختبار القبول {spec['id']} ({len(spec['steps'])} خطوة، sha256 {spec['sha256'][:12]}). كل خطوة "
-            'هتظهر في ثريد خاص بيها ومعاها رد بندق. «اوقف اختبار القبول» يوقفه.')
+            'هتظهر في ثريد خاص بيها ومعاها رد بندق. عناصر الاختبار معزولة عن الإرسال لـInstagram. ' + window +
+            ' «اوقف اختبار القبول» يوقفه.')

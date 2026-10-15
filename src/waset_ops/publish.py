@@ -210,6 +210,14 @@ class PublishMixin:
             for r in rows:
                 if r['publication'] != 'not_started' or self.deadline(c, r) < now_dt:
                     continue
+                if self.send_isolated(c, r['item_id']):
+                    # Isolation must not hide a failed "do not publish" directive: record, once per slot, whether the
+                    # owner's directive alone would have stopped this send.
+                    if not c.execute("SELECT 1 FROM ops_audit WHERE item_id=? AND kind='test_send_prevented' AND "
+                                     "json_extract(detail,'$.slot')=?", (r['item_id'], r['slot'])).fetchone():
+                        audit(c, r['item_id'], 'test_send_prevented', worker,
+                              {'slot': r['slot'], 'owner_directive_active': bool(self.publish_block(c, r['item_id']))})
+                    continue
                 if self.publish_block(c, r['item_id']):
                     continue                       # the owner said: never publish this item (it may stay scheduled)
                 att = self.active_attempt(c, r['item_id'])
@@ -305,6 +313,9 @@ class PublishMixin:
             res = self.reservation(c, item_id)
             if self.restore_gap(c):
                 return {'claimed': False, 'reason': 'publishing is paused until the post-restore check is done'}
+            iso = self.send_isolated(c, item_id)
+            if iso:
+                return {'claimed': False, 'reason': iso}
             blk = self.publish_block(c, item_id)
             if blk:
                 return {'claimed': False, 'reason': 'the owner asked not to publish this item: ' + (blk['reason'] or '')}
@@ -564,6 +575,8 @@ class PublishMixin:
                 problems.append('item is ' + it['owner_state'])
             if self.publish_block(c, it['item_id']):
                 problems.append('the owner asked not to publish this item')
+            if self.send_isolated(c, it['item_id']):
+                problems.append('acceptance test item: never sent to Instagram')
             if loads(it['hold'], None):
                 problems.append('item is held: ' + (loads(it['hold'], {}) or {}).get('reason', ''))
             if it['content_rev'] != a['content_rev']:
@@ -727,6 +740,8 @@ class PublishMixin:
                 problems.append('item is ' + it['owner_state'])
             if self.publish_block(c, it['item_id']):
                 problems.append('the owner asked not to publish this item')
+            if self.send_isolated(c, it['item_id']):
+                problems.append('acceptance test item: never sent to Instagram')
             if loads(it['hold'], None):
                 problems.append('item is held: ' + (loads(it['hold'], {}) or {}).get('reason', ''))
             if it['content_rev'] != a['content_rev'] or not res or res['slot'] != a['slot'] or \

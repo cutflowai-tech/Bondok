@@ -16,6 +16,9 @@ TZ = ZoneInfo('Africa/Cairo')
 UTC = timezone.utc
 
 ACCOUNT = '<IG_ACCOUNT>'               # IG user id: a placeholder in the public repository, filled in by
+# Acceptance-test reservations live under their own account key: real scheduling never sees them, so a test
+# item can neither take a real slot nor move a real reservation (owner request 2026-10-16).
+TEST_ACCOUNT_SUFFIX = ':acceptance'
                                        # deploy/build_release.py --site (private); unresolved -> not deployable (R5 LOW-18)
 BOARD = '5105608159'                   # For Social Media; Bondok business-tool boundary
 SOURCE_BOARD = '5091110326'            # Source projects; integration-only access

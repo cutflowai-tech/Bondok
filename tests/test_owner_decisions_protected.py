@@ -329,3 +329,113 @@ class RuntimeEvidence(unittest.TestCase):
         finally:
             case.tearDown()
             case.doCleanups()
+
+
+class AcceptanceIsolation(Base):
+    """Test items are never sent to Instagram while the owner's commands are tested for real (2026-10-16)."""
+
+    def isolate(self):
+        from waset_ops.core import Command
+        r = self.ops.submit(Command('iso', 'set_isolation', 'service:acceptance', 'service:acceptance', None,
+                                    {'code_prefixes': ['ACC'], 'name_prefixes': ['Acceptance '],
+                                     'reason': 'acceptance test item'}))
+        self.assertEqual(r['state'], 'completed', r)
+
+    def test_isolated_item_is_scheduled_but_never_claimed_or_committed(self):
+        self.make_ready('840', 'Story', code='ACC40')
+        self.make_ready('841', 'Story', code='RL1')
+        self.isolate()
+        slot = rules.instant(self.res('840')['slot'])
+        self.clock.set(slot + timedelta(seconds=5))
+        due = [w['item_id'] for w in self.ops.due('w', 10).get('work') or []]
+        self.assertNotIn('840', due)
+        self.assertFalse(self.ops.claim('840', 'w')['claimed'])
+        self.assertIn('never sent', self.ops.claim('840', 'w')['reason'])
+        # the owner lifting a do-not-publish directive does not lift the isolation
+        self.ops.submit(owner_cmd('b', 'publish_block', '840', explicit=True, reason='test'))
+        self.ops.submit(owner_cmd('a', 'publish_allow', '840', explicit=True))
+        self.assertFalse(self.ops.claim('840', 'w')['claimed'])
+        self.assertTrue(self.ops.item_status('840')['test_isolation'])
+
+    def test_cleanup_releases_only_test_reservations(self):
+        self.make_ready('842', 'Story', code='ACC42')
+        self.make_ready('843', 'Story', code='RL2')
+        self.isolate()
+        from waset_ops.core import Command
+        r = self.ops.submit(Command('rel', 'release_isolated', 'service:acceptance', 'service:acceptance', None, {}))
+        self.assertEqual([x['item_id'] for x in r['released']], ['842'])
+        self.assertIsNone(self.res('842'))
+        self.assertIsNotNone(self.res('843'))                  # real content keeps its slot
+
+
+class ReadSpanningTheOwnersCommand(unittest.TestCase):
+    """A Monday read that STARTS before the owner's command and COMPLETES after it does not erase the command."""
+
+    def test_prepare_cycle_read_in_flight_during_the_owner_command(self):
+        from test_runtime import RuntimeCase
+        from waset_ops import board as B
+        case = RuntimeCase('run')
+        case.setUp()
+        try:
+            iid = case.ready_item()
+            case.runner.sync_cycle()
+            case.clock.advance(1800)
+            stale = case.monday.board.items[iid]
+            stale['column_values'] = [x for x in stale['column_values'] if x['id'] != B.COL['publish_at']] + \
+                [{'id': B.COL['publish_at'], 'text': '', 'value': None}]          # what the board showed at read start
+            owner_at = (case.ops.now_dt() + timedelta(days=6)).replace(hour=19, minute=0, second=0, microsecond=0)
+            real = case.monday.social_snapshot
+
+            def read_spanning():
+                snap = real()                                  # the read has started (and captured the old state) ...
+                case.clock.advance(3)
+                r = case.ops.submit(owner_cmd('own-mid', 'request_reschedule', iid, explicit=True,
+                                              at=rules.iso(owner_at)))       # ... the owner instructs meanwhile ...
+                assert r['state'] == 'completed', r
+                case.clock.advance(3)
+                return snap                                     # ... and the read completes after the command
+            case.monday.social_snapshot = read_spanning
+            out = case.runner.prepare_cycle()
+            self.assertEqual(case.res(iid)['slot'], rules.iso(owner_at))
+            self.assertEqual(case.outbox('board_evidence'), [])   # refused as stale, not even held
+            self.assertIn('edits', out)
+        finally:
+            case.tearDown()
+            case.doCleanups()
+
+
+class TestCapacityIsolation(AcceptanceIsolation):
+    def test_test_reservations_never_take_or_move_real_slots(self):
+        self.isolate()
+        self.make_ready('850', 'Story', code='ACC50')                 # test item first: takes the first grid slot ...
+        test_slot = self.res('850')['slot']
+        self.assertTrue(self.res('850')['account'].endswith(':acceptance'))
+        self.make_ready('851', 'Story', code='RL51')                  # ... real content still gets that same slot
+        self.assertEqual(self.res('851')['slot'], test_slot)
+        self.assertEqual(self.res('851')['account'], rules.ACCOUNT)
+        self.make_ready('854', 'Story', code='RL54')
+        real_slot = self.res('854')['slot']
+        # a test request for a time held by real content: reported, no swap, nothing moves
+        r = self.ops.submit(owner_cmd('t', 'request_reschedule', '850', explicit=True, at=real_slot))
+        self.assertIn('real content', str(r))
+        self.assertEqual(self.res('854')['slot'], real_slot)
+        self.assertEqual(self.res('850')['slot'], test_slot)
+        with self.ops.store.read() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM ops_proposals WHERE state='pending'").fetchone()[0], 0)
+
+    def test_due_test_item_records_whether_the_directive_would_have_stopped_it(self):
+        self.isolate()
+        self.make_ready('852', 'Story', code='ACC52')
+        slot = rules.instant(self.res('852')['slot'])
+        self.clock.set(slot + timedelta(seconds=5))
+        self.ops.due('w', 10)
+        with self.ops.store.read() as c:
+            row = c.execute("SELECT detail FROM ops_audit WHERE item_id='852' AND kind='test_send_prevented'").fetchone()
+        import json
+        self.assertFalse(json.loads(row[0])['owner_directive_active'])   # no directive: the test reports the gap
+
+    def test_isolation_moves_existing_test_reservations_out_of_real_capacity(self):
+        self.make_ready('853', 'Story', code='ACC53')
+        self.assertEqual(self.res('853')['account'], rules.ACCOUNT)
+        self.isolate()
+        self.assertTrue(self.res('853')['account'].endswith(':acceptance'))

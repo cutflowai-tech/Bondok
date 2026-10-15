@@ -224,6 +224,61 @@ class PolicyMixin:
         obs['_nudge'] = self.now()             # prepare it on the next preparation cycle
         c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), str(item_id)))
 
+    # ------------------------------------------------------------------ acceptance isolation (operator)
+    # Dedicated test items are never sent to Instagram, whatever the conversation decides (owner request
+    # 2026-10-16: test the owner's commands for real, but no test item may reach the account). Independent of the
+    # owner's own do-not-publish directive, so lifting that directive in a test never lifts this.
+    ISOLATION_KEY = 'send_isolation'
+
+    def isolation(self, c) -> dict:
+        r = c.execute('SELECT value FROM ops_meta WHERE key=?', (self.ISOLATION_KEY,)).fetchone()
+        return loads(r['value'], {}) if r else {}
+
+    def send_isolated(self, c, item_id) -> str | None:
+        iso = self.isolation(c)
+        if not iso:
+            return None
+        it = self.item(c, item_id, required=False)
+        if it is None:
+            return None
+        code, name = str(it.get('code') or ''), str(it.get('name') or '')
+        if str(item_id) in (iso.get('item_ids') or []) or any(code.upper().startswith(p.upper())
+                                                              for p in iso.get('code_prefixes') or []) or \
+                any(name.startswith(p) for p in iso.get('name_prefixes') or []):
+            return (iso.get('reason') or 'acceptance test item') + ': never sent to Instagram'
+        return None
+
+    def op_set_isolation(self, c, cmd: Command):
+        a = cmd.args
+        value = {'item_ids': [str(x) for x in a.get('item_ids') or []], 'code_prefixes': a.get('code_prefixes') or [],
+                 'name_prefixes': a.get('name_prefixes') or [], 'reason': a.get('reason'), 'set_at': self.now()}
+        if not any((value['item_ids'], value['code_prefixes'], value['name_prefixes'])):
+            c.execute('DELETE FROM ops_meta WHERE key=?', (self.ISOLATION_KEY,))
+            audit(c, None, 'send_isolation_cleared', cmd.actor, {'command': cmd.id})
+            return {'isolation': None}
+        c.execute('INSERT OR REPLACE INTO ops_meta VALUES(?,?)', (self.ISOLATION_KEY, dumps(value)))
+        moved = []
+        for r in c.execute('SELECT item_id, account FROM ops_reservations').fetchall():
+            if r['account'] == rules.ACCOUNT and self.send_isolated(c, r['item_id']):
+                c.execute('UPDATE ops_reservations SET account=? WHERE item_id=?', (self.test_account(), r['item_id']))
+                moved.append(r['item_id'])
+        audit(c, None, 'send_isolation_set', cmd.actor, {**value, 'command': cmd.id, 'moved_to_test_account': moved})
+        return {'isolation': value, 'moved_to_test_account': moved}
+
+    def op_release_isolated(self, c, cmd: Command):
+        """Cleanup of the test only: releases the reservations of isolated items; nothing else is touched."""
+        out = []
+        for r in c.execute('SELECT item_id, slot FROM ops_reservations').fetchall():
+            it = self.item(c, r['item_id'], required=False)
+            if it and it['publication'] == 'not_started' and self.send_isolated(c, r['item_id']):
+                self.release(c, it, 'acceptance cleanup: test reservation released', keep_request=False)
+                self.update_item(c, it['item_id'], cmd.actor, 'test reservation released', requested_at=None,
+                                 requested_by=None)
+                self.project(c, it['item_id'])
+                out.append({'item_id': r['item_id'], 'slot': r['slot']})
+        audit(c, None, 'isolated_reservations_released', cmd.actor, {'released': out, 'command': cmd.id})
+        return {'released': out}
+
     # ------------------------------------------------------------------ owner directive: never publish this item
     PUBLISH_BLOCK = 'publish_block'
 
@@ -362,8 +417,7 @@ class PolicyMixin:
                 if last and last.get('requested'):
                     reason += f". The owner's last time instruction ({last['at']}) asked for {last['requested']}"
             elif not reason and not res and it['requested_at'] and it['readiness'] == 'ready':
-                taken = c.execute('SELECT item_id FROM ops_reservations WHERE account=? AND format=? AND slot=?',
-                                  (rules.ACCOUNT, it['format'], it['requested_at'])).fetchone()
+                taken = self._slot_holder(c, it, it['requested_at'])
                 if taken:
                     who = 'the owner' if it['requested_by'] not in ('board', None) else 'the board Publish at'
                     reason = (f"its requested time {it['requested_at']} (from {who}) is reserved by item "
@@ -377,11 +431,12 @@ class PolicyMixin:
             how += f', or change the rule itself (now {pol[with_rule]!r}).'
         with self.store.read() as c:
             block = self.publish_block(c, it['item_id'])
+            isolated = self.send_isolated(c, it['item_id'])
             last_owner = c.execute('SELECT id, op, created FROM ops_commands WHERE item_id=? AND actor_kind=? '
                                    'ORDER BY created DESC LIMIT 1', (it['item_id'], OWNER)).fetchone()
         return {'item_id': it['item_id'], 'name': it['name'], 'readiness': it['readiness'],
                 'owner_state': it['owner_state'], 'publication': it['publication'], 'hold': hold,
-                'publish_block': block,
+                'publish_block': block, 'test_isolation': isolated,
                 'owner_last_instruction': {'op': last_owner['op'], 'at': self.iso_ts(last_owner['created']),
                                            'command': last_owner['id']} if last_owner else None,
                 'scheduled': res['slot'] if res else None, 'reason': reason, 'rule': with_rule,

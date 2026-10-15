@@ -121,3 +121,18 @@ class Steps(AcceptanceCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TriggerChecksNow(AcceptanceCase):
+    def test_refused_without_isolation_and_reports_the_window_at_trigger_time(self):
+        digest = self.script([{'thread': 'A', 'text': 'x'}])
+        core = self.trusted_core(Script())
+        self.assertIn('مش معزولة', self.say(core, f'اختبار قبول ACC-T1 {digest}'))
+        from waset_ops.core import Command
+        self.ops.submit(Command('iso', 'set_isolation', 'service:acceptance', 'service:acceptance', None,
+                                {'code_prefixes': ['ACC']}))
+        self.make_ready('860', 'Story', code='RL9')
+        acceptance.Run.run = lambda self: None                 # do not run the steps in this test
+        reply = self.say(core, f'اختبار قبول ACC-T1 {digest}')
+        self.assertIn('بدأ', reply)
+        self.assertIn('أقرب نشر حقيقي', reply)

@@ -22,7 +22,7 @@ from .db import Store, audit, dumps, loads, next_counter
 OWNER = 'owner'          # authenticated owner (Slack, via Bondok adapter)
 MONDAY = 'monday'        # unattributed human edit on the board (shared account)
 BONDOK = 'bondok'        # the assistant itself; never an authority
-SERVICES = {'service:wf1', 'service:wf2', 'service:wf3', 'service:bondok', 'service:migration', 'service:correction'}
+SERVICES = {'service:wf1', 'service:wf2', 'service:wf3', 'service:bondok', 'service:migration', 'service:correction', 'service:acceptance'}
 
 ACTIVE_ATTEMPT = ('claimed', 'container_created', 'committed', 'outcome_unknown')
 PRE_COMMIT = ('claimed', 'container_created')
@@ -212,7 +212,9 @@ class CoreMixin:
         'board_evidence_result': {'service:wf1', 'service:bondok'},
         'attribution_correction': {'service:correction'},
         'publish_block': {OWNER},       # owner directive: never publish this item (it may stay scheduled)
-        'publish_allow': {OWNER},   # evidence-based correction of misattributed decisions
+        'publish_allow': {OWNER},
+        'set_isolation': {'service:acceptance'},     # operator: acceptance test items are never sent to Instagram
+        'release_isolated': {'service:acceptance'},   # evidence-based correction of misattributed decisions
         'waive_rule': {OWNER},          # owner exempts one item from a rule
         'restore_rule': {OWNER},
         'request_rework': {OWNER},

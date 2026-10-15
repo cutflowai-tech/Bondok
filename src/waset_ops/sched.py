@@ -113,9 +113,22 @@ class SchedMixin:
         return None
 
     # ------------------------------------------------------------------ slots, owner requests and windows
+    def test_account(self):
+        return rules.ACCOUNT + rules.TEST_ACCOUNT_SUFFIX
+
+    def account_of(self, c, item_id) -> str:
+        return self.test_account() if item_id is not None and self.send_isolated(c, item_id) else rules.ACCOUNT
+
+    def accounts_seen(self, c, item_id) -> tuple:
+        """Reservations an item competes with: real content sees only real reservations; an isolated test item
+        also sees the real ones (to report a conflict) but never moves them."""
+        return (rules.ACCOUNT, self.test_account()) if self.account_of(c, item_id) != rules.ACCOUNT else (rules.ACCOUNT,)
+
     def reserved_slots(self, c, fmt, exclude=None) -> set[str]:
-        return {r['slot'] for r in c.execute('SELECT slot,item_id FROM ops_reservations WHERE account=? AND format=?',
-                                             (rules.ACCOUNT, fmt)) if r['item_id'] != exclude}
+        acc = self.accounts_seen(c, exclude)
+        return {r['slot'] for r in c.execute(f"SELECT slot,item_id FROM ops_reservations WHERE account IN "
+                                             f"({','.join('?' * len(acc))}) AND format=?", (*acc, fmt))
+                if r['item_id'] != exclude}
 
     @staticmethod
     def owner_request(it) -> bool:
@@ -126,11 +139,12 @@ class SchedMixin:
         """Future owner-requested times of active items still preparing: protected from automatic allocation
         (R5 A5). Existing reservations still follow option B."""
         now = rules.iso(self.now_dt())
+        test = self.account_of(c, exclude) != rules.ACCOUNT
         return {r['requested_at'] for r in c.execute(
             "SELECT item_id, requested_at FROM ops_items WHERE format=? AND requested_at IS NOT NULL AND "
             "COALESCE(requested_by,'owner')!='legacy-board' AND owner_state='active' AND publication='not_started' "
             'AND item_id NOT IN (SELECT item_id FROM ops_reservations)', (fmt,))
-            if r['item_id'] != exclude and r['requested_at'] > now}
+            if r['item_id'] != exclude and r['requested_at'] > now and (test or not self.send_isolated(c, r['item_id']))}
 
     def taken(self, c, fmt, exclude=None) -> set[str]:
         """Slots automatic allocation must not use."""
@@ -139,7 +153,7 @@ class SchedMixin:
     def next_reserved_after(self, c, fmt, slot, exclude=None):
         r = c.execute("SELECT MIN(r.slot) FROM ops_reservations r JOIN ops_items i USING(item_id) WHERE r.account=? "
                       "AND r.format=? AND r.slot>? AND r.item_id!=? AND i.publication='not_started'",
-                      (rules.ACCOUNT, fmt, slot, str(exclude))).fetchone()
+                      (self.account_of(c, exclude), fmt, slot, str(exclude))).fetchone()
         return r[0] if r else None
 
     def deadline(self, c, res):
@@ -187,8 +201,9 @@ class SchedMixin:
 
     def occupied(self, c, fmt, exclude=None):
         out = []
+        acc = self.accounts_seen(c, exclude)
         for r in c.execute('SELECT r.slot, i.* FROM ops_reservations r JOIN ops_items i USING(item_id) '
-                           'WHERE r.account=? AND r.format=?', (rules.ACCOUNT, fmt)):
+                           f"WHERE r.account IN ({','.join('?' * len(acc))}) AND r.format=?", (*acc, fmt)):
             if r['item_id'] == exclude:
                 continue
             try:
@@ -203,7 +218,8 @@ class SchedMixin:
         try:
             c.execute('INSERT INTO ops_reservations(item_id,account,format,slot,content_rev,payload_fp,origin,'
                       'owner_pinned,created,updated) VALUES(?,?,?,?,?,?,?,?,?,?)',
-                      (it['item_id'], rules.ACCOUNT, it['format'], slot, it['content_rev'], self.payload_fp(c, it),
+                      (it['item_id'], self.account_of(c, it['item_id']), it['format'], slot, it['content_rev'],
+                       self.payload_fp(c, it),
                        origin, 1 if pinned else 0, self.now(), self.now()))
         except sqlite3.IntegrityError:
             raise Rejected('That slot was just taken by another item', 'slot_taken')
@@ -327,11 +343,25 @@ class SchedMixin:
         self.notify(c, f"missed:{it['item_id']}:{past}", f"{it['name']} ({it['item_id']}): {reason}", it['item_id'])
         return {'scheduled': None, 'waiting': 'requested time passed', 'missed': past}
 
+    def _slot_holder(self, c, it, slot):
+        acc = self.accounts_seen(c, it['item_id'])
+        r = c.execute(f"SELECT * FROM ops_reservations WHERE account IN ({','.join('?' * len(acc))}) AND format=? AND "
+                      'slot=? AND item_id!=? ORDER BY account', (*acc, it['format'], slot, it['item_id'])).fetchone()
+        return dict(r) if r else None
+
+    def _real_vs_test(self, c, it, other) -> bool:
+        return self.account_of(c, it['item_id']) != rules.ACCOUNT and other['account'] == rules.ACCOUNT
+
     def _requested_slot_occupied(self, c, it, at, actor) -> dict:
         """The owner's requested time is held by another reservation that existed first: one concrete proposal
         (option B), offered once; nothing moves before approval."""
-        other = c.execute('SELECT * FROM ops_reservations WHERE account=? AND format=? AND slot=?',
-                          (rules.ACCOUNT, it['format'], rules.iso(at))).fetchone()
+        other = self._slot_holder(c, it, rules.iso(at))
+        if other and self._real_vs_test(c, it, other):
+            self.notify(c, f"test-conflict:{it['item_id']}:{rules.iso(at)}",
+                        f"{it['name']} ({it['item_id']}) is a test item; its requested time {rules.display(at)} is held "
+                        f"by real content ({other['item_id']}), which is never moved for a test. Choose another time.",
+                        it['item_id'])
+            return {'scheduled': None, 'waiting': 'requested time is held by real content (test item: no swap)'}
         open_p = c.execute("SELECT id FROM ops_proposals WHERE kind='swap_slot' AND state='pending' AND "
                            "json_extract(payload,'$.item_id')=? AND json_extract(payload,'$.slot')=?",
                            (it['item_id'], rules.iso(at))).fetchone()
@@ -437,8 +467,11 @@ class SchedMixin:
             return {'scheduled': slot, 'unchanged': True}
         it = self._clear_time_hold(c, it, cmd.actor)    # a new time answers "when should it be published?"
         self._store_window(c, it['item_id'], None, cmd.actor)   # an exact time supersedes an earlier window
-        other = c.execute('SELECT * FROM ops_reservations WHERE account=? AND format=? AND slot=?',
-                          (rules.ACCOUNT, it['format'], slot)).fetchone()
+        other = self._slot_holder(c, it, slot)
+        if other and other['item_id'] != it['item_id'] and self._real_vs_test(c, it, other):
+            return {'_state': 'accepted', 'requested': None, 'conflict': other['item_id'],
+                    'message': f'Not booked: {rules.display(at)} is held by real content ({other["item_id"]}), and a '
+                               'test item never moves real content. Choose another time; nothing else was chosen.'}
         why = self.eligible(c, it)
         if why == 'a publication attempt is active':
             why = None                                   # pre-commit: refused at commit once the reservation moves
