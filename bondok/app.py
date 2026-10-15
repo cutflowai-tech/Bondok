@@ -44,8 +44,9 @@ PLACEHOLDER_ID = re.compile(r'B-X{4,}', re.I)
 
 def accept_event(body, channel, team, known_thread, bot) -> bool:
     e = body.get('event', {})
-    if body.get('team_id') != team or e.get('channel') != channel or e.get('bot_id') or e.get('subtype') \
-            or e.get('user') == bot:
+    # a reply also sent to the channel, or a message with a file, is still the person's message (command audit)
+    if body.get('team_id') != team or e.get('channel') != channel or e.get('bot_id') or \
+            e.get('subtype') not in (None, 'thread_broadcast', 'file_share') or e.get('user') == bot:
         return False
     if e.get('type') == 'app_mention':
         return True

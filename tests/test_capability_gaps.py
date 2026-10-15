@@ -178,5 +178,47 @@ class IsolationThroughTheRuntime(OpsCase):
         self.assertEqual(len(ig.publish_calls()), 1)
 
 
+class CommandPathFixes(LangCase):
+    def test_publish_now_on_an_item_still_checked_publishes_once_it_is_ready(self):
+        from support import monday_item
+        self.observe(monday_item('950', fmt='Story', code='PN9', name='Item950 PN9'))
+        self.select('950', 1, 'c950-')
+        self.duration('950', 30.0, 1, 'c950-')
+        self.assertNotEqual(self.item('950')['readiness'], 'ready')
+        text = 'انشر PN9 دلوقتي'
+        core = self.core(Script([act('publish_now', text, 'imperative', 'PN9', item='PN9')], 'تمام'))
+        self.say(core, text)
+        self.assertIsNone(self.res('950'))
+        self.clock.advance(3600)                                      # an hour later the check finishes
+        self.topaz('950')
+        self.select('950', 1, 'c950-')
+        mid = self.add_media('950', 'Story', 1, duration=30.0)
+        self.wf1('prep_media', '950', result={'ready': True, 'mediaId': mid})   # verified: ready
+        res = self.res('950')
+        self.assertIsNotNone(res)                                     # reserved about two minutes after ready
+        self.assertLess(rules.instant(res['slot']) - self.ops.now_dt(), timedelta(minutes=4))
+        self.assertEqual(res['origin'], 'owner')
+
+    def test_broadcast_and_file_messages_are_accepted(self):
+        import sys
+        from support import ROOT
+        sys.path.insert(0, str(ROOT / 'bondok'))
+        from app import accept_event
+        from test_bondok import OWNER
+        for sub in ('thread_broadcast', 'file_share'):
+            ok = {'team_id': 'T1', 'event': {'type': 'app_mention', 'channel': 'C1', 'user': OWNER, 'subtype': sub}}
+            self.assertTrue(accept_event(ok, 'C1', 'T1', lambda t: False, 'UBOT'), sub)
+        bad = {'team_id': 'T1', 'event': {'type': 'app_mention', 'channel': 'C1', 'user': OWNER,
+                                          'subtype': 'message_changed'}}
+        self.assertFalse(accept_event(bad, 'C1', 'T1', lambda t: False, 'UBOT'))
+
+    def test_a_member_naming_items_does_not_add_them_to_the_owners_them(self):
+        core = self.core(Script())
+        core.store.remember('th', 'user', '[member] كمان MB1 و MB2')
+        core.store.remember('th', 'user', '[owner] شوف MB3')
+        self.assertNotIn('MB1', core.store.thread_text('th'))
+        self.assertIn('MB3', core.store.thread_text('th'))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -404,10 +404,17 @@ class Bridge:
             return {'tool': tool, 'item': None, 'op': 'set_policy', 'args': a}, \
                 f"Change the rule \"{rules.POLICY[rule]['label']}\" to {value!r}"
         if tool == 'publish_now':
+            with self.ops.store.read() as c:
+                ready = self.ops.item(c, item)['readiness'] == 'ready'
+            if not ready:
+                # "now" for an item still being checked: published about two minutes after it is ready, never a fixed
+                # time that passes while it is checked (command audit H7)
+                return {**act, 'op': 'request_publish', 'args': {'asap': True}}, \
+                    f'Publish {label} as soon as it is ready (about two minutes after the check)'
             now = self.ops.now_dt()
             at = (now + timedelta(seconds=125)).replace(second=0)
             return {**act, 'op': 'request_reschedule', 'args': {'at': rules.iso(at)}}, \
-                f'Publish {label} now (at {rules.display(at)}, as soon as it is ready)'
+                f'Publish {label} now (at {rules.display(at)})'
         if tool == 'cancel_schedule':
             return {**act, 'op': 'request_reschedule', 'args': {'at': None}}, \
                 f'Cancel the publication time of {label} (it stays unscheduled until you give a new time)'

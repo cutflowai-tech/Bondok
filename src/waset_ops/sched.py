@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import timedelta
 
 from . import rules
 from .core import MONDAY, OWNER, Command, Rejected, fingerprint
@@ -170,7 +171,7 @@ class SchedMixin:
     def _store_window(self, c, item_id, window, actor):
         obs = loads(self.item(c, item_id)['observed'], {}) or {}
         if window:
-            obs['_window'] = {k: v for k, v in window.items() if k in ('not_before', 'on_date') and v}
+            obs['_window'] = {k: v for k, v in window.items() if k in ('not_before', 'on_date', 'asap') and v}
             obs['_window'].update(by=actor, at=self.now())
         else:
             obs.pop('_window', None)
@@ -178,7 +179,7 @@ class SchedMixin:
 
     @staticmethod
     def parse_window(args) -> dict | None:
-        w = {}
+        w = {'asap': True} if args.get('asap') else {}
         if args.get('not_before'):
             try:
                 w['not_before'] = rules.iso(rules.instant(args['not_before']))
@@ -271,6 +272,12 @@ class SchedMixin:
             slot = self._reserve(c, it, at, origin, not legacy, actor)
             return {'scheduled': slot, 'origin': 'requested'}
         win = self.window(it)
+        if win and win.get('asap'):
+            # "publish it now" given while the item was still being checked: about two minutes from now
+            at = rules.validate_owner_time(now, it['format'], rules.iso((now + timedelta(seconds=125)).replace(second=0)))
+            slot = self._reserve(c, it, at, 'owner', True, actor)
+            self._store_window(c, item_id, None, actor)
+            return {'scheduled': slot, 'origin': 'owner_now'}
         key = rules.rotation_key(it['format'], it['code'], it['name'], it['variety'])
         at = rules.choose_slot(now, it['format'], key, self.occupied(c, it['format'], item_id),
                                self.taken(c, it['format'], item_id), window=win, policy=self.policy(c))

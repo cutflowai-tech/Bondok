@@ -45,11 +45,12 @@ class Store:
             rows = c.execute('SELECT role,text FROM messages WHERE thread=? ORDER BY id DESC LIMIT ?', (thread, limit)).fetchall()
         return [{'role': r['role'], 'content': r['text']} for r in reversed(rows)]
 
-    def thread_text(self, thread, limit=60) -> str:
-        """Everything said in the thread (for its named set), newest last."""
+    def thread_text(self, thread, limit=60, members=False) -> str:
+        """What was said in the thread (for its named set), newest last. Members' messages are left out by default:
+        a member naming items never adds them to the owner's "them" (command audit)."""
         with self.db() as c:
             rows = c.execute('SELECT text FROM messages WHERE thread=? ORDER BY id DESC LIMIT ?', (thread, limit)).fetchall()
-        return '\n'.join(r['text'] for r in reversed(rows))
+        return '\n'.join(r['text'] for r in reversed(rows) if members or not str(r['text']).startswith('[member] '))
 
     def remember(self, thread, role, text):
         with self.db() as c:
