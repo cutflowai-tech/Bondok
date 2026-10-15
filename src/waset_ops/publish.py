@@ -250,6 +250,38 @@ class PublishMixin:
         return out
 
     # ------------------------------------------------------------------ restore gap (agent migration A28)
+    def prepared_to_delete(self, entries, now=None, published_days=30, superseded_days=7) -> list[str]:
+        """Which copies in Dropbox's Prepared folder may go (ops review 2026-10-16: nothing removed them). A copy is
+        named <item>-<media id>.mp4. Deleted: the item was published more than ``published_days`` ago; or the copy is
+        a superseded version older than ``superseded_days`` that no unfinished attempt uses. Unknown items are kept."""
+        import re as _re
+        from datetime import datetime
+        now = now or self.now()
+        out = []
+        with self.store.read() as c:
+            live = {loads(a['payload'], {}).get('verification_id') for a in c.execute(
+                "SELECT payload FROM ops_attempts WHERE stage IN ('claimed','container_created','committed','outcome_unknown')")}
+            for e in entries:
+                m = _re.fullmatch(r'(\d+)-([0-9a-f]{16,})\.mp4', e.get('name') or '')
+                if not m or e.get('.tag') != 'file':
+                    continue
+                iid, mid = m.groups()
+                it = c.execute('SELECT publication, verification_id FROM ops_items WHERE item_id=?', (iid,)).fetchone()
+                if not it or mid in live:
+                    continue
+                try:
+                    age = now - datetime.fromisoformat(str(e.get('server_modified')).replace('Z', '+00:00')).timestamp()
+                except ValueError:
+                    continue
+                if it['publication'] == 'published':
+                    last = c.execute("SELECT MAX(updated) FROM ops_attempts WHERE item_id=? AND stage='published'",
+                                     (iid,)).fetchone()[0]
+                    if last and now - float(last) > published_days * 86400:
+                        out.append(e['path_lower'])
+                elif mid != it['verification_id'] and age > superseded_days * 86400:
+                    out.append(e['path_lower'])
+        return out
+
     def restore_gap(self, c) -> dict | None:
         r = c.execute("SELECT value FROM ops_meta WHERE key='restore_gap'").fetchone()
         return loads(r['value'], None) if r else None

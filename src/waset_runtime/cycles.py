@@ -138,6 +138,10 @@ class Runner:
                 out['maintenance'] = self.maintenance()
             except Exception as e:  # noqa: BLE001 - retention never fails the cycle (fail=False in WF1)
                 out['maintenance'] = {'error': type(e).__name__}
+            try:
+                out['prepared_cleanup'] = self.prepared_cleanup()
+            except Exception as e:  # noqa: BLE001
+                out['prepared_cleanup'] = {'error': type(e).__name__}
             self.ops.run_finish('wf1', run_id, None, fence=fence)
             return out
         except Exception as e:
@@ -352,6 +356,21 @@ class Runner:
                                         'error': error}))
 
     # ------------------------------------------------------------------ editor subitems
+    def prepared_cleanup(self, every=86400) -> dict | None:
+        """Once a day: copies in Dropbox's Prepared folder that are no longer needed (media.prepared_to_delete)."""
+        with self.ops.store.read() as c:
+            r = c.execute("SELECT value FROM ops_meta WHERE key='prepared_cleanup_at'").fetchone()
+        if r and self.ops.now() - float(r['value']) < every:
+            return None
+        entries = self.dropbox.list_folder(PREPARED_FOLDER.lower(), recursive=False)
+        gone = []
+        for path in self.ops.prepared_to_delete(entries, now=self.ops.now()):
+            self.dropbox.delete(path)
+            gone.append(path)
+        with self.ops.store.tx() as c:
+            c.execute("INSERT OR REPLACE INTO ops_meta VALUES('prepared_cleanup_at',?)", (str(self.ops.now()),))
+        return {'deleted': len(gone)}
+
     def editor_jobs(self, worker, limit=10) -> int:
         n = 0
         for j in self.ops.outbox_take(['editor'], worker, limit):

@@ -558,3 +558,29 @@ class RestoreDetection(Base):
         r = self.ops.restore_gap_check([], stories_cover_since=self.ops.now() - 86400)
         self.assertTrue(r['open'])
         self.assertTrue(r['stories_not_verifiable'])
+
+
+class PreparedCopiesCleanup(unittest.TestCase):
+    def test_published_copies_go_after_30_days_current_ones_stay(self):
+        from test_runtime import RuntimeCase
+        case = RuntimeCase('run')
+        case.setUp()
+        try:
+            iid = case.ready_item()
+            case.at_slot(iid)
+            case.runner.publish_cycle()
+            self.assertEqual(case.item(iid)['publication'], 'published')
+            prepared = [k for k in case.dbx.files if k.startswith('/social media/prepared/')]
+            self.assertEqual(len(prepared), 1)
+            def run():
+                with case.ops.store.tx() as c:
+                    c.execute("DELETE FROM ops_meta WHERE key='prepared_cleanup_at'")
+                return case.runner.prepared_cleanup()
+            self.assertEqual(run(), {'deleted': 0})                                # recent: kept
+            self.assertIsNone(case.runner.prepared_cleanup())                      # once a day only
+            case.clock.advance(31 * 86400)
+            self.assertEqual(run(), {'deleted': 1})
+            self.assertFalse([k for k in case.dbx.files if k.startswith('/social media/prepared/')])
+        finally:
+            case.tearDown()
+            case.doCleanups()

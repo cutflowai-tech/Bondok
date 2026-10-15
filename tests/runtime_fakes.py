@@ -233,7 +233,8 @@ class FakeDropbox:
     def upload(self, local, path):
         self._maybe_fail('upload')
         meta = {'.tag': 'file', 'name': path.split('/')[-1], 'path_lower': path.lower(), 'id': f'id:U{next(self.n)}',
-                'rev': 'u1', 'content_hash': media.dropbox_hash(local), 'size': 1}
+                'rev': 'u1', 'content_hash': media.dropbox_hash(local), 'size': 1,
+                'server_modified': getattr(self, 'now_iso', lambda: '2026-10-10T10:00:00Z')()}
         self.files[path.lower()] = meta
         self.uploads.append(path)
         return copy.deepcopy(meta)
