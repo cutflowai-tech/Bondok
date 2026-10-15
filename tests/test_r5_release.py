@@ -80,7 +80,7 @@ class RR2_IntentAcknowledgedBeforePublish(OpsCase):
 
     def test_commit_asks_for_a_guarded_intent_write_and_does_not_commit_yet(self):
         cl = self.due('1')
-        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')
+        r = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED', record='monday')
         self.assertFalse(r['committed'])
         i = r['intent']
         self.assertEqual(i['item_id'], '1')
@@ -95,7 +95,7 @@ class RR2_IntentAcknowledgedBeforePublish(OpsCase):
 
     def test_acknowledged_intent_commits(self):
         cl = self.due('2')
-        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['intent']
+        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED', record='monday')['intent']
         r = self.ops.intent_ack(cl['attempt_id'], 'w', cl['fence'], i['job'], ok=True)
         self.assertTrue(r['committed'], r)
         self.assertEqual(self.stage(cl['attempt_id']), 'committed')
@@ -104,7 +104,7 @@ class RR2_IntentAcknowledgedBeforePublish(OpsCase):
 
     def test_failed_intent_write_publishes_nothing_and_the_slot_is_retried(self):
         cl = self.due('3')
-        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['intent']
+        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED', record='monday')['intent']
         r = self.ops.intent_ack(cl['attempt_id'], 'w', cl['fence'], i['job'], ok=False, error='HTTP 503')
         self.assertFalse(r['committed'])
         self.assertIn('not acknowledged on Monday', ' '.join(r['reasons']))
@@ -115,7 +115,7 @@ class RR2_IntentAcknowledgedBeforePublish(OpsCase):
 
     def test_item_paused_between_intent_and_ack_is_not_committed(self):
         cl = self.due('4')
-        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['intent']
+        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED', record='monday')['intent']
         from support import owner_cmd
         self.ops.submit(owner_cmd('p4', 'pause', '4'))
         r = self.ops.intent_ack(cl['attempt_id'], 'w', cl['fence'], i['job'], ok=True)
@@ -124,7 +124,7 @@ class RR2_IntentAcknowledgedBeforePublish(OpsCase):
 
     def test_stale_or_foreign_acknowledgement_is_refused(self):
         cl = self.due('5')
-        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['intent']
+        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED', record='monday')['intent']
         r = self.ops.intent_ack(cl['attempt_id'], 'w', cl['fence'], i['job'] + 999, ok=True)
         self.assertFalse(r.get('committed'))
         r = self.ops.intent_ack(cl['attempt_id'], 'intruder', cl['fence'], i['job'], ok=True)
@@ -133,7 +133,7 @@ class RR2_IntentAcknowledgedBeforePublish(OpsCase):
 
     def test_publisher_stopping_before_the_ack_publishes_nothing_and_leaves_no_intent(self):
         cl = self.due('6')
-        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED')['intent']
+        i = self.ops.commit(cl['attempt_id'], 'w', cl['fence'], container_status='FINISHED', record='monday')['intent']
         self.clock.advance(3 * 3600)                                        # worker died; the window passed
         self.ops.due('w2')
         self.assertEqual(self.stage(cl['attempt_id']), 'abandoned')
@@ -216,7 +216,7 @@ class RR3_EmptyStatusPauseRace(OpsCase):
         self.ops.container(cl['attempt_id'], 'wf2', cl['fence'], 'C-70')
         b.set_raw('70', board.COL['status'], {'id': 'status', 'text': 'Paused', 'value': '{"index":5}'})   # owner
         board_sim.wf2_sync(self.ops, b)                           # display sync of the same WF2 run
-        r = self.ops.commit(cl['attempt_id'], 'wf2', cl['fence'], container_status='FINISHED')
+        r = self.ops.commit(cl['attempt_id'], 'wf2', cl['fence'], container_status='FINISHED', record='monday')
         ok, err = self.intent_write(b, r['intent'])
         self.assertFalse(ok)
         a = self.ops.intent_ack(cl['attempt_id'], 'wf2', cl['fence'], r['intent']['job'], ok=ok, error=err)
@@ -292,7 +292,7 @@ class RR5_MondayToPublisher(OpsCase):
         if not cl.get('claimed'):
             return cl
         self.ops.container(cl['attempt_id'], 'wf2', cl['fence'], 'C-' + iid)
-        r = self.ops.commit(cl['attempt_id'], 'wf2', cl['fence'], container_status='FINISHED')
+        r = self.ops.commit(cl['attempt_id'], 'wf2', cl['fence'], container_status='FINISHED', record='monday')
         if not r.get('intent'):
             return r
         p = {'item_id': r['intent']['item_id'], 'columns': r['intent']['columns'], 'guard': r['intent']['guard']}

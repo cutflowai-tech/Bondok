@@ -599,7 +599,7 @@ class PublishMixin:
                 'age_seconds': int(age) if age is not None else None, 'limit_minutes': limit}
 
     def commit(self, attempt_id, worker, fence, *, source_asset=None, container_status=None,
-               delivered_asset=None, record='monday') -> dict:
+               delivered_asset=None, record='store') -> dict:
         """The commitment point. ``record='store'`` (Bondok runtime, owner decision 2026-10-14): the authorization,
         intent, version and attempt are recorded in this store and the attempt is committed at once; Monday shows
         'Publishing' through the ordinary retried display sync, and a failed display write never stops it. The

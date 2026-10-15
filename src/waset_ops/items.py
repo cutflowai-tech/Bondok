@@ -576,6 +576,12 @@ class ItemsMixin:
                         'decision': last['id'] if last else None, 'op': 'confirm_topaz',
                         'args': {'confirmed': False, 'asset_key': e.get('asset_shown'),
                                  'candidates': e.get('asset_candidates') or []}}
+            field_ops = {'notes': 'set_notes', 'code': 'set_code', 'collab': 'set_collab', 'variety': 'set_variety'}
+            if k in field_ops and not new and e.get('old'):
+                last = c.execute("SELECT id, created FROM ops_commands WHERE item_id=? AND op IN (?, 'board_set_field') "
+                                 "AND state='completed' ORDER BY created DESC LIMIT 1", (iid, field_ops[k])).fetchone()
+                return {'what': f'the {k} value', 'since': last['created'] if last else 0,
+                        'decision': last['id'] if last else None, 'op': field_ops[k], 'args': {'value': ''}}
             if k == 'caption' and not new and it['caption_state'] == 'approved' and it['caption']:
                 last = c.execute("SELECT id, created FROM ops_commands WHERE item_id=? AND op IN ('update_caption',"
                                  "'approve_caption','approve_caption_draft','approve_existing_caption') AND "
@@ -662,6 +668,10 @@ class ItemsMixin:
 
     def _system_edit(self, iid, e, run) -> dict:
         k, new = e['key'], e['new']
+        if k == 'status' and not new:
+            # An empty Status is no instruction (a cleared or unreadable cell): the display is restored, the state
+            # stays (tests audit: an empty Status after a Slack pause resumed the item).
+            return {'state': 'completed', 'note': 'empty status is not an instruction; display restored'}
         if k == 'status':
             # Owner-reported publication is terminal and is decided before any pause/resume meaning (R5 B2).
             if new == 'Posted':

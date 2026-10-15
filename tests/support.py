@@ -49,10 +49,14 @@ def board_cmd(cid, op, item, column, seen=None, **args):
 def commit_acked(ops, attempt_id, worker, fence, **kw):
     """commit, then WF2's intent write succeeding on Monday (ADR decision 4): the commitment point as WF2 reaches it.
     A commit refused before the intent (problems found) is returned as it is."""
+    with ops.store.tx() as c:          # the runtime reads the item from Monday right before the commitment point
+        c.execute("UPDATE ops_items SET observed=json_set(COALESCE(NULLIF(observed,''),'{}'),'$._read_at',?) "
+                  'WHERE item_id=(SELECT item_id FROM ops_attempts WHERE id=?)', (ops.now(), attempt_id))
     r = ops.commit(attempt_id, worker, fence, **kw)
-    if not r.get('intent'):
-        return r
-    return ops.intent_ack(attempt_id, worker, fence, r['intent']['job'], ok=True)
+    job = (r.get('intent') or {}).get('job') if isinstance(r.get('intent'), dict) else None
+    if not job:
+        return r                           # the store path (production): committed at once, Monday synced after
+    return ops.intent_ack(attempt_id, worker, fence, job, ok=True)
 
 
 def cell(key, text=None, value=None):

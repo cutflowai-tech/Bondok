@@ -274,7 +274,8 @@ def action(path, b):
         return o.renew(b['attemptId'], b['worker'], b['fence'])
     if path == '/v2/publish/commit':
         return o.commit(b['attemptId'], b['worker'], b['fence'], source_asset=b.get('sourceAsset'),
-                        container_status=b.get('containerStatus'), delivered_asset=b.get('deliveredAsset'))
+                        container_status=b.get('containerStatus'), delivered_asset=b.get('deliveredAsset'),
+                        record='monday')         # the retired n8n WF2 path: its own intent write on Monday
     if path == '/v2/publish/intent':
         return o.intent_ack(b['attemptId'], b['worker'], b['fence'], b['job'], ok=b.get('ok') is True,
                             error=b.get('error'))
