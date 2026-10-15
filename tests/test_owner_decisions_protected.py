@@ -271,6 +271,8 @@ class RestoreAndCorrection(Base):
         import json
         hold = json.loads(self.item('831')['hold'])
         self.assertEqual((hold['kind'], hold['time']), ('missed_time', t))
+        self.assertEqual([e for e in self.ops.correction_plan({'831': []})['corrections'] if e['item_id'] == '831'],
+                         [])                                       # planned once: a second run changes nothing
 
     def test_correction_into_an_occupied_slot_keeps_the_request_and_displaces_nobody(self):
         t = self.overwritten('832', days=5)

@@ -60,7 +60,11 @@ class CorrectionsMixin:
                     later_owner = c.execute("SELECT 1 FROM ops_commands WHERE item_id=? AND actor_kind=? AND created>? "
                                             "AND op IN ('request_reschedule','request_publish','set_window','pause',"
                                             "'skip','resume') LIMIT 1", (iid, OWNER, own['at'])).fetchone()
-                    current = (state['requested_at'] == own['time'] and state['requested_by'] == 'owner') or \
+                    done = c.execute("SELECT 1 FROM ops_audit WHERE item_id=? AND kind='attribution_correction' AND "
+                                     "json_extract(detail,'$.owner_instruction.command')=?",
+                                     (iid, own['command'])).fetchone()
+                    current = bool(done) or (state['requested_at'] == own['time'] and
+                                             state['requested_by'] == 'owner') or \
                         ((state['reservation'] or {}).get('slot') == own['time'])
                     if later and not later_owner and not current and it['owner_state'] == 'active':
                         edits = (board_edits or {}).get(iid, None) if board_edits is not None else None

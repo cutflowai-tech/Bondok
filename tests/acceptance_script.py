@@ -94,6 +94,8 @@ def steps(fx):
         {'thread': 'T7', 'text': 'رجّع ACC7 للمونتير يعدله، الصوت عالي'},
         {'thread': 'T12', 'text': 'أنا نزلت ACC12 بنفسي على حساب الاستوديو'},
         {'thread': 'T12', 'text': 'ورّيني الكابشنات القديمة اللي محتاجة اعتماد'},
+        # a real item held after the correction: the reason, its source, the policy and the options (read only)
+        {'thread': 'TW', 'text': 'ليه Thai 2 Will Filing A Claim واقف؟'},
         # stop everything left (bulk > 10)
         {'thread': 'S', 'text': 'وقف ACC1 وACC2 وACC3 وACC4 وACC5 وACC6 وACC7 وACC8 وACC11 وACC12 وACC13'},
     ]
