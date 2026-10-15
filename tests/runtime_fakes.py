@@ -284,6 +284,9 @@ class FakeInstagram:
     def stories(self):
         return []
 
+    def publishing_limit(self):
+        return {'config': {'quota_total': 100}, 'quota_usage': len(self.published)}
+
     def permalink(self, media_id):
         return f'https://www.instagram.com/reel/{media_id}/'
 

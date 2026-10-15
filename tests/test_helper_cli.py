@@ -223,10 +223,6 @@ class StoryTrimFfmpeg(unittest.TestCase):
         self.assertEqual(list((media.ROOT / 'media').glob('*.mp4')), [])
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class StorageFailureIsReported(OpsCase):
     """Audit I3: a read-only database inside a command was printed as ok:true and never logged."""
 
@@ -246,3 +242,7 @@ class StorageFailureIsReported(OpsCase):
             self.assertIn('storage', (self.dir / 'errors.log').read_text())
         finally:
             os.chmod(self.dir / 'state.sqlite', 0o644)
+
+
+if __name__ == '__main__':
+    unittest.main()

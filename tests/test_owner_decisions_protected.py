@@ -301,10 +301,6 @@ class RestoreAndCorrection(Base):
         self.assertEqual([e['item_id'] for e in plan['unresolved']], ['835'])
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class RuntimeEvidence(unittest.TestCase):
     """The runtime answers held board values from Monday's activity log on its display-sync cycle."""
 
@@ -584,3 +580,7 @@ class PreparedCopiesCleanup(unittest.TestCase):
         finally:
             case.tearDown()
             case.doCleanups()
+
+
+if __name__ == '__main__':
+    unittest.main()

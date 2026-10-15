@@ -183,10 +183,6 @@ class DryRun(unittest.TestCase):
         self.assertEqual(sqlite3.connect(copy).execute('SELECT x FROM t').fetchone()[0], 1)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class InstagramTokenRefresh(unittest.TestCase):
     def test_refresh_after_thirty_days_is_persisted_privately(self):
         from waset_runtime.instagram import TokenStore
@@ -208,3 +204,7 @@ class InstagramTokenRefresh(unittest.TestCase):
         ts = TokenStore(d / 'tok.json', 'OLD', Http(Transport((500, {}))), clock=lambda: now[0])
         now[0] += 40 * 86400
         self.assertEqual(ts.token(), 'OLD')
+
+
+if __name__ == '__main__':
+    unittest.main()

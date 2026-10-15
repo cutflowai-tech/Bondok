@@ -916,10 +916,6 @@ class Scenario32Recheck(OpsCase):
         self.assertTrue(r2['already_running'])
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class LegacyMigrationBehaviour(OpsCase):
     def test_legacy_requested_time_is_quiet_preference(self):
         off_grid = rules.iso(at_cairo(2026, 10, 11, 12, 0))
@@ -2046,3 +2042,7 @@ class ReconciledPublicationShownOnBoard(OpsCase):
             compare.update(j['payload']['compare'])
         self.assertEqual(compare.get('status'), board.LABELS['posted'], compare)
         self.assertEqual(compare.get('_group'), board.GROUPS['Posted'], compare)
+
+
+if __name__ == '__main__':
+    unittest.main()

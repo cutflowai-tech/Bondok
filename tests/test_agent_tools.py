@@ -249,10 +249,6 @@ class A11_InstructionsInsideData(ToolCase):
             self.assertTrue(self.ops.policy(c)['topaz_required'])
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class DoNotPublishDirective(ToolCase):
     """Owner directive (2026-10-16 test plan): "do not actually publish it during the test, even if scheduled"."""
 
@@ -298,3 +294,7 @@ class DoNotPublishDirective(ToolCase):
         self.assertEqual(out['changed'], {})
         self.assertEqual(out['board_edits'], [])
         self.assertEqual(out['status']['reservation']['slot'], self.res('651')['slot'])
+
+
+if __name__ == '__main__':
+    unittest.main()

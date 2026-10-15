@@ -398,10 +398,6 @@ class Selection(unittest.TestCase):
         self.assertEqual(e.exception.kind, 'editor')
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class ReviewFindings(RuntimeCase):
     """Regression tests for the independent review of 2026-10-14."""
 
@@ -471,3 +467,7 @@ class PermanenceWords(unittest.TestCase):                              # finding
         self.assertFalse(L.permanent('انشر الفيديو ده خلاص مش لازم توباز'))
         self.assertFalse(L.permanent('من النهارده LIP12 مش محتاج توباز'))
         self.assertTrue(L.permanent('من النهارده توباز مش شرط'))
+
+
+if __name__ == '__main__':
+    unittest.main()

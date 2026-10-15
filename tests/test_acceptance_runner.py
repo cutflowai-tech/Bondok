@@ -119,10 +119,6 @@ class Steps(AcceptanceCase):
         self.assertGreaterEqual(clock['t'], slot + 1800 - 1)
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class TriggerChecksNow(AcceptanceCase):
     def test_refused_without_isolation_and_reports_the_window_at_trigger_time(self):
         digest = self.script([{'thread': 'A', 'text': 'x'}])
@@ -136,3 +132,7 @@ class TriggerChecksNow(AcceptanceCase):
         reply = self.say(core, f'اختبار قبول ACC-T1 {digest}')
         self.assertIn('بدأ', reply)
         self.assertIn('أقرب نشر حقيقي', reply)
+
+
+if __name__ == '__main__':
+    unittest.main()
