@@ -329,6 +329,29 @@ class MonitorMixin:
         return out
 
     # ------------------------------------------------------------------ reads (Bondok)
+    def state_source(self, c, it) -> dict | None:
+        """Who set the paused/skipped state: the owner's instruction, a board edit (author unknown), the source
+        board (Canceled in Customer Projects), an import, or the system (audit M7)."""
+        if it['owner_state'] == 'active':
+            return None
+        r = c.execute("SELECT actor, at FROM ops_audit WHERE item_id=? AND kind='item_update' AND "
+                      "detail LIKE '%owner_state%' ORDER BY at DESC, id DESC LIMIT 1", (it['item_id'],)).fetchone()
+        reason = it.get('owner_state_reason') or ''
+        if 'Customer Projects' in reason:
+            kind = 'source board (Canceled in Customer Projects)'
+        elif reason == 'imported from board status' or not r:
+            kind = 'imported from the board when the system started (author not recorded)'
+        elif r['actor'] == 'monday':
+            kind = 'board edit (Monday does not record who)'
+        elif str(r['actor']).startswith('service:'):
+            kind = 'system'
+        elif c.execute('SELECT 1 FROM ops_commands WHERE actor=? AND actor_kind=? LIMIT 1',
+                       (r['actor'], 'owner')).fetchone():
+            kind = 'owner instruction'
+        else:
+            kind = 'unknown'
+        return {'source': kind, 'reason': reason or None, 'at': self.iso_ts(r['at']) if r else None}
+
     def item_status(self, item_id) -> dict:
         with self.store.read() as c:
             it = self.item(c, item_id)
@@ -341,6 +364,7 @@ class MonitorMixin:
                 'item_id': it['item_id'], 'name': it['name'], 'code': it['code'], 'format': it['format'],
                 'version': it['version'], 'content_rev': it['content_rev'],
                 'readiness': it['readiness'], 'reason': it['block_reason'], 'owner_state': it['owner_state'],
+                'owner_state_source': self.state_source(c, it),
                 'hold': self.hold_provenance(c, it), 'publication': it['publication'],
                 'caption_state': it['caption_state'], 'topaz_confirmed_for_selected': bool(
                     it['asset_key'] and it['topaz_asset'] == it['asset_key']),

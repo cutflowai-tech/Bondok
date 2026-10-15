@@ -685,7 +685,8 @@ def _local(path) -> Path:
 
 def maintenance(retain_days=30) -> dict:
     """Delete local prepared files only for confirmed publications older than
-    the retention period. Receipts and records are retained indefinitely."""
+    the retention period. Receipts and records are retained indefinitely; acknowledged or superseded display jobs
+    older than the retention period, stale per-job lock files and abandoned dry-run copies are removed."""
     removed = 0
     cutoff = time.time() - retain_days * 86400
     with store().read() as c:
@@ -717,5 +718,35 @@ def maintenance(retain_days=30) -> dict:
             c.execute('DELETE FROM media WHERE id=?', (m['id'],))
             superseded += 1
     orphans = reap_orphans()
-    return {'removedPublishedFiles': removed, 'removedSupersededFiles': superseded, 'removedOrphanFiles': orphans,
-            'freeBytes': shutil.disk_usage(ROOT).free}
+    pruned = prune(retain_days)
+    return {'pruned': pruned, 'removedPublishedFiles': removed, 'removedSupersededFiles': superseded,
+            'removedOrphanFiles': orphans, 'freeBytes': shutil.disk_usage(ROOT).free}
+
+def prune(retain_days=30) -> dict:
+    """Housekeeping (ops review 2026-10-16): old acknowledged/superseded outbox rows, lock files of finished jobs,
+    abandoned shadow copies. Commands, audit and publication records are history and are kept."""
+    import shutil
+    import tempfile
+    cutoff = time.time() - retain_days * 86400
+    out = {'outbox': 0, 'locks': 0, 'shadows': 0}
+    with store().tx() as c:
+        # display writes only: notification rows keep their dedupe keys for ever (a notice is never sent twice)
+        out['outbox'] = c.execute("DELETE FROM ops_outbox WHERE kind IN ('monday','source_monday') AND state IN "
+                                  "('done','superseded') AND updated<?", (cutoff,)).rowcount
+    for f in ROOT.glob('*.lock'):
+        try:
+            if f.name.startswith('media-capacity-'):
+                continue                       # the shared capacity slots stay
+            if f.stat().st_mtime < time.time() - 86400:
+                f.unlink()
+                out['locks'] += 1
+        except OSError:
+            pass
+    for d in Path(tempfile.gettempdir()).glob('waset-shadow-*'):
+        try:
+            if d.stat().st_mtime < time.time() - 86400:
+                shutil.rmtree(d)
+                out['shadows'] += 1
+        except OSError:
+            pass
+    return out

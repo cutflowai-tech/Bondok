@@ -368,10 +368,12 @@ class PublishMixin:
             tries = c.execute("SELECT COUNT(*) FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned'",
                               (str(item_id), res['slot'])).fetchone()[0]
             if tries >= int(self.policy(c)['publish_attempts_per_slot']) and not self.active_attempt(c, item_id) and \
-                    all('could not be checked' in (r['evidence'] or '') for r in c.execute(
+                    all(('could not be checked' in (r['evidence'] or '') or 'Monday could not be read' in
+                         (r['evidence'] or '')) for r in c.execute(
                         "SELECT evidence FROM ops_attempts WHERE item_id=? AND slot=? AND stage='abandoned'",
                         (str(item_id), res['slot']))):
-                # Only Dropbox was unreadable at the commit point: nothing is wrong with the item; stop creating
+                # Only Dropbox or Monday was unreadable at the commit point (infrastructure, audit M5): nothing is wrong
+                # with the item and the owner is not asked to resume it; stop creating
                 # containers for this slot and take the next one without asking the owner (round-2 review #10).
                 self.release(c, it, 'source unverifiable at publication time')
                 obs = loads(self.item(c, item_id)['observed'], {}) or {}

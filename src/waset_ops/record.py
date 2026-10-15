@@ -102,7 +102,9 @@ class RecordMixin:
             'source_override_url': rec.get('src') if same_format else None,
             # An owner-pinned slot comes back as the owner's request (as when a pinned reservation is released).
             'requested_at': rec.get('req') or (rec['res']['slot'] if (rec.get('res') or {}).get('p') else None),
-            'requested_by': rec.get('rb') if rec.get('req') else None,
+            'requested_by': rec.get('rb') if rec.get('req') else (
+                {'owner': 'owner', 'board': 'board'}.get((rec.get('res') or {}).get('o'), 'board')
+                if (rec.get('res') or {}).get('p') else None),
             'owner_state': rec.get('os') if rec.get('os') in ('active', 'paused', 'skipped') else 'active',
             'owner_state_reason': rec.get('osr'),
             'hold': dumps(hold) if hold and hold.get('kind') else None,
@@ -118,7 +120,9 @@ class RecordMixin:
             return
         _ensure(c)
         for rule, asset in wv.items():
-            if rule in rules.WAIVABLE and not any(o['rule'] == rule for o in self.overrides(c, iid)):
+            # exemptions and the owner's do-not-publish directive (audit M2) are both owner decisions
+            if (rule in rules.WAIVABLE or rule == 'publish_block') and \
+                    not any(o['rule'] == rule for o in self.overrides(c, iid)):
                 c.execute('INSERT INTO ops_overrides(id,item_id,rule,asset_key,state,reason,set_by,source,created) '
                           "VALUES(?,?,?,?,'active',?,?,?,?)",
                           (f"W-R{iid}-{rule}-{next_counter(c, 'override')}", str(iid), rule,

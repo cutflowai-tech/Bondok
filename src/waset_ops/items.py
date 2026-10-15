@@ -603,8 +603,10 @@ class ItemsMixin:
         """When Bondok itself wrote any of these columns of the item (acknowledged display writes)."""
         out = []
         with self.store.read() as c:
+            # every write Bondok sent or may have sent (a timed-out write can still land: audit M4)
             for r in c.execute("SELECT payload, updated FROM ops_outbox WHERE kind='monday' AND item_id=? AND "
-                               "state='done' AND updated>=?", (str(item_id), float(since or 0) - 600)):
+                               "(state IN ('done','failed','in_flight','escalated') OR attempts>0) AND updated>=?",
+                               (str(item_id), float(since or 0) - 600)):
                 cols = (loads(r['payload'], {}) or {}).get('columns') or {}
                 if any(cid in cols for cid in column_ids):
                     out.append(float(r['updated']))
@@ -858,7 +860,10 @@ class ItemsMixin:
         att = self.active_attempt(c, it['item_id'])
         res = self.release(c, it, 'paused')
         # An owner-chosen slot stays the owner's request; an automatic one is only a preference (audit S3).
-        keep = dict(requested_at=res['slot'], requested_by=None if res['owner_pinned'] else 'legacy-board') if res \
+        # the kept time keeps its source: the owner's, a board value, or an automatic slot (legacy-board = preference)
+        keep = dict(requested_at=res['slot'], requested_by=({'owner': 'owner', 'board': 'board'}.get(res['origin'],
+                                                                                                    'legacy-board'))
+                    if res['owner_pinned'] else 'legacy-board') if res \
             else dict(requested_at=it.get('requested_at'), requested_by=it.get('requested_by'))
         self.update_item(c, it['item_id'], cmd.actor, 'pause', owner_state='paused',
                          owner_state_reason=cmd.args.get('reason') or 'Paused by owner', **keep)

@@ -167,6 +167,9 @@ CREATE TABLE IF NOT EXISTS ops_overrides (
   revoked REAL, revoked_by TEXT
 );
 CREATE INDEX IF NOT EXISTS ops_overrides_item ON ops_overrides(item_id, state);
+CREATE INDEX IF NOT EXISTS ops_commands_item ON ops_commands(item_id, created);
+CREATE INDEX IF NOT EXISTS ops_audit_item ON ops_audit(item_id, kind, at);
+CREATE INDEX IF NOT EXISTS ops_outbox_item ON ops_outbox(item_id, kind, state);
 '''
 
 
