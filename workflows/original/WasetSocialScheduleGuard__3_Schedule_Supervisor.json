@@ -1,0 +1,1429 @@
+{
+  "id": "WasetSocialScheduleGuard",
+  "name": "Waset Social V2 — 3 Schedule Supervisor",
+  "active": true,
+  "isArchived": false,
+  "versionId": "e37aa4f0-6221-4751-a9a9-95ca706f17f2",
+  "activeVersionId": "e37aa4f0-6221-4751-a9a9-95ca706f17f2",
+  "triggerCount": 1,
+  "nodeCount": 44,
+  "createdAt": "2026-10-09T14:09:57.380Z",
+  "updatedAt": "2026-10-09T15:36:30.433Z",
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Africa/Cairo",
+    "executionTimeout": 600,
+    "saveDataSuccessExecution": "all",
+    "saveDataErrorExecution": "all",
+    "saveManualExecutions": true,
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": [],
+  "parentFolderId": null,
+  "connections": {
+    "Social Start": {
+      "main": [
+        [
+          {
+            "node": "Social Page Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social Page Request": {
+      "main": [
+        [
+          {
+            "node": "Social Read Page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social Read Page": {
+      "main": [
+        [
+          {
+            "node": "Social Collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social Collect": {
+      "main": [
+        [
+          {
+            "node": "Social More Pages?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social More Pages?": {
+      "main": [
+        [
+          {
+            "node": "Social Page Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Social Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Manual Audit": {
+      "main": [
+        [
+          {
+            "node": "Configuration",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Configuration": {
+      "main": [
+        [
+          {
+            "node": "Acquire Preparation Lock — Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acquire Preparation Lock — Input": {
+      "main": [
+        [
+          {
+            "node": "Acquire Preparation Lock — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acquire Preparation Lock — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Acquire Preparation Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acquire Preparation Lock": {
+      "main": [
+        [
+          {
+            "node": "Supervisor Lock Acquired?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supervisor Lock Acquired?": {
+      "main": [
+        [
+          {
+            "node": "Social Start",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Social Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Supervisor Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inspect Schedule — Input": {
+      "main": [
+        [
+          {
+            "node": "Inspect Schedule — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inspect Schedule — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Inspect Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Supervisor Snapshot": {
+      "main": [
+        [
+          {
+            "node": "Inspect Schedule — Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inspect Schedule": {
+      "main": [
+        [
+          {
+            "node": "Repair Queue",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repair Queue": {
+      "main": [
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Each Schedule Repair": {
+      "main": [
+        [
+          {
+            "node": "Release Preparation Lock — Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Repair Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repair Context": {
+      "main": [
+        [
+          {
+            "node": "Has Repair?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Repair?": {
+      "main": [
+        [
+          {
+            "node": "Read Current Schedule",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Current Schedule": {
+      "main": [
+        [
+          {
+            "node": "Repair Still Applies",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repair Still Applies": {
+      "main": [
+        [
+          {
+            "node": "Apply Repair?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Repair?": {
+      "main": [
+        [
+          {
+            "node": "Repair Kind?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Corrected Slot — Input": {
+      "main": [
+        [
+          {
+            "node": "Reserve Corrected Slot — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Corrected Slot — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Reserve Corrected Slot",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repair Kind?": {
+      "main": [
+        [
+          {
+            "node": "Reserve Corrected Slot — Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build Block Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reserve Corrected Slot": {
+      "main": [
+        [
+          {
+            "node": "Build Reschedule Update",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Reschedule Update": {
+      "main": [
+        [
+          {
+            "node": "Save Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Block Update": {
+      "main": [
+        [
+          {
+            "node": "Save Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Schedule Repair": {
+      "main": [
+        [
+          {
+            "node": "Repair Saved",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repair Saved": {
+      "main": [
+        [
+          {
+            "node": "Commit New Slot?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Repaired Slot — Input": {
+      "main": [
+        [
+          {
+            "node": "Commit Repaired Slot — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Repaired Slot — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Commit Repaired Slot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit New Slot?": {
+      "main": [
+        [
+          {
+            "node": "Commit Repaired Slot — Input",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Audit Repair — Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Commit Repaired Slot": {
+      "main": [
+        [
+          {
+            "node": "Audit Repair — Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Repair — Input": {
+      "main": [
+        [
+          {
+            "node": "Audit Repair — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Repair — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Audit Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audit Repair": {
+      "main": [
+        [
+          {
+            "node": "Repair Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Repair Note": {
+      "main": [
+        [
+          {
+            "node": "Save Repair History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Repair History": {
+      "main": [
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Each Schedule Repair",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release Preparation Lock — Input": {
+      "main": [
+        [
+          {
+            "node": "Release Preparation Lock — Local n8n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Release Preparation Lock — Local n8n": {
+      "main": [
+        [
+          {
+            "node": "Release Preparation Lock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "id": "50e7fa69-680a-458c-8d9e-3b039d3b4c50",
+      "name": "Configuration",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Cutover authorized 2026-10-08. Old publisher and waiting executions stopped.\nconst config={armed:true,styleWeekdays:{},folderRoot:'/Social Media/Production',owner:String($execution.id)};\nif(!config.armed)return [];\nreturn [{json:config}];"
+      }
+    },
+    {
+      "id": "e7401704-381e-4526-9881-e12d836fffee",
+      "name": "Acquire Preparation Lock",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local n8n helper failed');const result=JSON.parse($json.stdout||'{}');if(result.error)throw new Error(result.error);return [{json:result}];"
+      },
+      "position": [
+        260,
+        0
+      ]
+    },
+    {
+      "id": "745e6387-d895-4588-8cfd-c44c026befe3",
+      "name": "Release Preparation Lock",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local n8n helper failed');const result=JSON.parse($json.stdout||'{}');if(result.error)throw new Error(result.error);return [{json:result}];"
+      },
+      "position": [
+        520,
+        0
+      ]
+    },
+    {
+      "id": "a7fb2bc3-f787-4adb-b8de-6b3c4da85771",
+      "name": "Acquire Preparation Lock — Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=JSON.parse(JSON.stringify({name:'preparation',owner:$json.owner}));const payload=Buffer.from(JSON.stringify({path:\"/v1/lock\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        780,
+        0
+      ]
+    },
+    {
+      "id": "a09f9aa7-8768-49e9-8a9c-f777a5ba62f2",
+      "name": "Acquire Preparation Lock — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        1040,
+        0
+      ]
+    },
+    {
+      "id": "0eaedbf6-71ad-49df-8254-67ef1508ed3e",
+      "name": "Release Preparation Lock — Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const body=JSON.parse(JSON.stringify({name:'preparation',owner:$('Configuration').first().json.owner}));const payload=Buffer.from(JSON.stringify({path:\"/v1/unlock\",body})).toString(\"base64\");return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        1300,
+        0
+      ]
+    },
+    {
+      "id": "e22c48bf-455d-4c34-8f48-9e752f9467f7",
+      "name": "Release Preparation Lock — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        1560,
+        0
+      ]
+    },
+    {
+      "id": "45984061-c332-44bb-a9f0-e2f264500888",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        1820,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 5,35 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "b54cb322-38df-4251-933d-25a46643ed5f",
+      "name": "Manual Audit",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        2080,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "62361412-61ee-41e4-906e-36f7bcafa035",
+      "name": "Supervisor Lock Acquired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2340,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e6df8a35-c46c-4638-88eb-1e1bddfda7c6",
+              "leftValue": "={{ $json.acquired===true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "8397aa04-b355-425b-8bb1-439caba0f8b1",
+      "name": "Social Start",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{json:{accum:[],gql:{\"query\": \"query($b:[ID!]!){boards(ids:$b){items_page(limit:500){cursor items{id name column_values(ids:[\\\"status\\\",\\\"date4\\\",\\\"hour_mm7xy9cf\\\",\\\"color_mm7xm9b6\\\",\\\"long_text_mm7x2ay1\\\",\\\"color_mm7xe2j2\\\",\\\"link_mm7x8dy7\\\",\\\"link_mm7xb56a\\\",\\\"text_mm7xqn4e\\\",\\\"long_text_mm7ysrbz\\\",\\\"link_mm7xaep2\\\",\\\"text_mm7xemtq\\\",\\\"link_mm7ywc0w\\\",\\\"text_mm7y5kd1\\\",\\\"text_mm7yjmqd\\\",\\\"multiple_person_mm7yy4tk\\\",\\\"date_mm7y8s9t\\\",\\\"text_mm7y4h4a\\\",\\\"text_mm7yy451\\\",\\\"text_mm7yp8h\\\",\\\"date_mm7yr4h3\\\",\\\"text_mm7yfqhb\\\",\\\"text_mm7yhjf1\\\",\\\"long_text_mm7zbtbn\\\",\\\"text_mm7zjt4m\\\",\\\"text_mm7z139h\\\",\\\"date_mm7zd2b9\\\"]){id text value}}}}}\", \"variables\": {\"b\": [\"5105608159\"]}}}}];"
+      }
+    },
+    {
+      "id": "96151db2-62c4-4a56-9d48-38fd88c7b53e",
+      "name": "Social Page Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2860,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return $input.all();"
+      }
+    },
+    {
+      "id": "0a9ba124-6799-4916-a22a-62907c2e0ee8",
+      "name": "Social Read Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        0,
+        260
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gql) }}"
+      },
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    },
+    {
+      "id": "b10f588d-5d1b-42c2-b679-4509a4d9fa51",
+      "name": "Social Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        260
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "if($json.errors)throw new Error(JSON.stringify($json.errors));\nconst s=$('Social Page Request').item.json;\nconst p=$json.data?.boards?.[0]?.items_page||$json.data?.next_items_page;\nif(!p)throw new Error('Missing board page; refusing a partial snapshot');\nreturn [{json:{accum:[...s.accum,...p.items],more:!!p.cursor,gql:{query:'query($c:String!){next_items_page(cursor:$c,limit:500){cursor items{id name column_values(ids:[\"status\",\"date4\",\"hour_mm7xy9cf\",\"color_mm7xm9b6\",\"long_text_mm7x2ay1\",\"color_mm7xe2j2\",\"link_mm7x8dy7\",\"link_mm7xb56a\",\"text_mm7xqn4e\",\"long_text_mm7ysrbz\",\"link_mm7xaep2\",\"text_mm7xemtq\",\"link_mm7ywc0w\",\"text_mm7y5kd1\",\"text_mm7yjmqd\",\"multiple_person_mm7yy4tk\",\"date_mm7y8s9t\",\"text_mm7y4h4a\",\"text_mm7yy451\",\"text_mm7yp8h\",\"date_mm7yr4h3\",\"text_mm7yfqhb\",\"text_mm7yhjf1\",\"long_text_mm7zbtbn\",\"text_mm7zjt4m\",\"text_mm7z139h\",\"date_mm7zd2b9\"]){id text value}}}}',variables:{c:p.cursor}}}}];"
+      }
+    },
+    {
+      "id": "3469bbcd-ba96-457d-b183-a0dbc77ee53d",
+      "name": "Social Snapshot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        260
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return [{json:{items:$json.accum}}];"
+      }
+    },
+    {
+      "id": "e3b4b576-35f4-4366-ab0c-7acf915887a1",
+      "name": "Social More Pages?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        780,
+        260
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "52a0dea0-f242-452d-a487-6641c1060f94",
+              "leftValue": "={{ $json.more===true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nconst all=$json.items.map(i=>({id:i.id,name:i.name,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),code:txt(i,'text_mm7xqn4e'),rotation:rotation(i),at:at(i),media:txt(i,'text_mm7yp8h'),asset:txt(i,'text_mm7yy451'),processedFormat:txt(i,'text_mm7z139h'),topazed:txt(i,'color_mm7xe2j2')==='Topazed',url:val(i,'link_mm7ywc0w')?.url||'',issue:txt(i,'long_text_mm7zbtbn')}));return [{json:{items:all}}];"
+      },
+      "position": [
+        1040,
+        260
+      ],
+      "id": "808bca7f-53ce-4a6f-b2ae-e98ca1f862ba",
+      "name": "Supervisor Snapshot"
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nconst body={items:$json.items};const payload=Buffer.from(JSON.stringify({path:\"/v1/monitor/plan\",body})).toString('base64');return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        1300,
+        260
+      ],
+      "id": "b178b0ad-4b73-4a2c-a1b7-420194f6097c",
+      "name": "Inspect Schedule — Input"
+    },
+    {
+      "id": "4b4f626e-c4dd-4269-8fd5-8576df10cd14",
+      "name": "Inspect Schedule — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        1560,
+        260
+      ]
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nif($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local helper failed');const r=JSON.parse($json.stdout||'{}');if(r.error)throw new Error(r.error);return [{json:r}];"
+      },
+      "position": [
+        1820,
+        260
+      ],
+      "id": "cb21e6a9-9086-4f01-8ccf-a1251602a3e6",
+      "name": "Inspect Schedule"
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nreturn $json.plans.length?$json.plans.map(x=>({json:x})):[{json:{empty:true}}];"
+      },
+      "position": [
+        2080,
+        260
+      ],
+      "id": "dd0e8e9b-23ae-4de1-9944-02a28ce9f3d7",
+      "name": "Repair Queue"
+    },
+    {
+      "id": "c3fd823d-4969-4270-9fdc-f684edb992fa",
+      "name": "Each Schedule Repair",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2340,
+        260
+      ],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nreturn [{json:{...$json,gqlRead:{query:'query($ids:[ID!]!){items(ids:$ids){id column_values {id text value}}}',variables:{ids:[$json.item?.id||'0']}}}}];"
+      },
+      "position": [
+        2600,
+        260
+      ],
+      "id": "786cdb0c-e6d9-4dce-a6b1-099e612d3448",
+      "name": "Repair Context"
+    },
+    {
+      "id": "78db5b7a-4bd2-42a1-9d79-7f2aedc026e5",
+      "name": "Has Repair?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2860,
+        260
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e6df8a35-c46c-4638-88eb-1e1bddfda7c6",
+              "leftValue": "={{ !$json.empty }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "ceaa2fb2-1156-4a63-8c57-af7ebf0018e6",
+      "name": "Read Current Schedule",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        0,
+        520
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gqlRead) }}"
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nif($json.errors)throw new Error(JSON.stringify($json.errors));const c=$('Repair Context').item.json,i=$json.data?.items?.[0];return [{json:{...c,ok:!!i&&txt(i,'status')==='Scheduled'&&txt(i,'color_mm7xm9b6')===c.item.format&&txt(i,'text_mm7yp8h')===c.item.media&&txt(i,'text_mm7yy451')===c.item.asset&&at(i)===c.item.at&&!val(i,'link_mm7xb56a')?.url}}];"
+      },
+      "position": [
+        260,
+        520
+      ],
+      "id": "edb8796f-30ef-45a2-ab96-cad9bad470fa",
+      "name": "Repair Still Applies",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "3a3d59f7-51e4-4901-85c5-12d0a8585878",
+      "name": "Apply Repair?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        520,
+        520
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e6df8a35-c46c-4638-88eb-1e1bddfda7c6",
+              "leftValue": "={{ $json.ok===true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "3d3e5c50-57b7-4d56-b351-de0c772be1b1",
+      "name": "Repair Kind?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        780,
+        520
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e6df8a35-c46c-4638-88eb-1e1bddfda7c6",
+              "leftValue": "={{ $json.kind==='reschedule' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nconst body={itemId:$json.item.id,format:$json.item.format,code:$json.item.code,rotation:$json.item.rotation,mediaId:$json.item.media,assetKey:$json.item.asset,at:$json.item.at,reason:$json.reason,occupied:$('Supervisor Snapshot').first().json.items.filter(i=>['Scheduled','Posted'].includes(i.status)&&i.at).map(i=>({itemId:i.id,format:i.format,code:i.code,rotation:i.rotation,at:i.at}))};const payload=Buffer.from(JSON.stringify({path:\"/v1/monitor/reserve\",body})).toString('base64');return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        1040,
+        520
+      ],
+      "id": "66ecf759-2a85-476f-b2cf-eadc1a918bdb",
+      "name": "Reserve Corrected Slot — Input"
+    },
+    {
+      "id": "66557cbb-59a6-4c5e-8728-c7a9bb34abac",
+      "name": "Reserve Corrected Slot — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        1300,
+        520
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nif($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local helper failed');const r=JSON.parse($json.stdout||'{}');if(r.error)throw new Error(r.error);return [{json:r}];"
+      },
+      "position": [
+        1560,
+        520
+      ],
+      "id": "6ef2116d-e3b1-4107-970d-a6628316474f",
+      "name": "Reserve Corrected Slot",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nconst c=$('Repair Context').item.json,r=$json,u=DateTime.fromISO(r.at).toUTC();return [{json:{gql:gqlUpdate(c.item.id,{date4:{date:r.date},hour_mm7xy9cf:{hour:r.hour,minute:r.minute},date_mm7y8s9t:{date:u.toISODate(),time:u.toFormat('HH:mm:ss')},long_text_mm7ysrbz:'مراقب الجدولة: '+c.reason+'؛ الموعد الجديد '+r.date+' '+r.hour+':'+String(r.minute).padStart(2,'0')+' بتوقيت القاهرة',long_text_mm7zbtbn:''}),at:r.at}}];"
+      },
+      "position": [
+        1820,
+        520
+      ],
+      "id": "905097cc-5759-4467-85d3-d03f4673cafb",
+      "name": "Build Reschedule Update"
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nconst c=$('Repair Context').item.json;return [{json:{gql:gqlUpdate(c.item.id,{status:{label:c.status},date_mm7y8s9t:{},long_text_mm7zbtbn:c.reason,long_text_mm7ysrbz:'مراقب الجدولة: تم وقف الاعتماد — '+c.reason})}}];"
+      },
+      "position": [
+        2080,
+        520
+      ],
+      "id": "e32a4324-7388-4fc6-b517-87b4ca024e8b",
+      "name": "Build Block Update"
+    },
+    {
+      "id": "991e38d7-16ba-4802-90b1-be4abc19ec99",
+      "name": "Save Schedule Repair",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        2340,
+        520
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gql) }}"
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nif($json.errors)throw new Error(JSON.stringify($json.errors));return [{json:$('Repair Context').item.json}];"
+      },
+      "position": [
+        2600,
+        520
+      ],
+      "id": "52fd73f4-cfa5-41a4-b13c-41d1ecceddf2",
+      "name": "Repair Saved",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "id": "21a55597-201e-464b-b83f-4c07b035abbb",
+      "name": "Commit New Slot?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        2860,
+        520
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e6df8a35-c46c-4638-88eb-1e1bddfda7c6",
+              "leftValue": "={{ $json.kind==='reschedule' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nconst body={itemId:$('Repair Context').item.json.item.id,at:$('Reserve Corrected Slot').item.json.at};const payload=Buffer.from(JSON.stringify({path:\"/v1/schedule/commit\",body})).toString('base64');return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        0,
+        780
+      ],
+      "id": "8c129252-f8ce-439a-87e5-69391aa5e7ad",
+      "name": "Commit Repaired Slot — Input"
+    },
+    {
+      "id": "81da3e9a-4717-4557-b603-d986a288aabe",
+      "name": "Commit Repaired Slot — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        260,
+        780
+      ]
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nif($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local helper failed');const r=JSON.parse($json.stdout||'{}');if(r.error)throw new Error(r.error);return [{json:r}];"
+      },
+      "position": [
+        520,
+        780
+      ],
+      "id": "d30a6a30-2758-4c12-ae18-3c6ed95cb5fb",
+      "name": "Commit Repaired Slot"
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nconst body={itemId:$('Repair Context').item.json.item.id,reason:$('Repair Context').item.json.reason,kind:$('Repair Context').item.json.kind,before:$('Repair Context').item.json.item.at};const payload=Buffer.from(JSON.stringify({path:\"/v1/monitor/log\",body})).toString('base64');return [{json:{command:'python3 /home/node/.n8n-files/waset-social/helper.py '+payload}}];"
+      },
+      "position": [
+        780,
+        780
+      ],
+      "id": "0c45bc6f-48f0-46e0-a496-dd4f5de7e6b3",
+      "name": "Audit Repair — Input"
+    },
+    {
+      "id": "3dcce5be-d195-4ca8-a2a4-0e93fe5c46a8",
+      "name": "Audit Repair — Local n8n",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "parameters": {
+        "executeOnce": false,
+        "command": "={{ $json.command }}"
+      },
+      "position": [
+        1040,
+        780
+      ]
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nif($json.exitCode!==undefined&&$json.exitCode!==0)throw new Error('Local helper failed');const r=JSON.parse($json.stdout||'{}');if(r.error)throw new Error(r.error);return [{json:r}];"
+      },
+      "position": [
+        1300,
+        780
+      ],
+      "id": "556390cd-9749-4e6d-8c51-988419b69f14",
+      "name": "Audit Repair"
+    },
+    {
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "\nconst txt=(it,id)=>((it.column_values||[]).find(c=>c.id===id)?.text||'').trim();\nconst val=(it,id)=>{try{return JSON.parse((it.column_values||[]).find(c=>c.id===id)?.value||'null')}catch{return null}};\nconst norm=x=>String(x||'').trim().toUpperCase().replace(/\\s+/g,'');\nconst style=code=>{const m=String(code).match(/^\\s*([a-z]{2,3})\\s*[#_\\- ]?\\s*\\d+/i);return m?m[1].toUpperCase():null};\nconst rotation=it=>txt(it,'text_mm7yjmqd')||(txt(it,'color_mm7xm9b6')==='Story'?style(txt(it,'text_mm7xqn4e'))+':'+(it.name.match(/^([\\p{L}]+)/u)?.[1]||'GENERAL').toUpperCase():style(txt(it,'text_mm7xqn4e')));\nconst gqlUpdate=(id,cv)=>{for(const key of ['long_text_mm7ysrbz','long_text_mm7zbtbn'])if(typeof cv[key]==='string')cv[key]={text:cv[key]};return {query:'mutation($b:ID!,$i:ID!,$v:JSON!){change_multiple_column_values(board_id:$b,item_id:$i,column_values:$v){id}}',variables:{b:'5105608159',i:String(id),v:JSON.stringify(cv)}}};\nconst at=it=>{const unified=val(it,'date_mm7y8s9t');if(unified?.date&&unified?.time){const u=DateTime.fromISO(unified.date+'T'+unified.time,{zone:'UTC'});return u.isValid?u.toUTC().toISO():null}const d=val(it,'date4'),h=val(it,'hour_mm7xy9cf');if(!d?.date||h?.hour==null)return null;const t=DateTime.fromISO(d.date,{zone:'Africa/Cairo'}).set({hour:Number(h.hour),minute:Number(h.minute||0),second:0,millisecond:0});return t.isValid?t.toUTC().toISO():null};\nconst events=items=>items.filter(i=>['Scheduled','Posted'].includes(txt(i,'status'))&&at(i)).map(i=>({itemId:i.id,status:txt(i,'status'),format:txt(i,'color_mm7xm9b6'),style:style(txt(i,'text_mm7xqn4e')),rotation:rotation(i),at:at(i)}));\n\nconst protectedStatus=i=>['Posted','Skipped','Paused','Publishing'].includes(txt(i,'status'));\nconst checkStamp=()=>({date:DateTime.utc().toISODate(),time:DateTime.utc().toFormat('HH:mm:ss')});\nconst c=$('Repair Context').item.json;let after='تم وقف اعتماد الموعد لحين معالجة السبب';if(c.kind==='reschedule'){const r=$('Reserve Corrected Slot').item.json;after='الموعد الجديد '+r.date+' '+r.hour+':'+String(r.minute).padStart(2,'0')+' Africa/Cairo'};return [{json:{gql:{query:'mutation($i:ID!,$b:String!){create_update(item_id:$i,body:$b){id}}',variables:{i:c.item.id,b:'مراقب الجدولة: '+c.reason+'\\n'+after+'\\nالموعد السابق: '+(c.item.at||'غير مكتمل')}}}}];"
+      },
+      "position": [
+        1560,
+        780
+      ],
+      "id": "f512ca30-fd82-477c-abb7-a2b050c9cc98",
+      "name": "Repair Note"
+    },
+    {
+      "id": "13828649-96e9-4e56-b489-ba25c3c16f85",
+      "name": "Save Repair History",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1820,
+        780
+      ],
+      "parameters": {
+        "url": "https://api.monday.com/v2",
+        "method": "POST",
+        "options": {
+          "timeout": 60000,
+          "response": {
+            "response": {
+              "responseFormat": "json",
+              "neverError": false
+            }
+          }
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "mondayComApi",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.gql) }}"
+      },
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "mondayComApi": {
+          "id": "<REDACTED>",
+          "name": "Monday.com account"
+        }
+      }
+    }
+  ],
+  "nodeGroups": [],
+  "activeVersion": {
+    "sameAsDraft": true
+  },
+  "meta": null
+}

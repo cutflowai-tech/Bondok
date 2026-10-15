@@ -1,0 +1,13 @@
+# Raw production snapshots and anything sensitive stay outside Git.
+.local-snapshots/
+*.sqlite
+*.sqlite-*
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.pytest_cache/
+workflows/build/__out__/
+.DS_Store
+release/
