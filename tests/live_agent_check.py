@@ -143,6 +143,86 @@ class LiveAgent(LangCase):
         for claim in ('انت لغيت', 'إنت لغيت', 'أنت ألغيت', 'انت ألغيت', 'لغيته انت', 'you cancelled', 'you canceled'):
             self.assertNotIn(claim, low)
 
+    # ---- meaning (owner review 2026-10-16): negation, politeness, plans, opposites, ambiguity, several commands
+    def tomorrow_at(self, hour):
+        from datetime import timedelta
+        d = (self.ops.now_dt().astimezone(rules.TZ) + timedelta(days=1)).date()
+        return d.isoformat(), hour
+
+    def local(self, iid):
+        res = self.res(iid)
+        if res:
+            return rules.instant(res['slot']).astimezone(rules.TZ)
+        req = self.item(iid)['requested_at']
+        return rules.instant(req).astimezone(rules.TZ) if req else None
+
+    def test_11_two_commands_in_one_message(self):
+        self.make_ready('961', 'Story', code='TL1')
+        self.make_ready('962', 'Story', code='TL2')
+        reply = self.say(self.core(), 'وقف TL1 وانشر TL2 بكرة الساعة 9 بالليل', thread='1800000021.000100')
+        print('\n[11]', reply)
+        self.assertEqual(self.item('961')['owner_state'], 'paused')
+        at = self.local('962')
+        self.assertEqual((at.date().isoformat(), at.hour), self.tomorrow_at(21))
+
+    def test_12_publish_without_topaz(self):
+        self.waiting('963', 'TM1')
+        reply = self.say(self.core(), 'انشر TM1 من غير توباز', thread='1800000022.000100')
+        print('\n[12]', reply)
+        with self.ops.store.read() as c:
+            self.assertIn('topaz_required', self.ops.waived(c, self.ops.item(c, '963')))
+        self.assertIsNone(self.item('963')['topaz_asset'])
+
+    def test_13_negated_publish_is_a_stop(self):
+        self.make_ready('964', 'Story', code='TN1')
+        reply = self.say(self.core(), 'متنشرش TN1', thread='1800000023.000100')
+        print('\n[13]', reply)
+        with self.ops.store.read() as c:
+            stopped = self.ops.item(c, '964')['owner_state'] == 'paused' or self.ops.publish_block(c, '964')
+        self.assertTrue(stopped)
+
+    def test_14_polite_request(self):
+        self.make_ready('965', 'Story', code='TO1')
+        reply = self.say(self.core(), 'ممكن توقف TO1 لو سمحت', thread='1800000024.000100')
+        print('\n[14]', reply)
+        self.assertEqual(self.item('965')['owner_state'], 'paused')
+
+    def test_15_plan_records_nothing(self):
+        self.waiting('966', 'TP1')
+        reply = self.say(self.core(), 'هعمل توباز لـ TP1 بكرة', thread='1800000025.000100')
+        print('\n[15]', reply)
+        self.assertIsNone(self.item('966')['topaz_asset'])
+
+    def test_16_opposite_words_do_not_exempt(self):
+        self.waiting('967', 'TQ1')
+        reply = self.say(self.core(), 'لازم توباز لـ TQ1 قبل ما ينزل', thread='1800000026.000100')
+        print('\n[16]', reply)
+        with self.ops.store.read() as c:
+            self.assertNotIn('topaz_required', self.ops.waived(c, self.ops.item(c, '967')))
+
+    def test_17_real_ambiguity_asks_one_question(self):
+        self.make_ready('968', 'Story', code='TR1')
+        reply = self.say(self.core(), 'شيل TR1', thread='1800000027.000100')
+        print('\n[17]', reply)
+        self.assertEqual(self.outbox('monday_admin'), [])
+        self.assertEqual(self.item('968')['owner_state'], 'active')
+        self.assertLessEqual(reply.count('❓'), 1)
+
+    def test_18_concessive_directive(self):
+        self.make_ready('969', 'Story', code='TS1')
+        reply = self.say(self.core(), 'متنشرش TS1 فعليًا حتى لو اتحجزله معاد، ده عنصر تجربة', thread='1800000028.000100')
+        print('\n[18]', reply)
+        with self.ops.store.read() as c:
+            self.assertTrue(self.ops.publish_block(c, '969') or self.ops.item(c, '969')['owner_state'] == 'paused')
+
+    def test_19_tomorrow_9(self):
+        self.make_ready('970', 'Story', code='TT1')
+        reply = self.say(self.core(), 'غير معاد TT1 لبكرة 9', thread='1800000029.000100')
+        print('\n[19]', reply)
+        at = self.local('970')
+        self.assertIsNotNone(at)
+        self.assertEqual((at.date().isoformat(), at.hour), self.tomorrow_at(21))
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

@@ -12,7 +12,7 @@ Common instructions and the tools that do them:
 * "أنا عملت توباز للفيديو ده" / "Topaz done": confirm_topaz for that item. The owner's word is the confirmation; the file name does not matter. If the selected file changed since the owner saw it, code asks one question naming the file.
 * "انشره من غير توباز": waive_rule topaz_required for that item, then request_publish. It is an exemption: never say Topaz was done.
 * "من النهارده توباز مش شرط": set_rule topaz_required=false (a lasting change). For one video only, use waive_rule.
-* "غير معاده لبكرة 9": request_reschedule with the Cairo date and time. Any future time works, on or off the usual slots.
+* "غير معاده لبكرة 9": request_reschedule with the Cairo date and time. Any future time works, on or off the usual slots. Publishing hours: a bare hour from 1 to 11 means the evening (9 = 21:00) unless the owner says morning (الصبح، صباحًا، AM); "9 ونص" = 21:30, "الساعة 12 بالليل" = 00:00 of the next day. Do not ask morning or evening for a bare hour.
 * "انقل/سمي/امسح الفايل": list_files, then file_action with the exact path; if the file belongs to a scheduled item, its slot is released and the file rechecked (the result says so).
 * "وقف الفيديو ده": pause_item. If publication already crossed the point of sending, the result says it may already be in progress; say that, never "stopped".
 * "ده اتنشر بالفعل": report_published (owner-reported, kept apart from Instagram evidence).
