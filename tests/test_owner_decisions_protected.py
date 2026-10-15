@@ -219,7 +219,12 @@ class RestoreAndCorrection(Base):
         self.assertTrue(self.ops.due('w', 5).get('restore_gap'))  # ... but publishing waits for reconciliation
         self.clock.advance(1800)
         self.observe(self.cleared_board('820'))                   # the board shows the owner's later cancellation
-        # Bondok's write of the cancellation is not in the restored outbox: the log shows a non-Bondok clear.
+        self.assertFalse([w for w in self.ops.due('w', 5).get('work') or [] if w.get('item_id') == '820'])
+        # the owner closes the post-restore check; the next read applies what the board shows, with evidence:
+        # Bondok's write of the cancellation is not in the restored outbox, so the log shows a non-Bondok clear.
+        self.ops.submit(owner_cmd('gap', 'resolve_restore_gap', None, explicit=True))
+        self.clock.advance(600)
+        self.observe(self.cleared_board('820'))
         self.evidence([{'id': 'a4', 'at': at + 610, 'user_id': 'shared', 'cleared': True,
                         'column_id': 'date_mm7y8s9t'}])
         self.assertIsNone(self.res('820'))
@@ -439,3 +444,117 @@ class TestCapacityIsolation(AcceptanceIsolation):
         self.assertEqual(self.res('853')['account'], rules.ACCOUNT)
         self.isolate()
         self.assertTrue(self.res('853')['account'].endswith(':acceptance'))
+
+
+class StaleCheckScope(Base):
+    def test_board_pause_is_not_lost_to_an_unrelated_owner_command_during_the_read(self):
+        """Task-path audit H1: an owner Slack note arriving during the read must not make a typed Pause stale."""
+        self.make_ready('870', 'Story', code='SC1')
+        self.drain_monday()
+        self.clock.advance(1800)
+        read_at = self.ops.now()
+        b = self.board('870')
+        set_cell(b, 'status', 'Paused', {'index': 2})
+        self.clock.advance(3)
+        self.ops.submit(owner_cmd('note', 'board_set_field', '870', explicit=True, field='notes', value='x'))
+        self.clock.advance(3)
+        self.observe(b, read_at=read_at)
+        self.assertEqual(self.item('870')['owner_state'], 'paused')
+
+    def test_board_time_older_than_the_owners_time_instruction_is_refused(self):
+        self.make_ready('871', 'Story', code='SC2')
+        self.drain_monday()
+        self.clock.advance(1800)
+        read_at = self.ops.now()
+        b = self.board('871')
+        set_cell(b, 'publish_at', 'x', rules.monday_publish_at_value(rules.instant(self.res('871')['slot']) +
+                                                                       timedelta(days=9)))
+        self.clock.advance(3)
+        slot = self.owner_time('871', days=5)
+        self.clock.advance(3)
+        self.observe(b, read_at=read_at)
+        self.assertEqual(self.res('871')['slot'], slot)
+
+
+class IsolationHardening(AcceptanceIsolation):
+    def test_a_test_reservation_never_publishes_even_after_isolation_ends_or_the_code_changes(self):
+        self.isolate()
+        self.make_ready('880', 'Story', code='ACC80')
+        slot = rules.instant(self.res('880')['slot'])
+        with self.ops.store.tx() as c:                        # renamed out of the pattern by someone
+            c.execute("UPDATE ops_items SET code='RL80', name='Renamed' WHERE item_id='880'")
+        self.clock.set(slot + timedelta(seconds=5))
+        self.assertNotIn('880', [w['item_id'] for w in self.ops.due('w', 10).get('work') or []])
+        self.assertFalse(self.ops.claim('880', 'w')['claimed'])
+
+    def test_clearing_isolation_releases_test_reservations_first(self):
+        self.isolate()
+        self.make_ready('881', 'Story', code='ACC81')
+        self.assertIsNotNone(self.res('881'))
+        from waset_ops.core import Command
+        r = self.ops.submit(Command('clr', 'set_isolation', 'service:acceptance', 'service:acceptance', None, {}))
+        self.assertEqual(r['released'], ['881'])
+        self.assertIsNone(self.res('881'))
+
+    def test_cleanup_is_not_undone_by_the_scheduler(self):
+        self.isolate()
+        self.make_ready('882', 'Story', code='ACC82')
+        from waset_ops.core import Command
+        self.ops.submit(Command('rel2', 'release_isolated', 'service:acceptance', 'service:acceptance', None, {}))
+        for _ in range(3):
+            with self.ops.store.tx() as c:
+                self.ops.try_schedule(c, '882', 'service:wf3')
+            self.clock.advance(3600)
+        self.assertIsNone(self.res('882'))
+
+    def test_prefix_matches_only_prefix_and_digits(self):
+        self.isolate()
+        self.make_ready('883', 'Story', code='ACM5')
+        with self.ops.store.tx() as c:
+            self.assertIsNone(self.ops.send_isolated(c, '883'))
+            c.execute("UPDATE ops_items SET code='ACCOUNT1', name='Real 1' WHERE item_id='883'")
+            self.assertIsNone(self.ops.send_isolated(c, '883'))
+            c.execute("UPDATE ops_items SET code='acc12' WHERE item_id='883'")
+            self.assertIsNotNone(self.ops.send_isolated(c, '883'))
+
+    def test_test_items_and_real_content_never_block_each_other_as_duplicates(self):
+        self.isolate()
+        self.make_ready('885', 'Story', code='ACC85', content='same-')
+        self.make_ready('886', 'Story', code='RL86', content='same-')
+        self.assertIsNotNone(self.res('886'))
+
+
+class RestoreDetection(Base):
+    def test_an_older_store_opens_the_restore_gap_by_itself(self):
+        from waset_runtime.service import detect_restore, write_generation
+        marker = self.dir / 'store-generation.json'
+        self.make_ready('890', 'Story', code='RD1')
+        write_generation(self.ops, marker)
+        import json as _json
+        seen = _json.loads(marker.read_text())['last_command_at']
+        marker.write_text(_json.dumps({'last_command_at': seen + 3600}))      # the host saw later commands
+        gap = detect_restore(self.ops, marker)
+        self.assertIsNotNone(gap)
+        with self.ops.store.read() as c:
+            self.assertTrue(self.ops.restore_gap(c))
+        self.assertIsNone(detect_restore(self.ops, marker))                    # once
+
+    def test_board_system_columns_are_not_decisions_while_the_gap_is_open(self):
+        self.make_ready('891', 'Story', code='RD2')
+        self.drain_monday()
+        self.clock.advance(1800)
+        slot = self.res('891')['slot']
+        self.ops.mark_restored(self.ops.now())
+        b = self.board('891')
+        set_cell(b, 'status', 'Publishing', {'index': 3})
+        set_cell(b, 'publish_at', '', None)
+        self.observe(b)
+        self.assertEqual(self.res('891')['slot'], slot)
+        with self.ops.store.read() as c:
+            self.assertEqual(c.execute("SELECT COUNT(*) FROM ops_commands WHERE actor_kind='monday'").fetchone()[0], 0)
+
+    def test_gap_older_than_the_story_listing_waits_for_the_owner(self):
+        self.ops.mark_restored(self.ops.now() - 3 * 86400)
+        r = self.ops.restore_gap_check([], stories_cover_since=self.ops.now() - 86400)
+        self.assertTrue(r['open'])
+        self.assertTrue(r['stories_not_verifiable'])

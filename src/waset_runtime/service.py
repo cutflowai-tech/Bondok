@@ -65,6 +65,8 @@ def build(env: dict, dry_run=False):
     os.environ.setdefault('WASET_HELPER', str(HERE / 'helper.py'))   # detached media jobs run through the helper
     ops = Ops(db)
     ops.store.migrate()
+    if not dry_run:
+        detect_restore(ops, Path(db).parent / 'store-generation.json')
     monday = Monday(env['MONDAY_API_TOKEN'], boards=lambda: ops.policy_value('allowed_boards'))
     dropbox = Dropbox(token=env.get('DROPBOX_TOKEN'), refresh_token=env.get('DROPBOX_REFRESH_TOKEN'),
                       app_key=env.get('DROPBOX_APP_KEY'), app_secret=env.get('DROPBOX_APP_SECRET'))
@@ -78,6 +80,37 @@ def build(env: dict, dry_run=False):
         from .dry import dry
         monday, dropbox, ig, captions = dry(monday), dry(dropbox), dry(ig), None
     return ops, Runner(ops, monday, dropbox, ig, captions, name='bondok')
+
+
+def latest_command(ops) -> float:
+    with ops.store.read() as c:
+        return float(c.execute('SELECT COALESCE(MAX(created), 0) FROM ops_commands').fetchone()[0] or 0)
+
+
+def detect_restore(ops, marker: Path):
+    """The store is older than what this host already saw (a backup was restored): open the restore gap by itself,
+    so publishing waits for the Instagram check instead of relying on a manual --mark-restored (audit H4). The marker
+    lives beside the store but is not part of it, so a restored store file does not bring an older marker."""
+    try:
+        seen = json.loads(marker.read_text()).get('last_command_at', 0)
+    except (OSError, ValueError):
+        return None
+    store_last = latest_command(ops)
+    with ops.store.read() as c:
+        open_gap = ops.restore_gap(c)
+    if store_last + 60 < float(seen) and not open_gap:
+        LOG.warning('store_restored detected store_last=%s seen=%s', store_last, seen)
+        return ops.mark_restored(store_last, actor='service:runtime')
+    return None
+
+
+def write_generation(ops, marker: Path):
+    try:
+        tmp = marker.with_suffix('.tmp')
+        tmp.write_text(json.dumps({'last_command_at': latest_command(ops), 'at': time.time()}))
+        os.replace(tmp, marker)
+    except OSError as e:
+        LOG.warning('generation_marker_failed detail=%s', str(e)[:120])
 
 
 def shadow_copy(db) -> str:
@@ -141,6 +174,8 @@ class Scheduler:
                 started.append(kind)
         self.ops.heartbeat('runtime', {'owner': owner, 'dry_run': self.dry_run,
                                        'running': [k for k, v in self.running.items() if v]})
+        if not self.dry_run and self.data_dir is not None:
+            write_generation(self.ops, self.data_dir / 'store-generation.json')
         return started
 
     def _run(self, kind):

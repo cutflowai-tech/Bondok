@@ -218,6 +218,8 @@ class PublishMixin:
                         audit(c, r['item_id'], 'test_send_prevented', worker,
                               {'slot': r['slot'], 'owner_directive_active': bool(self.publish_block(c, r['item_id']))})
                     continue
+                if r['account'] != rules.ACCOUNT:
+                    continue                       # a test-account reservation is never published (audit H2)
                 if self.publish_block(c, r['item_id']):
                     continue                       # the owner said: never publish this item (it may stay scheduled)
                 att = self.active_attempt(c, r['item_id'])
@@ -263,7 +265,7 @@ class PublishMixin:
                         'made since then are checked on Instagram.')
             return gap
 
-    def restore_gap_check(self, media: list[dict]) -> dict:
+    def restore_gap_check(self, media: list[dict], stories_cover_since: float | None = None) -> dict:
         """Instagram's recent posts against the store: posts newer than the backup whose media id the store does not
         know are the gap. None -> publishing reopens; otherwise the owner gets the list and decides
         (``resolve_restore_gap`` after recording them, e.g. report_published with the post link)."""
@@ -285,6 +287,15 @@ class PublishMixin:
                 if (ts is None or ts >= gap['since']) and str(m.get('id')) not in known:
                     unknown.append({'id': str(m.get('id')), 'permalink': m.get('permalink'),
                                     'timestamp': m.get('timestamp')})
+            blind = stories_cover_since is None or gap['since'] < stories_cover_since
+            if not unknown and blind:
+                # Stories older than 24 h cannot be listed: a Story posted in that part of the gap is invisible, so
+                # the check cannot close by itself (task-path audit H5); the owner confirms.
+                self.notify(c, f"restore-gap-blind:{int(gap['marked'])}", '⚠️ After the restore: Instagram lists '
+                            'Stories of the last 24 hours only, and the backup is older. Check the account for Stories '
+                            f"posted since {rules.display(rules.instant(self.iso_ts(gap['since'])))}, tell Bondok "
+                            'about any, then say the check is done. Publishing stays paused.')
+                return {'open': True, 'unknown': [], 'stories_not_verifiable': True}
             if not unknown:
                 c.execute("DELETE FROM ops_meta WHERE key='restore_gap'")
                 audit(c, None, 'restore_gap_closed', 'service:wf2', {'checked': len(media)})
@@ -314,8 +325,8 @@ class PublishMixin:
             if self.restore_gap(c):
                 return {'claimed': False, 'reason': 'publishing is paused until the post-restore check is done'}
             iso = self.send_isolated(c, item_id)
-            if iso:
-                return {'claimed': False, 'reason': iso}
+            if iso or (res and res['account'] != rules.ACCOUNT):
+                return {'claimed': False, 'reason': iso or 'a test reservation is never published'}
             blk = self.publish_block(c, item_id)
             if blk:
                 return {'claimed': False, 'reason': 'the owner asked not to publish this item: ' + (blk['reason'] or '')}
@@ -575,7 +586,7 @@ class PublishMixin:
                 problems.append('item is ' + it['owner_state'])
             if self.publish_block(c, it['item_id']):
                 problems.append('the owner asked not to publish this item')
-            if self.send_isolated(c, it['item_id']):
+            if self.send_isolated(c, it['item_id']) or (res and res['account'] != rules.ACCOUNT):
                 problems.append('acceptance test item: never sent to Instagram')
             if loads(it['hold'], None):
                 problems.append('item is held: ' + (loads(it['hold'], {}) or {}).get('reason', ''))
@@ -740,7 +751,7 @@ class PublishMixin:
                 problems.append('item is ' + it['owner_state'])
             if self.publish_block(c, it['item_id']):
                 problems.append('the owner asked not to publish this item')
-            if self.send_isolated(c, it['item_id']):
+            if self.send_isolated(c, it['item_id']) or (res and res['account'] != rules.ACCOUNT):
                 problems.append('acceptance test item: never sent to Instagram')
             if loads(it['hold'], None):
                 problems.append('item is held: ' + (loads(it['hold'], {}) or {}).get('reason', ''))

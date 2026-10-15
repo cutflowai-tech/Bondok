@@ -68,9 +68,12 @@ class SchedMixin:
                 return {'item_id': j['item'], 'name': o['name'] if o else None,
                         'state': (o['publication'].replace('_', ' ') if o else 'published (earlier system)')}
         mine = self.reservation(c, it['item_id'])
+        test = bool(self.send_isolated(c, it['item_id']))
         for o in c.execute("SELECT * FROM ops_items WHERE item_id!=? AND format=? AND content_hash IS NOT NULL",
                            (it['item_id'], it['format'])).fetchall():
             o = dict(o)
+            if bool(self.send_isolated(c, o['item_id'])) != test:
+                continue                 # test items and real content never block each other as duplicates
             if not (self.content_identities(c, o) & ids):
                 continue
             if o['publication'] in ('published', 'outcome_unknown', 'in_progress') or self.active_attempt(c, o['item_id']):

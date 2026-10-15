@@ -10,6 +10,7 @@ Platform limits (``rules.PLATFORM``) are not policy and are reported as such.
 """
 from __future__ import annotations
 
+import re
 import sqlite3
 
 from . import rules
@@ -241,9 +242,10 @@ class PolicyMixin:
         it = self.item(c, item_id, required=False)
         if it is None:
             return None
-        code, name = str(it.get('code') or ''), str(it.get('name') or '')
-        if str(item_id) in (iso.get('item_ids') or []) or any(code.upper().startswith(p.upper())
-                                                              for p in iso.get('code_prefixes') or []) or \
+        code, name = str(it.get('code') or '').strip(), str(it.get('name') or '')
+        # A code matches a prefix only as <prefix><digits> (ACC12, not ACM5 or ACCOUNT1): no real item is caught.
+        if str(item_id) in (iso.get('item_ids') or []) or any(
+                re.fullmatch(re.escape(p) + r'\d+', code, re.I) for p in iso.get('code_prefixes') or []) or \
                 any(name.startswith(p) for p in iso.get('name_prefixes') or []):
             return (iso.get('reason') or 'acceptance test item') + ': never sent to Instagram'
         return None
@@ -253,9 +255,14 @@ class PolicyMixin:
         value = {'item_ids': [str(x) for x in a.get('item_ids') or []], 'code_prefixes': a.get('code_prefixes') or [],
                  'name_prefixes': a.get('name_prefixes') or [], 'reason': a.get('reason'), 'set_at': self.now()}
         if not any((value['item_ids'], value['code_prefixes'], value['name_prefixes'])):
+            # Before isolation ends, no test reservation may remain (they would become publishable).
+            left = [r['item_id'] for r in c.execute('SELECT item_id FROM ops_reservations WHERE account=?',
+                                                    (self.test_account(),)).fetchall()]
+            for iid in left:
+                self.release(c, self.item(c, iid), 'isolation cleared: test reservation released', keep_request=False)
             c.execute('DELETE FROM ops_meta WHERE key=?', (self.ISOLATION_KEY,))
-            audit(c, None, 'send_isolation_cleared', cmd.actor, {'command': cmd.id})
-            return {'isolation': None}
+            audit(c, None, 'send_isolation_cleared', cmd.actor, {'command': cmd.id, 'released': left})
+            return {'isolation': None, 'released': left}
         c.execute('INSERT OR REPLACE INTO ops_meta VALUES(?,?)', (self.ISOLATION_KEY, dumps(value)))
         moved = []
         for r in c.execute('SELECT item_id, account FROM ops_reservations').fetchall():
@@ -275,8 +282,10 @@ class PolicyMixin:
             it = self.item(c, r['item_id'], required=False)
             if it and it['publication'] == 'not_started' and self.send_isolated(c, r['item_id']):
                 self.release(c, it, 'acceptance cleanup: test reservation released', keep_request=False)
+                # held so that the scheduler does not reserve it again after the cleanup (task-path audit H3)
                 self.update_item(c, it['item_id'], cmd.actor, 'test reservation released', requested_at=None,
-                                 requested_by=None)
+                                 requested_by=None, hold=dumps({'kind': 'test_cleanup', 'origin': 'system',
+                                                               'reason': 'test reservation released by the cleanup'}))
                 self.project(c, it['item_id'])
                 out.append({'item_id': r['item_id'], 'slot': r['slot']})
         if cmd.args.get('finalize'):

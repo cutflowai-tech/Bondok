@@ -255,6 +255,18 @@ class CoreMixin:
         'propose': {'format'}, 'hold': {'status', 'post_link', 'ig_media'},
     }
 
+    _TIME = ('request_reschedule', 'request_publish', 'set_window', 'publish_block', 'publish_allow')
+    _STATE = ('pause', 'skip', 'resume', 'request_publish', 'request_reschedule')
+    ASPECT_OPS = {'request_reschedule': _TIME + _STATE, 'request_publish': _TIME + _STATE, 'resume': _STATE + _TIME,
+                  'confirm_topaz': ('confirm_topaz', 'waive_rule', 'restore_rule'),
+                  'update_caption': ('update_caption', 'approve_caption', 'approve_caption_draft',
+                                     'approve_existing_caption'),
+                  'change_format': ('change_format',), 'replace_source': ('replace_source',),
+                  'set_folder': ('replace_source',), 'set_notes': ('board_set_field', 'set_notes'),
+                  'set_code': ('board_set_field', 'set_code'), 'set_variety': ('board_set_field', 'set_variety'),
+                  'set_collab': ('board_set_field', 'set_collab')}
+    SAFETY_OPS = ('pause', 'skip', 'report_published', 'hold')
+
     def authorize(self, c, cmd: Command):
         allowed = self.PERMISSIONS.get(cmd.op)
         if allowed is None:
@@ -274,10 +286,13 @@ class CoreMixin:
             # later edit (a person changed the board after the instruction) is the only way past this check.
             ev = src.get('evidence') or {}
             ref = ev.get('at') if ev else src.get('read_at')
-            if ref is not None and cmd.item_id is not None:
-                last = c.execute("SELECT MAX(created) FROM ops_commands WHERE item_id=? AND actor_kind=? AND "
-                                 "state IN ('completed','accepted') AND id!=?",
-                                 (cmd.item_id, OWNER, cmd.id)).fetchone()[0]
+            # Only the owner's instructions about the SAME thing count (a Slack note does not make a board Pause
+            # stale), and a board change toward safety (pause, skip, "posted") is never refused for its age.
+            same = self.ASPECT_OPS.get(cmd.op)
+            if ref is not None and cmd.item_id is not None and same and cmd.op not in self.SAFETY_OPS:
+                last = c.execute(f"SELECT MAX(created) FROM ops_commands WHERE item_id=? AND actor_kind=? AND "
+                                 f"state IN ('completed','accepted') AND id!=? AND op IN ({','.join('?' * len(same))})",
+                                 (cmd.item_id, OWNER, cmd.id, *same)).fetchone()[0]
                 if last is not None and float(ref) < float(last):
                     raise Rejected('This board value is older than the owner\'s latest instruction for the item; '
                                    'it does not replace it', 'stale_board_read', owner_instruction_at=last)

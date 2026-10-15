@@ -86,15 +86,45 @@ class Instagram:
         data = (r or {}).get('data') or [{}]
         return data[0]
 
-    def media(self, limit=25) -> list[dict]:
-        r = self._get(self.account + '/media', 'id,caption,media_type,permalink,timestamp')
-        return ((r or {}).get('data') or [])[:limit]
+    def media(self, limit=25, since=None) -> list[dict]:
+        """Recent feed posts, newest first; with ``since`` (epoch s) every page back to that moment."""
+        out, path, params = [], self.account + '/media', {'fields': 'id,caption,media_type,permalink,timestamp',
+                                                          'limit': 50}
+        while path:
+            r = self._page(path, params)
+            data = (r or {}).get('data') or []
+            out += data
+            oldest = data[-1].get('timestamp') if data else None
+            if since is None and len(out) >= limit:
+                break
+            if since is not None and (not oldest or _ts(oldest) < float(since)):
+                break
+            nxt = ((r or {}).get('paging') or {}).get('next')
+            path, params = (nxt, None) if nxt else (None, None)
+        return out if since is not None else out[:limit]
+
+    def stories(self) -> list[dict]:
+        """Stories of the last 24 hours (Instagram lists no older ones)."""
+        r = self._get(self.account + '/stories', 'id,media_type,permalink,timestamp')
+        return (r or {}).get('data') or []
+
+    def _page(self, path, params):
+        url = path if str(path).startswith('http') else self.base + path
+        return self.http.request('GET', url, params=params, headers=self._auth())
 
     @staticmethod
     def unsupported(operation) -> dict:
         return {'state': 'unsupported', 'operation': operation,
                 'reason': f'Instagram\'s publishing API does not offer "{operation}" for this account; do it in the '
                           'Instagram app. Nothing was changed.'}
+
+
+def _ts(stamp) -> float:
+    from datetime import datetime
+    try:
+        return datetime.strptime(str(stamp).replace('+0000', '+00:00'), '%Y-%m-%dT%H:%M:%S%z').timestamp()
+    except ValueError:
+        return 0.0
 
 
 def error_text(e: HttpError) -> str:

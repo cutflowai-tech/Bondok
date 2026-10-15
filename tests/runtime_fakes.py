@@ -277,8 +277,11 @@ class FakeInstagram:
             return 400, {'error': {'message': 'Invalid parameter', 'code': 100}}
         return 500, {'error': {'message': 'An unknown error occurred', 'code': 1}}
 
-    def media(self, limit=25):
-        return ig_media(self)[:limit]
+    def media(self, limit=25, since=None):
+        return ig_media(self) if since is not None else ig_media(self)[:limit]
+
+    def stories(self):
+        return []
 
     def permalink(self, media_id):
         return f'https://www.instagram.com/reel/{media_id}/'

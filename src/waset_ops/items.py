@@ -402,7 +402,10 @@ class ItemsMixin:
             edits.append({'key': k, 'old': observed.get(k), 'new': new, 'human': True,
                           'asset_shown': next(iter(shown)) if len(shown) == 1 else None,
                           'asset_candidates': sorted(str(x) for x in shown if x)})
+        restored = bool(self.restore_gap(c))
         for k in board.SYSTEM:
+            if restored:
+                break                          # after a restore the board shows Bondok's own later writes: not decisions
             if present is not None and k not in present:
                 continue                       # column absent from this response: no value, no edit
             new = snap.get(k)
@@ -543,9 +546,12 @@ class ItemsMixin:
             it = self.item(c, iid)
             if it['publication'] != 'not_started':
                 return None
-            if e.get('read_at') is not None:
-                last = c.execute("SELECT MAX(created) FROM ops_commands WHERE item_id=? AND actor_kind=? AND "
-                                 "state IN ('completed','accepted')", (iid, OWNER)).fetchone()[0]
+            aspect = self.ASPECT_OPS.get('request_reschedule' if k in TIME_KEYS else
+                                         {'topaz': 'confirm_topaz', 'caption': 'update_caption'}.get(k, ''))
+            if e.get('read_at') is not None and aspect:
+                last = c.execute(f"SELECT MAX(created) FROM ops_commands WHERE item_id=? AND actor_kind=? AND "
+                                 f"state IN ('completed','accepted') AND op IN ({','.join('?' * len(aspect))})",
+                                 (iid, OWNER, *aspect)).fetchone()[0]
                 if last is not None and float(last) > float(e['read_at']):
                     return None            # older than the owner's instruction: refused as stale when applied
             clears = (k == 'publish_at' and not new) or (k in TIME_KEYS and not new and

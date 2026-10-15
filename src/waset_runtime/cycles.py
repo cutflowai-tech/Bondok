@@ -444,7 +444,12 @@ class Runner:
         due = self.ops.due(worker, 5)
         if due.get('restore_gap'):
             try:
-                out['restore_gap'] = self.ops.restore_gap_check(self.ig.media(50))
+                with self.ops.store.read() as c:
+                    since = (self.ops.restore_gap(c) or {}).get('since')
+                stories = self.ig.stories() if hasattr(self.ig, 'stories') else []
+                out['restore_gap'] = self.ops.restore_gap_check(
+                    self.ig.media(50, since=since) + stories,
+                    stories_cover_since=(self.ops.now() - 24 * 3600) if hasattr(self.ig, 'stories') else None)
             except HttpError as e:
                 out['restore_gap'] = {'open': True, 'error': error_text(e)[:200]}
         if due.get('probe'):
