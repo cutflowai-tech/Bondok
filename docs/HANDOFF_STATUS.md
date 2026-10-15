@@ -1,12 +1,14 @@
 # Handoff Status
 
-## Agent migration (2026-10-14) — current work
-Branch `bondok/agent-migration` (from `8675c93`). Plan and tracker: `bondok-agent-migration/` (`08-tracker.md`,
-`P0-baseline.md`, `CUTOVER_PACKAGE.md`). Implemented and tested locally (590+ tests, 3.12/3.14): owner rules and
-exemptions, Topaz confirmation without file-name conditions, Bondok execution tools, `waset_runtime` replacing n8n
-WF1/WF2/WF3, runtime ownership switch, restore-gap guard. **Not deployed.** Next: owner approval of the cutover steps
-T1–T9; prerequisites: ffmpeg on the Bondok host, runtime credentials, two default values (bulk limit 10, delete =
-archive).
+## Agent migration — deployed (cutover 2026-10-14, closed 2026-10-15)
+Plan and evidence: `bondok-agent-migration/` (`08-tracker.md` §الانتقال الحي and §الإغلاق, `CUTOVER_PACKAGE.md`,
+`AUTHORITY_INVENTORY.md`). Owner rules and exemptions, Topaz confirmation without file-name conditions, Bondok
+execution tools, publishing recorded in the store first (Monday display synced after), no item-count limit,
+delete ≠ archive. Scheduled work runs in the `waset-runtime` systemd service (`ops_meta.runtime_owner=bondok`); the
+old helper answers `retired`. Bondok's n8n workflows are archived and its Instagram-only n8n credential deleted; n8n
+itself stays for other projects (Office, captions, WCS), none of which writes Bondok's board or inputs.
+Open: off-host backups; the 145 MB prepared-file cap; the shared store volume is still mounted into the n8n container
+(unused; removing the mount means recreating that container).
 
 Updated: 2026-10-12. Directive: R5.2 master implementation directive (private; owner handoff), amended by the
 owner decisions of 2026-10-11/12 (`OWNER_AUTHORITY_CONTRACT.md` §0).

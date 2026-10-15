@@ -93,6 +93,39 @@ class LiveAgent(LangCase):
         tomorrow = (self.ops.now_dt().astimezone(rules.TZ) + timedelta(days=1)).date().isoformat()
         self.assertEqual((local.date().isoformat(), local.hour, local.minute), (tomorrow, 21, 0))
 
+    def test_7_revoke_exemption(self):
+        self.waiting('907', 'TG1')
+        core = self.core()
+        self.thread(core, 'TG1', '1800000007.000100')
+        self.say(core, 'انشره من غير توباز', thread='1800000007.000100')
+        with self.ops.store.read() as c:
+            self.assertIn('topaz_required', self.ops.waived(c, self.ops.item(c, '907')))
+        reply = self.say(core, 'لا رجع شرط توباز على TG1، ماينزلش من غير توباز', thread='1800000007.000100')
+        print('\n[7]', reply)
+        with self.ops.store.read() as c:
+            self.assertNotIn('topaz_required', self.ops.waived(c, self.ops.item(c, '907')))
+
+    def test_8_delete_is_not_archive(self):
+        import json
+        self.make_ready('908', 'Story', code='TH1')
+        self.make_ready('909', 'Story', code='TH2')
+        core = self.core()
+        r1 = self.say(core, 'امسح TH1 من البورد نهائي', thread='1800000008.000100')
+        r2 = self.say(core, 'أرشف TH2', thread='1800000009.000100')
+        print('\n[8]', r1, '|', r2)
+        acts = {json.loads(j['payload'])['item_id']: json.loads(j['payload'])['action']
+                for j in self.outbox('monday_admin')}
+        self.assertEqual(acts, {'908': 'delete', '909': 'archive'})
+
+    def test_9_twelve_items_no_confirmation(self):
+        codes = [f'TJ{n}' for n in range(12)]
+        for n, code in enumerate(codes):
+            self.make_ready(str(910 + n), 'Story', code=code)
+        core = self.core()
+        reply = self.say(core, 'وقف ' + ' و '.join(codes), thread='1800000010.000100')
+        print('\n[9]', reply)
+        self.assertEqual({self.item(str(910 + n))['owner_state'] for n in range(12)}, {'paused'})
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

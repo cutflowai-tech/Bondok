@@ -18,7 +18,6 @@ from waset_ops.db import dumps
 from bridge import MUTATING, Bridge
 
 MAX_STEPS = 6
-MAX_CALLS_PER_STEP = 6
 HISTORY = 12
 
 
@@ -329,13 +328,7 @@ class Agent:
                 reply = '\n'.join(y['text'] for x in out if x.get('type') == 'message'
                                   for y in x.get('content', []) if y.get('type') == 'output_text').strip()
                 return reply, outcomes
-            for n, call in enumerate(calls):
-                if n >= MAX_CALLS_PER_STEP:
-                    # Every function_call needs an output or the next request fails (audit H2).
-                    convo.append({'type': 'function_call_output', 'call_id': call['call_id'],
-                                  'output': dumps({'error': f'Not executed: at most {MAX_CALLS_PER_STEP} actions per '
-                                                            'step; ask for the rest separately'})})
-                    continue
+            for call in calls:                 # every action the owner named runs: no count limit
                 try:
                     args = json.loads(call.get('arguments') or '{}')
                     value = self.tool(call['name'], args, ctx)
@@ -348,7 +341,8 @@ class Agent:
                                      'result': value})
                 convo.append({'type': 'function_call_output', 'call_id': call['call_id'],
                               'output': dumps(value)[:20000]})
-        return 'I reached the step limit for this request; split it into smaller requests.', outcomes
+        return (f'I reached the model step limit for this message (rule agent_max_steps = {steps}); the actions above '
+                'were done. Say the rest again, or raise the rule.'), outcomes
 
 
 def speaker(actor, owner) -> str:

@@ -207,8 +207,7 @@ class NoItemCountLimit(ToolCase):
         for n, code in enumerate(codes):
             self.make_ready(str(630 + n), 'Story', code=code)
         text = 'وقف ' + ' و '.join(codes)
-        core = self.run_core([act('pause_item', text, 'imperative', c, item=c, reason=None) for c in codes[:6]],
-                             [act('pause_item', text, 'imperative', c, item=c, reason=None) for c in codes[6:]], 'تمام')
+        core = self.run_core([act('pause_item', text, 'imperative', c, item=c, reason=None) for c in codes], 'تمام')
         reply = self.say(core, text)
         self.assertNotIn('❓', reply)
         self.assertEqual({self.item(str(630 + n))['owner_state'] for n in range(12)}, {'paused'})
