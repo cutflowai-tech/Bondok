@@ -29,6 +29,13 @@ class FakeMonday:
         self.writes = []                   # (op, args)
         self.fail = {}                     # method -> exception to raise (once per entry in a list)
         self.ids = itertools.count(7000)
+        self.activity_log = []             # Monday activity events tests add: {id, at, item_id, column_id, cleared}
+
+    def activity(self, item_ids, column_ids, since, until=None):
+        self._maybe_fail('activity')
+        ids = {str(i) for i in item_ids}
+        return [dict(e) for e in self.activity_log if e['item_id'] in ids and e['column_id'] in column_ids
+                and e['at'] >= since]
 
     def _maybe_fail(self, name):
         f = self.fail.get(name)

@@ -112,6 +112,10 @@ def norm(item: dict, key: str):
 def snapshot(item: dict) -> dict:
     out = {k: norm(item, k) for k in HUMAN + SYSTEM + TECH}
     out['_has_record'] = _raw(item, 'record') is not None      # the board has the column (written only then)
+    # Columns the response actually carried: an absent column (partial response, renamed or removed column) has no
+    # value to compare and is never an edit (owner review 2026-10-15: a missing value is not a cancellation).
+    ids = {c.get('id') for c in item.get('column_values') or []}
+    out['_present'] = sorted(k for k in HUMAN + SYSTEM + TECH if COL[k] in ids)
     out['name'] = item.get('name')
     out['group'] = (item.get('group') or {}).get('id')
     return out

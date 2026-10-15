@@ -127,5 +127,22 @@ class LiveAgent(LangCase):
         self.assertEqual({self.item(str(910 + n))['owner_state'] for n in range(12)}, {'paused'})
 
 
+
+    def test_10_why_is_it_held_says_the_true_source(self):
+        """A board read emptied the time (not the owner): the real model must say so, not "you cancelled it"."""
+        self.make_ready('950', 'Story', code='TK1')
+        from waset_ops.core import Command
+        self.ops.submit(Command('monday:950:post_date:1:0:x', 'request_reschedule', 'monday', 'monday', '950',
+                                {'at': None}, auth={'board': {'source': 'observation', 'column': 'post_date'}}))
+        core = self.core()
+        self.say(core, 'ايه وضع TK1؟', thread='1800000011.000100')
+        reply = self.say(core, 'ليه ده واقف؟', thread='1800000011.000100')
+        print('\n[10]', reply)
+        low = reply.lower()
+        self.assertTrue(any(w in reply for w in ('البورد', 'Monday', 'مونداي', 'board')), reply)
+        for claim in ('انت لغيت', 'إنت لغيت', 'أنت ألغيت', 'انت ألغيت', 'لغيته انت', 'you cancelled', 'you canceled'):
+            self.assertNotIn(claim, low)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

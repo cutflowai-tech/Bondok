@@ -58,9 +58,12 @@ def _norm_code(x):
 
 
 def compact(i):
+    # Every returned column is kept, empty ones too: dropping empty cells (the n8n payload-size habit) made an empty
+    # value indistinguishable from a column missing from the response, which is how empty cells became "cleared
+    # by the owner" (owner review 2026-10-15). Absent and empty are different facts.
     return {'id': i['id'], 'name': i.get('name'), 'group': i.get('group') or None,
-            'column_values': [{'id': c['id'], 'text': c.get('text'), 'value': c.get('value')}
-                              for c in i.get('column_values') or [] if c.get('text') or c.get('value')]}
+            'column_values': [{'id': c['id'], 'text': c.get('text') or '', 'value': c.get('value')}
+                              for c in i.get('column_values') or []]}
 
 
 def guard_conflict(guard: dict, current: dict | None) -> tuple[str | None, str | None]:
@@ -113,6 +116,7 @@ class Runner:
         try:
             step = 'snapshot'
             sources = self.monday.source_snapshot()
+            self._social_read_at = self.ops.now()          # decision ordering: the read started here
             social = self.monday.social_snapshot()
             self.ops.run_progress('wf1', run_id, fence, 'import_plan')
             step = 'import'
@@ -227,7 +231,7 @@ class Runner:
         edits = 0
         for items, srcs in chunks:
             self.ops.run_progress('wf1', run_id, fence, 'observe')
-            r = self.ops.observe(items, sources=srcs, actor='service:wf1')
+            r = self.ops.observe(items, sources=srcs, actor='service:wf1', read_at=getattr(self, '_social_read_at', None))
             edits += len(r.get('edits') or [])
         return edits
 
@@ -404,7 +408,29 @@ class Runner:
 
     # ================================================================== WF2
     def sync_cycle(self) -> dict:
-        return self.display_sync(self._id('sync'))
+        worker = self._id('sync')
+        out = self.display_sync(worker)
+        try:
+            out['evidence'] = self.evidence_jobs(worker)
+        except Exception as e:  # noqa: BLE001 - evidence checks never stop the display sync
+            LOG.warning('evidence_failed type=%s detail=%s', type(e).__name__, str(e)[:160])
+        return out
+
+    def evidence_jobs(self, worker, limit=10) -> int:
+        """Board values held because they would erase a decision: look for the edit in Monday's activity log."""
+        n = 0
+        for j in self.ops.outbox_take(['board_evidence'], worker, limit):
+            p = j['payload']
+            cols = p.get('columns') or []
+            try:
+                events = [e for e in self.monday.activity([p['item_id']], cols, float(p.get('since') or 0) - 60)
+                          if e.get('column_id') in cols]
+            except (MondayError, HttpError) as e:
+                self.ops.outbox_ack(j['id'], worker, False, f'activity log unavailable: {str(e)[:200]}')
+                continue
+            self.ops.resolve_board_evidence(j, events)
+            n += 1
+        return n
 
     def publish_cycle(self, pool=None, sync=True) -> dict:
         """Display sync (unless the scheduler runs it on its own timer), reconciliation, then the due items. With
@@ -500,6 +526,7 @@ class Runner:
     def publish_one(self, w, worker) -> dict:
         item = str(w['item_id'])
         fresh, status = None, None
+        read_at = self.ops.now()
         try:
             fresh = self.monday.fresh_item(item)
             status = self.monday.source_status(_txt(fresh, B.COL['source_item']))
@@ -513,7 +540,7 @@ class Runner:
         try:
             if fresh is not None:
                 self.ops.observe([{k: fresh[k] for k in ('id', 'name', 'column_values', 'group') if k in fresh}],
-                                 actor='service:wf2')
+                                 actor='service:wf2', read_at=read_at)
             cl = self.ops.claim(item, worker, source_status=status)
         except Exception as e:  # noqa: BLE001 - WF2 'claim' read failure
             return self.ops.read_failure(item, 'claim', f'{type(e).__name__}: {str(e)[:500]}', None)
@@ -561,9 +588,10 @@ class Runner:
         # The owner's latest board decisions (a Pause typed while the container was processing) are read just before
         # the commitment point. Reading, not writing: a Monday that cannot be read is judged by the freshness rule.
         try:
+            read_at = self.ops.now()
             again = self.monday.fresh_item(item)
             self.ops.observe([{k: again[k] for k in ('id', 'name', 'column_values', 'group') if k in again}],
-                             actor='service:wf2')
+                             actor='service:wf2', read_at=read_at)
         except (MondayError, HttpError) as e:
             LOG.warning('precommit_read_failed item=%s detail=%s', item, str(e)[:120])
         try:

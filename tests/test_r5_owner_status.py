@@ -29,8 +29,9 @@ class R5_OwnerScheduledStatusIsAnOrder(OpsCase):
         self.drain_monday()
         self.clock.advance(180)
         b = board_from_projection(self.ops, iid)
-        b['column_values'] = [x for x in b['column_values'] if x['id'] != board.COL['publish_at']]
+        set_cell(b, 'publish_at', '', None)            # a person cleared it (present and empty, not absent)
         self.observe(b)
+        self.prove_board_edits()                       # Monday's activity log shows the edit
         self.assertIsNone(self.res(iid))
         self.drain_monday()
         self.clock.advance(180)

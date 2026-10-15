@@ -143,8 +143,9 @@ class R5_A16_ClearedTimeIsVisibleAndRecoverable(Base):
                 self.drain_monday()
                 self.clock.advance(180)                   # the next board read comes after the write landed
                 b = board_from_projection(self.ops, iid)
-                b['column_values'] = [x for x in b['column_values'] if x['id'] != board.COL['publish_at']]
+                set_cell(b, 'publish_at', '', None)       # emptied by a person (present, no value)
                 self.observe(b)
+                self.prove_board_edits()                  # Monday's activity log shows the edit
                 self.assertEqual(self.hold(iid)['kind'], 'unscheduled')
                 self.assertIsNone(self.res(iid))
                 self.observe(b)
@@ -164,9 +165,10 @@ class R5_A16_ClearedTimeIsVisibleAndRecoverable(Base):
         boards = []
         for iid in ids:
             b = board_from_projection(self.ops, iid)
-            b['column_values'] = [x for x in b['column_values'] if x['id'] != board.COL['publish_at']]
+            set_cell(b, 'publish_at', '', None)
             boards.append(b)
         self.observe(*boards)
+        self.prove_board_edits()
         jobs = self.ops.outbox_take(['slack'], 'bondok', 50)
         cleared = [j for j in jobs if 'Publish at was cleared' in j['payload']['text']]
         self.assertEqual(len(cleared), 1)
@@ -182,8 +184,9 @@ class R5_A16_ClearedTimeIsVisibleAndRecoverable(Base):
         self.drain_monday()
         self.clock.advance(180)
         b = board_from_projection(self.ops, '49')
-        b['column_values'] = [x for x in b['column_values'] if x['id'] != board.COL['publish_at']]
+        set_cell(b, 'publish_at', '', None)
         self.observe(b)
+        self.prove_board_edits()
         one = [j for j in self.ops.outbox_take(['slack'], 'bondok', 50) if 'cleared' in j['payload']['text']]
         self.assertEqual([j['item_id'] for j in one], ['49'])
         self.assertTrue(one[0]['payload']['text'].startswith('Item49'))

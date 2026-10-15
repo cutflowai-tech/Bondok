@@ -107,7 +107,9 @@ class PolicyMixin:
                         'version': h['version'] if h else 0, 'set_by': h['set_by'] if h else 'default',
                         'set_at': self.iso_ts(h['created']) if h else None,
                         'effective': self.iso_ts(h['effective']) if h else None,
-                        'reason': h['reason'] if h else None})
+                        'reason': h['reason'] if h else None,
+                        'source': ({'kind': 'set', 'by': h['set_by'], 'reason': h['reason']} if h else
+                                   dict(zip(('kind', 'evidence'), rules.SOURCES.get(name, ('unknown', None)))))})
         return {'rules': out, 'platform_limits': dict(rules.PLATFORM),
                 'note': 'Rules are the owner\'s preferences: the owner can change any of them or exempt one item. '
                         'Platform limits are Instagram/transfer facts and cannot be changed by an instruction.'}
@@ -225,6 +227,8 @@ class PolicyMixin:
             self.update_item(c, it['item_id'], cmd.actor, f'{rule} waived by owner', readiness='checking',
                              block_kind=None, block_reason=None, block_key=None)
         res = self.evaluate(c, it['item_id'], cmd.actor)
+        if self.item(c, it['item_id'])['readiness'] == 'ready' and not self.reservation(c, it['item_id']):
+            res = {**res, **self.try_schedule(c, it['item_id'], cmd.actor)}   # a scheduling rule (caption) is lifted
         self.project(c, it['item_id'])
         return {'rule': rule, 'override_id': oid, 'item_id': it['item_id'], **res,
                 'message': f"{rules.POLICY[rule]['label']}: waived for {it['name']} by the owner"
@@ -277,7 +281,8 @@ class PolicyMixin:
                              'story_max_seconds' if bk.startswith('story_duration') else
                              'require_collab' if bk == 'collab' else
                              'min_short_edge' if 'short edge' in (reason or '') else None)
-            elif it['format'] == 'Post' and it['caption_state'] != 'approved' and pol['post_caption_approval']:
+            elif it['format'] == 'Post' and it['caption_state'] != 'approved' and pol['post_caption_approval'] and \
+                    'post_caption_approval' not in waived:
                 reason, with_rule = 'the caption is not approved yet', 'post_caption_approval'
             res = self.reservation(c, it['item_id'])
             hold = self.hold_provenance(c, it) if it['owner_state'] == 'active' else None

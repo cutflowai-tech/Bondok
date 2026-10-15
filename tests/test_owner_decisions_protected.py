@@ -1,0 +1,329 @@
+"""The owner's decisions are not erased or replaced by board reads and automatic sync (owner review 2026-10-15).
+
+Production 2026-10-10..13: board reads of the legacy Post Date/Time columns (empty cells that Bondok itself had
+cleared, and stale values) were converted into owner-kind time decisions that overwrote explicit owner time
+instructions and were shown to the owner as the owner's own actions. Each test pins one way that can happen.
+"""
+import shutil
+import sqlite3
+import threading
+import unittest
+from datetime import timedelta
+
+from support import OpsCase, board_from_projection, owner_cmd, rules, set_cell
+from waset_ops import Ops
+
+
+class Base(OpsCase):
+    def owner_time(self, iid, days=3, hour=19, cid=None):
+        at = (self.ops.now_dt() + timedelta(days=days)).replace(hour=hour, minute=0, second=0, microsecond=0)
+        r = self.ops.submit(owner_cmd(cid or self.rid('own'), 'request_reschedule', iid, explicit=True,
+                                      at=rules.iso(at)))
+        self.assertEqual(r['state'], 'completed', r)
+        return rules.iso(at)
+
+    def board(self, iid):
+        return board_from_projection(self.ops, iid, code=self.item(iid)['code'])
+
+    def commands(self, actor_kind='monday'):
+        with self.ops.store.read() as c:
+            return c.execute('SELECT COUNT(*) FROM ops_commands WHERE actor_kind=?', (actor_kind,)).fetchone()[0]
+
+    def cleared_board(self, iid, keys=('publish_at', 'post_date', 'post_time')):
+        b = self.board(iid)
+        for k in keys:
+            set_cell(b, k, '', None)
+        return b
+
+    def evidence(self, events):
+        return [self.ops.resolve_board_evidence(j, events)
+                for j in self.ops.outbox_take(['board_evidence'], 'service:wf1', 100)]
+
+
+class ReadsAreNotDecisions(Base):
+    def test_the_same_board_read_hundreds_of_times_makes_no_decision(self):
+        self.make_ready('801', 'Story', code='OD1')
+        slot = self.owner_time('801')
+        self.drain_monday()
+        self.clock.advance(1800)
+        before = self.commands()
+        for _ in range(300):
+            self.observe(self.board('801'))
+            self.drain_monday()
+            self.clock.advance(600)
+        self.assertEqual(self.commands(), before)
+        self.assertEqual(self.res('801')['slot'], slot)
+
+    def test_absent_column_or_partial_response_is_not_a_cancellation(self):
+        self.make_ready('802', 'Story', code='OD2')
+        slot = self.owner_time('802')
+        self.drain_monday()
+        self.clock.advance(1800)
+        b = self.board('802')
+        b['column_values'] = [x for x in b['column_values'] if x['id'] not in ('date_mm7y8s9t', 'date4',
+                                                                                 'hour_mm7xy9cf', 'status')]
+        for _ in range(5):
+            self.observe(b)
+        self.assertEqual(self.res('802')['slot'], slot)
+        self.assertIsNone(self.item('802')['hold'])
+        self.assertEqual(self.outbox('board_evidence'), [])
+
+    def test_an_empty_value_alone_keeps_the_instruction_and_says_so(self):
+        """No edit in Monday's activity log (or only Bondok's own write): the owner's time stays, the display is
+        restored and the owner is told once; it is never recorded as the owner's decision."""
+        self.make_ready('803', 'Story', code='OD3')
+        slot = self.owner_time('803')
+        self.drain_monday()
+        self.clock.advance(1800)
+        self.observe(self.cleared_board('803'))
+        self.assertEqual(self.res('803')['slot'], slot)
+        out = self.evidence([])                                # the log shows no edit after the instruction
+        self.assertFalse(out[0]['proven'])
+        self.assertEqual(self.res('803')['slot'], slot)
+        notes = [j for j in self.outbox('slack') if 'was not treated as your decision' in j['payload']]
+        self.assertEqual(len(notes), 1)
+        for _ in range(3):                                     # the board still empty next cycles: no new decision
+            self.clock.advance(600)
+            self.observe(self.cleared_board('803'))
+        self.assertEqual(self.res('803')['slot'], slot)
+
+    def test_bondoks_own_write_coming_back_is_not_a_person(self):
+        self.make_ready('804', 'Story', code='OD4')
+        slot = self.owner_time('804')
+        self.drain_monday()
+        with self.ops.store.read() as c:
+            wrote = c.execute("SELECT MAX(updated) FROM ops_outbox WHERE kind='monday' AND item_id='804'").fetchone()[0]
+        self.clock.advance(1800)
+        self.observe(self.cleared_board('804'))
+        out = self.evidence([{'id': 'a1', 'at': wrote + 5, 'user_id': 'shared', 'cleared': True,
+                              'column_id': 'date_mm7y8s9t'}])   # the only event is Bondok's own write
+        self.assertFalse(out[0]['proven'])
+        self.assertEqual(self.res('804')['slot'], slot)
+
+    def test_proven_human_clear_is_respected(self):
+        self.make_ready('805', 'Story', code='OD5')
+        self.owner_time('805')
+        self.drain_monday()
+        self.clock.advance(1800)
+        self.observe(self.cleared_board('805'))
+        out = self.evidence([{'id': 'a2', 'at': self.ops.now() - 30, 'user_id': 'shared', 'cleared': True,
+                              'column_id': 'date_mm7y8s9t'}])
+        self.assertTrue(out[0]['proven'])
+        self.assertIsNone(self.res('805'))
+        st = self.ops.item_status('805')
+        self.assertEqual(st['hold']['source'], 'board')        # a person's board edit, not a Slack instruction
+
+
+class DecisionOrder(Base):
+    def test_a_stale_snapshot_arriving_after_the_owner_does_not_replace_the_instruction(self):
+        self.make_ready('810', 'Story', code='OD10')
+        self.drain_monday()
+        self.clock.advance(1800)
+        read_at = self.ops.now()
+        old = self.board('810')             # read before the owner's instruction
+        set_cell(old, 'publish_at', 'x', rules.monday_publish_at_value(rules.instant(self.res('810')['slot']) +
+                                                                          timedelta(days=5)))
+        self.clock.advance(5)
+        slot = self.owner_time('810')
+        self.clock.advance(5)
+        r = self.observe(old, read_at=read_at)
+        self.assertEqual(self.res('810')['slot'], slot)
+        self.assertIn('stale_board_read', str(r['edits']))
+
+    def test_a_new_owner_instruction_replaces_the_previous_one(self):
+        self.make_ready('811', 'Story', code='OD11')
+        self.owner_time('811', days=3)
+        self.clock.advance(60)
+        b = self.owner_time('811', days=4)
+        self.assertEqual(self.res('811')['slot'], b)
+
+    def test_redelivered_observation_and_evidence_job_apply_once(self):
+        self.make_ready('812', 'Story', code='OD12')
+        self.owner_time('812')
+        self.drain_monday()
+        self.clock.advance(1800)
+        b = self.cleared_board('812')
+        self.observe(b)
+        self.observe(b)                                          # redelivered / re-read
+        self.assertEqual(len(self.outbox('board_evidence')), 1)
+        jobs = self.ops.outbox_take(['board_evidence'], 'service:wf1', 10)
+        ev = [{'id': 'a3', 'at': self.ops.now() - 30, 'user_id': 'shared', 'cleared': True,
+               'column_id': 'date_mm7y8s9t'}]
+        first = self.ops.resolve_board_evidence(jobs[0], ev)
+        again = self.ops.resolve_board_evidence(jobs[0], ev)      # the worker restarted before its ack
+        self.assertTrue(first['proven'])
+        self.assertTrue(again['applied'].get('duplicate'))
+        self.assertEqual(self.commands(), 1)                    # held reads make no command; one proven application
+
+    def test_sync_and_owner_commands_concurrently(self):
+        """A sync loop re-reading an old board state while the owner keeps changing the time: the owner's last
+        instruction wins and no stale read is applied."""
+        self.make_ready('813', 'Story', code='OD13')
+        self.drain_monday()
+        self.clock.advance(1800)
+        read_at = self.ops.now()
+        stale = self.board('813')
+        set_cell(stale, 'publish_at', '', None)
+        self.clock.advance(5)
+        stop = threading.Event()
+        errors = []
+
+        def sync():
+            ops = Ops(self.dir / 'state.sqlite', clock=self.clock)
+            while not stop.is_set():
+                try:
+                    ops.observe([stale], read_at=read_at)
+                except Exception as e:  # noqa: BLE001
+                    errors.append(e)
+        t = threading.Thread(target=sync)
+        t.start()
+        last = None
+        for d in range(2, 8):
+            last = self.owner_time('813', days=d, cid=f'own-{d}')
+        stop.set()
+        t.join()
+        self.assertEqual(errors, [])
+        self.assertEqual(self.res('813')['slot'], last)
+        with self.ops.store.read() as c:
+            applied = c.execute("SELECT COUNT(*) FROM ops_commands WHERE actor_kind='monday' AND state IN "
+                                "('completed','accepted')").fetchone()[0]
+        self.assertEqual(applied, 0)
+
+
+class RestoreAndCorrection(Base):
+    def backup(self):
+        dst = self.dir / 'backup.sqlite'
+        src = sqlite3.connect(self.dir / 'state.sqlite')
+        out = sqlite3.connect(dst)
+        with out:
+            src.backup(out)
+        src.close()
+        out.close()
+        return dst
+
+    def test_restoring_a_backup_revives_no_cancelled_decision_and_republishes_nothing(self):
+        self.make_ready('820', 'Story', code='OD20')
+        self.owner_time('820')
+        self.drain_monday()
+        path, at = self.backup(), self.ops.now()
+        self.clock.advance(600)
+        self.ops.submit(owner_cmd('cancel', 'request_reschedule', '820', explicit=True, at=None))   # lost by the restore
+        self.drain_monday()
+        for suffix in ('', '-wal', '-shm'):
+            p = self.dir / ('state.sqlite' + suffix)
+            if p.exists():
+                p.unlink()
+        shutil.copy(path, self.dir / 'state.sqlite')
+        self.ops.mark_restored(at)
+        self.assertIsNotNone(self.res('820'))                     # the old store still has the reservation ...
+        self.assertTrue(self.ops.due('w', 5).get('restore_gap'))  # ... but publishing waits for reconciliation
+        self.clock.advance(1800)
+        self.observe(self.cleared_board('820'))                   # the board shows the owner's later cancellation
+        # Bondok's write of the cancellation is not in the restored outbox: the log shows a non-Bondok clear.
+        self.evidence([{'id': 'a4', 'at': at + 610, 'user_id': 'shared', 'cleared': True,
+                        'column_id': 'date_mm7y8s9t'}])
+        self.assertIsNone(self.res('820'))
+
+    def overwritten(self, iid, days):
+        """The production pattern: an owner time, then a board read that cleared it (before the fix)."""
+        self.make_ready(iid, 'Story', code='OD' + iid)
+        t = self.owner_time(iid, days=days)
+        self.clock.advance(600)
+        from waset_ops.core import Command
+        r = self.ops.submit(Command(f'monday:{iid}:post_date:1:0:x', 'request_reschedule', 'monday', 'monday', iid,
+                                    {'at': None}, auth={'board': {'source': 'observation', 'column': 'post_date'}}))
+        self.assertEqual(r['state'], 'completed', r)
+        self.assertIsNone(self.res(iid))
+        return t
+
+    def test_correction_restores_the_owner_time_and_is_idempotent(self):
+        t = self.overwritten('830', days=4)
+        plan = self.ops.correction_plan({'830': []})
+        entry = [e for e in plan['corrections'] if e['item_id'] == '830']
+        self.assertEqual(entry[0]['kind'], 'restore_owner_time')
+        out = self.ops.apply_corrections(plan, 'owner chat 2026-10-15')
+        self.assertEqual(out[0]['state'], 'completed', out)
+        self.assertEqual(self.res('830')['slot'], t)
+        self.assertEqual(self.res('830')['origin'], 'owner')
+        with self.ops.store.read() as c:
+            snap = c.execute('SELECT * FROM ops_items WHERE item_id=?', ('830',)).fetchone()
+            corr = c.execute("SELECT COUNT(*) FROM ops_audit WHERE kind='attribution_correction'").fetchone()[0]
+            original = c.execute("SELECT COUNT(*) FROM ops_commands WHERE id LIKE 'monday:830:%'").fetchone()[0]
+        self.assertEqual((corr, original), (1, 1))                # the error stays recorded beside its correction
+        again = self.ops.apply_corrections(plan, 'owner chat 2026-10-15')
+        self.assertTrue(again[0]['duplicate'])
+        self.assertEqual([e for e in self.ops.correction_plan({'830': []})['corrections']
+                          if e['item_id'] == '830'], [])
+        with self.ops.store.read() as c:
+            self.assertEqual(dict(c.execute('SELECT * FROM ops_items WHERE item_id=?', ('830',)).fetchone()),
+                             dict(snap))
+
+    def test_correction_of_a_passed_time_applies_the_missed_time_policy(self):
+        self.make_ready('831', 'Story', code='OD31')
+        t = self.owner_time('831', days=1)
+        self.clock.advance(600)
+        from waset_ops.core import Command
+        self.ops.submit(Command('monday:831:post_date:1:0:x', 'request_reschedule', 'monday', 'monday', '831',
+                                {'at': None}, auth={'board': {'source': 'observation', 'column': 'post_date'}}))
+        self.clock.advance(3 * 86400)                             # the owner's time passed meanwhile
+        self.ops.apply_corrections(self.ops.correction_plan({'831': []}), 'owner chat 2026-10-15')
+        self.assertIsNone(self.res('831'))                        # not published now
+        import json
+        hold = json.loads(self.item('831')['hold'])
+        self.assertEqual((hold['kind'], hold['time']), ('missed_time', t))
+
+    def test_correction_into_an_occupied_slot_keeps_the_request_and_displaces_nobody(self):
+        t = self.overwritten('832', days=5)
+        self.make_ready('833', 'Story', code='OE33')
+        self.ops.submit(owner_cmd('o833', 'request_reschedule', '833', explicit=True, at=t))
+        self.assertEqual(self.res('833')['slot'], t)
+        self.ops.apply_corrections(self.ops.correction_plan({'832': []}), 'owner chat 2026-10-15')
+        self.assertEqual(self.res('833')['slot'], t)               # the other item keeps its slot
+        self.assertIsNone(self.res('832'))
+        self.assertEqual(self.item('832')['requested_at'], t)      # the request is kept, conflict shown
+
+    def test_an_edit_after_the_instruction_is_kept_not_corrected(self):
+        self.overwritten('834', days=4)
+        plan = self.ops.correction_plan({'834': [{'id': 'p', 'at': self.ops.now() + 1, 'cleared': True}]})
+        self.assertEqual([e['item_id'] for e in plan['kept']], ['834'])
+        self.assertFalse([e for e in plan['corrections'] if e['item_id'] == '834'])
+
+    def test_without_the_activity_log_nothing_is_guessed(self):
+        self.overwritten('835', days=4)
+        plan = self.ops.correction_plan(None)
+        self.assertEqual([e['item_id'] for e in plan['unresolved']], ['835'])
+
+
+if __name__ == '__main__':
+    unittest.main()
+
+
+class RuntimeEvidence(unittest.TestCase):
+    """The runtime answers held board values from Monday's activity log on its display-sync cycle."""
+
+    def test_sync_cycle_resolves_held_values(self):
+        from test_runtime import RuntimeCase
+        case = RuntimeCase('run')
+        case.setUp()
+        try:
+            iid = case.ready_item()
+            slot = case.res(iid)['slot']
+            case.runner.sync_cycle()                        # the display shows the reserved time
+            case.clock.advance(1800)
+            b = case.monday.board.items[iid]
+            from waset_ops import board as B
+            b['column_values'] = [x for x in b['column_values'] if x['id'] != B.COL['publish_at']] + \
+                [{'id': B.COL['publish_at'], 'text': '', 'value': None}]
+            case.runner.prepare_cycle()                     # the read is held, not applied
+            self.assertEqual(case.res(iid)['slot'], slot)
+            case.monday.fail['activity'] = [__import__('waset_runtime.monday', fromlist=['MondayError']).MondayError(
+                'activity log unavailable')]
+            case.runner.sync_cycle()                        # log unreadable: nothing decided, retried later
+            self.assertEqual(case.res(iid)['slot'], slot)
+            case.clock.advance(600)
+            case.runner.sync_cycle()                        # log readable, no edit: kept and the owner is told
+            self.assertEqual(case.res(iid)['slot'], slot)
+            self.assertTrue(any('was not treated as your decision' in j['payload'] for j in case.outbox('slack')))
+        finally:
+            case.tearDown()
+            case.doCleanups()

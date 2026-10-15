@@ -205,7 +205,7 @@ class ItemsMixin:
 
     # ------------------------------------------------------------------ observation
     def observe(self, items: list[dict], *, sources: list[dict] | None = None, complete=False,
-                actor='monday-poll', limit=20) -> dict:
+                actor='monday-poll', limit=20, read_at=None) -> dict:
         """Trusted board adapter: convert human edits into validated commands.
 
         * First sight of an item imports its state conservatively (no commands).
@@ -227,7 +227,7 @@ class ItemsMixin:
             iid = str(raw.get('id'))
             seen.add(iid)
             try:
-                self._observe_one(raw, iid, src, floor, results, created)
+                self._observe_one(raw, iid, src, floor, results, created, read_at)
                 # When Bondok last received this item's board state (freshness rule, agent migration 2): a WF1
                 # snapshot counts from its run start (read after it), a single-item read from now.
                 with self.store.tx() as c:
@@ -245,7 +245,7 @@ class ItemsMixin:
         return {'edits': results, 'imported': created, 'missing': missing,
                 'work': self.work_queue(limit=limit) if actor == 'service:wf1' else None}
 
-    def _observe_one(self, raw, iid, src, floor, results, created):
+    def _observe_one(self, raw, iid, src, floor, results, created, read_at=None):
         snap = board.snapshot(raw)
         with self.store.tx() as c:
             it = self.item(c, iid, required=False)
@@ -260,6 +260,7 @@ class ItemsMixin:
             edits = self._diff(c, it, snap, floor)
             c.execute('UPDATE ops_items SET name=? WHERE item_id=?', (snap.get('name'), iid))
         for e in edits:
+            e['read_at'] = read_at
             results.append({'item_id': iid, 'edit': e['key'], **self._apply_edit(iid, e)})
         if src and it.get('source_item_id') in src:
             s = src[it['source_item_id']]
@@ -384,7 +385,10 @@ class ItemsMixin:
         observed['_asset_seen'] = {'v': snap.get('asset'), 'at': floor}
         recent = {k: x['v'] for k, x in (confirmed.get('_prev') or {}).items()
                   if x.get('at', 0) > floor and self.now() - x.get('at', 0) < STALE_SNAPSHOT_SECONDS}
+        present = set(snap.get('_present') or ()) if '_present' in snap else None
         for k in board.HUMAN:
+            if present is not None and k not in present:
+                continue                       # column absent from this response: no value, no edit
             new = snap.get(k)
             if new == observed.get(k):
                 continue
@@ -398,6 +402,8 @@ class ItemsMixin:
                           'asset_shown': next(iter(shown)) if len(shown) == 1 else None,
                           'asset_candidates': sorted(str(x) for x in shown if x)})
         for k in board.SYSTEM:
+            if present is not None and k not in present:
+                continue                       # column absent from this response: no value, no edit
             new = snap.get(k)
             if k not in confirmed and k not in pending:
                 continue                       # never projected: nothing to compare
@@ -454,10 +460,16 @@ class ItemsMixin:
         def run(op, args=None):
             return self.submit(Command(cid, op, 'monday', MONDAY, iid, args or {}, auth={'board': {
                 'source': 'observation', 'column': k, 'value': None if new is None else str(new)[:200],
-                'observed_at': self.now()}}))
+                'observed_at': self.now(), 'read_at': e.get('read_at')}}))
+
+        guard = self._owner_guard(iid, e)
 
         with self.store.read() as c:
             before_id = c.execute('SELECT COALESCE(MAX(id), 0) FROM ops_outbox').fetchone()[0]
+        if e['human'] and guard:
+            r = self._hold_for_evidence(iid, e, cid, guard)
+            self._mark_observed(iid, k, new, r, before_id)
+            return r
         if e['human']:
             if k == 'format':
                 # The owner's Format change is the authorization for that exact conversion (contract §3, R5 A6).
@@ -483,7 +495,7 @@ class ItemsMixin:
                 r = {'state': 'completed', 'note': 'no operational effect'}
             self._mark_observed(iid, k, new, r, before_id)
             return r
-        r = self._system_edit(iid, e, run)
+        r = self._hold_for_evidence(iid, e, cid, guard) if guard else self._system_edit(iid, e, run)
         # The board value was handled (applied or refused): it is what the board shows now, so it is not an
         # edit again next cycle (a person's Posted / post link no longer re-holds every run; a value that cannot
         # be reverted is not re-rejected every run), and the next display write compares against it and
@@ -516,6 +528,123 @@ class ItemsMixin:
             self._revert(iid, keys, r.get('reason') or 'Change not accepted')
             r = {**r, 'reverted': k}
         return r
+
+    TIME_OPS = ('request_reschedule', 'request_publish', 'set_window')
+
+    def _owner_guard(self, iid, e) -> dict | None:
+        """A board value that would ERASE a known decision (a cleared time while the item has a reservation or a
+        requested time; Topazed turned back while the owner's confirmation stands; an approved caption emptied) is
+        not applied from a read alone (owner review 2026-10-15): an empty or default value is not proof that a
+        person cleared it. The change waits for evidence from Monday's activity log (a recorded edit after the
+        decision that is not one of Bondok's own writes). Returns what the edit would undo, or None."""
+        k, new = e['key'], e['new']
+        with self.store.read() as c:
+            it = self.item(c, iid)
+            if it['publication'] != 'not_started':
+                return None
+            clears = (k == 'publish_at' and not new) or (k in TIME_KEYS and not new and
+                                                         not any((e.get('snap') or {}).values()))
+            if clears:
+                res = self.reservation(c, iid)
+                if not res and not it['requested_at']:
+                    return None
+                last = c.execute('SELECT id, actor_kind, created FROM ops_commands WHERE item_id=? AND op IN '
+                                 f"({','.join('?' * len(self.TIME_OPS))}) AND state IN ('completed','accepted') "
+                                 'ORDER BY created DESC LIMIT 1', (iid, *self.TIME_OPS)).fetchone()
+                since = max([x for x in ((res or {}).get('created'), last['created'] if last else None) if x] or [0])
+                what = ('the owner\'s requested time ' + str(it['requested_at'])) if it['requested_at'] and last and \
+                    last['actor_kind'] == OWNER else (f"the reservation {res['slot']}" if res else
+                                                      'the requested time ' + str(it['requested_at']))
+                return {'what': what, 'since': since, 'decision': last['id'] if last else None,
+                        'op': 'request_reschedule', 'args': {'at': None}}
+            if k == 'topaz' and new != 'Topazed' and it['topaz_asset'] and it['topaz_asset'] == it['asset_key']:
+                last = c.execute("SELECT id, created FROM ops_commands WHERE item_id=? AND op='confirm_topaz' AND "
+                                 "state='completed' ORDER BY created DESC LIMIT 1", (iid,)).fetchone()
+                return {'what': 'the Topaz confirmation of the selected file', 'since': last['created'] if last else 0,
+                        'decision': last['id'] if last else None, 'op': 'confirm_topaz',
+                        'args': {'confirmed': False, 'asset_key': e.get('asset_shown'),
+                                 'candidates': e.get('asset_candidates') or []}}
+            if k == 'caption' and not new and it['caption_state'] == 'approved' and it['caption']:
+                last = c.execute("SELECT id, created FROM ops_commands WHERE item_id=? AND op IN ('update_caption',"
+                                 "'approve_caption','approve_caption_draft','approve_existing_caption') AND "
+                                 "state='completed' ORDER BY created DESC LIMIT 1", (iid,)).fetchone()
+                return {'what': 'the approved caption', 'since': last['created'] if last else 0,
+                        'decision': last['id'] if last else None, 'op': 'update_caption', 'args': {'text': ''}}
+        return None
+
+    def _hold_for_evidence(self, iid, e, cid, guard) -> dict:
+        """Keep the decision, ask the runtime to look for the edit in Monday's activity log, restore the display."""
+        k = e['key']
+        with self.store.tx() as c:
+            self.enqueue(c, 'board_evidence', 'board-evidence:' + cid,
+                         {'item_id': iid, 'key': k, 'keys': [k, *e.get('also', [])],
+                          'columns': [board.COL[x] for x in (k, *e.get('also', []))], 'new': e['new'],
+                          'read_at': e.get('read_at'), 'since': guard['since'], 'decision': guard['decision'],
+                          'what': guard['what'], 'op': guard['op'], 'args': guard['args'], 'command': cid}, iid)
+            audit(c, iid, 'board_value_held', 'service:board', {'key': k, 'value': e['new'], 'keeps': guard['what'],
+                                                               'command': cid})
+        return {'state': 'held_for_evidence', 'keeps': guard['what'],
+                'message': f"The board shows {k} empty, but that alone is not a decision; {guard['what']} is kept "
+                           'until Monday\'s activity log shows a person changed it.'}
+
+    def our_board_writes(self, item_id, column_ids, since) -> list[float]:
+        """When Bondok itself wrote any of these columns of the item (acknowledged display writes)."""
+        out = []
+        with self.store.read() as c:
+            for r in c.execute("SELECT payload, updated FROM ops_outbox WHERE kind='monday' AND item_id=? AND "
+                               "state='done' AND updated>=?", (str(item_id), float(since or 0) - 600)):
+                cols = (loads(r['payload'], {}) or {}).get('columns') or {}
+                if any(cid in cols for cid in column_ids):
+                    out.append(float(r['updated']))
+        return out
+
+    def resolve_board_evidence(self, job, events, worker='service:wf1', ours_window=True) -> dict:
+        """Decide one held board value from Monday's activity log ``events`` ({id, at (epoch s), user_id, cleared}).
+        A person's edit is an event after the protected decision that changed the column to this value and is not
+        one of Bondok's own writes (an acknowledged write within 3 minutes before / 30 s after). Proven: the edit is
+        applied as a board command carrying the evidence. Otherwise the decision stays (op_board_evidence_result)."""
+        p = job['payload']
+        ours = self.our_board_writes(p['item_id'], p.get('columns') or [], p.get('since')) if ours_window else []
+        need_clear = p.get('key') in TIME_KEYS            # a time clear must be a clearing event; Topaz/caption: any edit
+        human = [ev for ev in events
+                 if float(ev['at']) > float(p.get('since') or 0) and (ev.get('cleared', True) or not need_clear)
+                 and not any(-180 <= float(ev['at']) - t <= 30 for t in ours)]
+        ev = max(human, key=lambda x: float(x['at'])) if human else None
+        applied = None
+        if ev:
+            applied = self.submit(Command(p['command'] + ':evidence', p['op'], 'monday', MONDAY, p['item_id'],
+                                          p.get('args') or {}, auth={'board': {
+                                              'source': 'observation', 'column': p['key'], 'value': p.get('new'),
+                                              'evidence': {'activity_id': str(ev.get('id')), 'at': float(ev['at']),
+                                                           'user_id': ev.get('user_id')}}}))
+        checked = f"{len(events)} activity-log event(s) of the column since the decision, {len(ours)} Bondok write(s)"
+        r = self.submit(Command(f"board-evidence:{job['id']}", 'board_evidence_result', worker, worker, p['item_id'],
+                                {'job': job['id'], 'proven': bool(ev), 'event': ev, 'payload': p, 'checked': checked}))
+        self.outbox_ack(job['id'], worker, True, None, {'proven': bool(ev), 'applied': (applied or {}).get('state')})
+        return {'item_id': p['item_id'], 'proven': bool(ev), 'applied': applied, 'result': r}
+
+    def op_board_evidence_result(self, c, cmd: Command):
+        """The runtime's answer for one held board value. Proven: the edit itself was applied by the runtime as a
+        board command carrying the evidence. Not proven: the decision stays, the display is restored, the owner is
+        told once (what the board showed, what was kept, how to change it)."""
+        a = cmd.args
+        it = self.item(c, cmd.item_id)
+        p = a.get('payload') or {}
+        if a.get('proven'):
+            audit(c, it['item_id'], 'board_edit_proven', cmd.actor, {'event': a.get('event'), 'command': p.get('command')})
+            return {'proven': True}
+        audit(c, it['item_id'], 'board_value_not_an_edit', cmd.actor,
+              {'key': p.get('key'), 'value': p.get('new'), 'kept': p.get('what'), 'checked': a.get('checked')})
+        if p.get('key') == 'topaz' and it['topaz_asset']:
+            self.write_human(c, it, {'topaz': 'Topazed'}, guarded=False)
+        elif p.get('key') == 'caption' and it['caption']:
+            self.write_human(c, it, {'caption': it['caption']}, guarded=False)
+        self.project(c, it['item_id'])
+        self.notify(c, f"board-not-edit:{a.get('job')}",
+                    f"{it['name']} ({it['item_id']}): the board showed {p.get('key')} empty, but Monday's activity log "
+                    f"has no edit of it after the decision ({a.get('checked') or 'checked'}), so it was not treated as "
+                    f"your decision. Kept: {p.get('what')}. If you do want it changed, tell Bondok.", it['item_id'])
+        return {'proven': False, 'kept': p.get('what')}
 
     def _system_edit(self, iid, e, run) -> dict:
         k, new = e['key'], e['new']
@@ -705,8 +834,9 @@ class ItemsMixin:
             c.execute('DELETE FROM ops_reservations WHERE item_id=?', (it['item_id'],))
             audit(c, it['item_id'], 'reservation_released', 'system', {'slot': res['slot'], 'why': why})
             if keep_request and res['owner_pinned'] and not it.get('requested_at'):
+                # The kept request keeps its source: only an owner reservation becomes the owner's request.
                 c.execute('UPDATE ops_items SET requested_at=?, requested_by=? WHERE item_id=?',
-                          (res['slot'], 'owner', it['item_id']))
+                          (res['slot'], 'owner' if res['origin'] == 'owner' else 'board', it['item_id']))
         return res
 
     def op_pause(self, c, cmd: Command):

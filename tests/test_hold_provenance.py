@@ -58,5 +58,22 @@ class HoldProvenance(OpsCase):
         self.assertEqual(st['hold']['source'], 'system')
 
 
+class CaptionApprovalExemption(OpsCase):
+    def test_owner_can_exempt_one_post_from_caption_approval(self):
+        self.make_ready('710', 'Post', code='HP10', approve_caption=False)
+        with self.ops.store.tx() as c:                   # a drafted caption waiting for approval
+            c.execute("UPDATE ops_items SET caption='A valid caption', caption_state='pending_approval' "
+                      "WHERE item_id='710'")
+        self.assertIsNone(self.res('710'))
+        r = self.ops.submit(owner_cmd('w', 'waive_rule', '710', explicit=True, rule='post_caption_approval'))
+        self.assertEqual(r['state'], 'completed', r)
+        self.assertIsNotNone(self.res('710'))
+        with self.ops.store.read() as c:
+            self.assertTrue(self.ops.policy(c)['post_caption_approval'])       # the rule itself is unchanged
+        rep = {x['rule']: x for x in self.ops.policy_report()['rules']}
+        self.assertEqual(rep['occupied_slot_needs_approval']['source']['kind'], 'owner')
+        self.assertEqual(rep['late_window_minutes']['source']['kind'], 'developer')
+
+
 if __name__ == '__main__':
     unittest.main()

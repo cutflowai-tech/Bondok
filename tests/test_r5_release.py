@@ -315,8 +315,9 @@ class RR5_MondayToPublisher(OpsCase):
         b = board_sim.Board([board_from_projection(self.ops, '90'), board_from_projection(self.ops, '91')])
         # The owner clears 90's time, then orders it published at a time that passed 20 minutes ago.
         for k in ('publish_at', 'post_date', 'post_time'):
-            b.set_raw('90', board.COL[k], None)
+            b.set_raw('90', board.COL[k], {'id': board.COL[k], 'text': '', 'value': None})   # emptied, not absent
         self.observe(*b.snapshot())
+        self.prove_board_edits()                                          # Monday's log shows the person's edit
         board_sim.wf2_sync(self.ops, b)
         self.clock.advance(600)                                           # the next WF1 cycle
         at = (self.ops.now_dt() - timedelta(minutes=20)).replace(second=0, microsecond=0)

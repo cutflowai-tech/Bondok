@@ -1189,8 +1189,10 @@ class SchedulingAudit(OpsCase):
         self.drain_monday()
         self.clock.advance(25 * 60)                       # outside the stale-snapshot window of the last write
         b = self.board('501')
-        b['column_values'] = [x for x in b['column_values'] if x['id'] != board.COL['publish_at']]
+        set_cell(b, 'publish_at', '', None)
         self.observe(b)
+        self.assertIsNotNone(self.res('501'))             # a read alone does not unschedule
+        self.prove_board_edits()                          # Monday's activity log shows a person cleared it
         self.assertIsNone(self.res('501'))
         self.assertEqual(json.loads(self.item('501')['hold'])['kind'], 'unscheduled')
 
@@ -1843,7 +1845,7 @@ class LegacyDateLoopIncident(OpsCase):
 
     LEGACY = {'post_date': ('2026-10-17', {'date': '2026-10-17'}), 'post_time': ('10:00 PM', {'hour': 22, 'minute': 0})}
 
-    def cycles(self, iid, pair, n=6):
+    def cycles(self, iid, pair, n=6, prove=False):
         """WF1 every 10 minutes; the board keeps the person's pair; WF2 delivers every display write."""
         seen = []
         for i in range(n):
@@ -1852,11 +1854,16 @@ class LegacyDateLoopIncident(OpsCase):
             b = board_from_projection(self.ops, iid, topaz='Not yet')
             b['column_values'] = [x for x in b['column_values']
                                   if x['id'] not in (board.COL['post_date'], board.COL['post_time'])]
-            if pair:
+            if pair == 'empty':                  # a person emptied both cells (present, no value)
+                set_cell(b, 'post_date', '', None)
+                set_cell(b, 'post_time', '', None)
+            elif pair:
                 h, m = pair[1].split(':')
                 set_cell(b, 'post_date', pair[0], {'date': pair[0]})
                 set_cell(b, 'post_time', pair[1], {'hour': int(h), 'minute': int(m)})
             self.observe(b)
+            if prove:
+                self.prove_board_edits()
             self.drain_monday()
             with self.ops.store.read() as c:
                 n_cmd = c.execute("SELECT count(*) FROM ops_commands WHERE op='request_reschedule'").fetchone()[0]
@@ -1872,12 +1879,23 @@ class LegacyDateLoopIncident(OpsCase):
         self.assertEqual(self.item('1400')['requested_at'], '2026-10-16T08:00:00Z')
 
     def test_cleared_legacy_pair_unschedules_once(self):
+        """Emptied by a person (Monday's activity log shows the edit): unscheduled once, then quiet."""
         self.observe(monday_item('1401', extra=self.LEGACY))
         self.drain_monday()
-        seen = self.cycles('1401', None)
+        seen = self.cycles('1401', 'empty', prove=True)
         self.assertEqual(len(set(seen)), 1, seen)
         self.assertLessEqual(seen[-1][1], 2, seen)
         self.assertEqual(json.loads(self.item('1401')['hold'])['kind'], 'unscheduled')
+
+    def test_absent_legacy_columns_keep_the_request(self):
+        """The incident's cause (owner review 2026-10-15): columns missing from the response are not a clear."""
+        self.observe(monday_item('1403', extra=self.LEGACY))
+        self.drain_monday()
+        req = self.item('1403')['requested_at']
+        seen = self.cycles('1403', None)
+        self.assertEqual(len(set(seen)), 1, seen)
+        self.assertEqual(self.item('1403')['requested_at'], req)
+        self.assertIsNone(self.item('1403')['hold'])
 
 
     def test_foreign_system_text_is_handled_once(self):

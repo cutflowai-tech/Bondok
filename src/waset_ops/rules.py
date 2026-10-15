@@ -68,7 +68,7 @@ POLICY = {
                           'label': 'Story length limit (seconds, strictly below; Instagram allows 60 at most)'},
     'story_trim_max_seconds': {'default': STORY_TRIM_MAX_SECONDS, 'type': 'float', 'min': 0.0, 'max': 600.0,
                                'label': 'Longest Story source that is trimmed automatically at the end (seconds)'},
-    'post_caption_approval': {'default': True, 'type': 'bool',
+    'post_caption_approval': {'default': True, 'type': 'bool', 'waivable': True,
                               'label': 'A Post needs an owner-approved caption before it is scheduled'},
     'duplicate_video_block': {'default': True, 'type': 'bool', 'waivable': True,
                               'label': 'The same video is not published twice on the account'},
@@ -99,6 +99,32 @@ POLICY = {
                                   'label': 'Instagram containers tried for one slot before stopping'},
 }
 WAIVABLE = tuple(k for k, v in POLICY.items() if v.get('waivable'))
+# Where each default comes from (owner review 2026-10-15). "owner" = a recorded owner decision; "inherited" = the
+# value of the system in force before v2 (kept unchanged at the migration, owner never asked otherwise);
+# "developer" = chosen during implementation without an owner decision (the owner can change it any time).
+SOURCES = {
+    'topaz_required': ('inherited', 'pre-v2 rule; listed as owner policy in AGENTS.md'),
+    'min_short_edge': ('inherited', 'pre-v2 rule (1080 px); listed as owner policy in AGENTS.md'),
+    'max_bytes': ('inherited', 'pre-v2 rule (300 MB); listed as owner policy in AGENTS.md'),
+    'story_max_seconds': ('inherited', 'pre-v2 rule (60 s, also the Instagram limit)'),
+    'story_trim_max_seconds': ('owner', 'owner decision 2026-10-12: automatic trim 60-65 s approved '
+                                        '(OWNER_AUTHORITY_CONTRACT.md §0)'),
+    'post_caption_approval': ('inherited', 'pre-v2 caption approval flow'),
+    'duplicate_video_block': ('developer', 'R5 B1 safety rule (2026-10-10 audit); no owner decision recorded'),
+    'story_slots': ('inherited', 'pre-v2 Story grid; 16:00 added by the owner\'s instruction of 2026-10-14 '
+                                 '(policy v1)'),
+    'post_slots': ('inherited', 'pre-v2 Post grid'),
+    'late_window_minutes': ('developer', 'R5 scheduling (2 h); no owner decision recorded'),
+    'board_freshness_minutes': ('developer', 'agent migration 2026-10-14: the owner asked for an owner-changeable '
+                                             'freshness rule; the value 15 was chosen by the developer'),
+    'allowed_boards': ('developer', 'the three boards of the delegated scope (owner can change it)'),
+    'dropbox_roots': ('developer', 'the Social Media folder of the delegated scope (owner can change it)'),
+    'occupied_slot_needs_approval': ('owner', 'owner decision option B, 2026-10-10'),
+    'require_collab': ('developer', 'R5: an item with collaborators is not published without them'),
+    'agent_max_steps': ('developer', 'cost/loop limit chosen at the agent migration'),
+    'publish_attempts_per_slot': ('developer', 'bounded retries chosen in R5'),
+}
+
 # Instagram Graph API (IG User Media reference, read 2026-10-14) and the current transfer path. Not owner policy.
 PLATFORM = {
     'story_max_seconds': 60.0, 'story_max_bytes': 100_000_000, 'reel_max_bytes': 300_000_000,

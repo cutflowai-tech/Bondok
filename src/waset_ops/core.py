@@ -22,7 +22,7 @@ from .db import Store, audit, dumps, loads, next_counter
 OWNER = 'owner'          # authenticated owner (Slack, via Bondok adapter)
 MONDAY = 'monday'        # unattributed human edit on the board (shared account)
 BONDOK = 'bondok'        # the assistant itself; never an authority
-SERVICES = {'service:wf1', 'service:wf2', 'service:wf3', 'service:bondok', 'service:migration'}
+SERVICES = {'service:wf1', 'service:wf2', 'service:wf3', 'service:bondok', 'service:migration', 'service:correction'}
 
 ACTIVE_ATTEMPT = ('claimed', 'container_created', 'committed', 'outcome_unknown')
 PRE_COMMIT = ('claimed', 'container_created')
@@ -208,7 +208,9 @@ class CoreMixin:
         'board_create': {OWNER},         # owner administration of the board and files (admin.py)
         'board_remove': {OWNER},
         'board_set_field': {OWNER},
-        'file_action': {OWNER},   # which runner executes scheduled work: n8n or the Bondok runtime (P6)
+        'file_action': {OWNER},
+        'board_evidence_result': {'service:wf1', 'service:bondok'},
+        'attribution_correction': {'service:correction'},   # evidence-based correction of misattributed decisions
         'waive_rule': {OWNER},          # owner exempts one item from a rule
         'restore_rule': {OWNER},
         'request_rework': {OWNER},
@@ -262,6 +264,19 @@ class CoreMixin:
                                'this operation', 'forbidden')
             if cmd.op == 'request_publish' and src.get('value') != board.LABELS['scheduled']:
                 raise Rejected('A publish order from the board is Status set to Scheduled', 'forbidden')
+            # Decision order (owner review 2026-10-15): a board read can only reflect what happened before it was
+            # read. If the owner gave an instruction for this item after that moment, the read is older than the
+            # instruction and cannot replace it, whatever order the requests arrive in. Activity-log evidence of a
+            # later edit (a person changed the board after the instruction) is the only way past this check.
+            ev = src.get('evidence') or {}
+            ref = ev.get('at') if ev else src.get('read_at')
+            if ref is not None and cmd.item_id is not None:
+                last = c.execute("SELECT MAX(created) FROM ops_commands WHERE item_id=? AND actor_kind=? AND "
+                                 "state IN ('completed','accepted') AND id!=?",
+                                 (cmd.item_id, OWNER, cmd.id)).fetchone()[0]
+                if last is not None and float(ref) < float(last):
+                    raise Rejected('This board value is older than the owner\'s latest instruction for the item; '
+                                   'it does not replace it', 'stale_board_read', owner_instruction_at=last)
         if cmd.item_id is not None and cmd.op not in ('approve_proposal', 'reject_proposal', 'propose'):
             self.item(c, cmd.item_id)  # membership: only registered social-board items
 

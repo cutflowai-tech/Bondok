@@ -97,7 +97,7 @@ class SchedMixin:
         if it['readiness'] != 'ready':
             return it['block_reason'] or 'media is not verified yet'
         if it['format'] == 'Post' and it['caption_state'] != 'approved':
-            if self.policy(c)['post_caption_approval']:
+            if self.policy(c)['post_caption_approval'] and 'post_caption_approval' not in self.waived(c, it):
                 return 'caption is not approved'
             bad = rules.validate_caption(it['caption'] or '')       # approval off: the text must still be valid
             if bad:
@@ -246,7 +246,10 @@ class SchedMixin:
                     self.update_item(c, item_id, actor, 'legacy request occupied', requested_at=None, requested_by=None)
                     return self.try_schedule(c, item_id, actor)
                 return self._requested_slot_occupied(c, it, at, actor)
-            slot = self._reserve(c, it, at, 'legacy' if legacy else 'owner', not legacy, actor)
+            # The reservation says where the time came from: the owner's instruction, or a board value (Monday does
+            # not say who wrote it; owner review 2026-10-15). Both are kept as requested (pinned) times.
+            origin = 'legacy' if legacy else ('owner' if it.get('requested_by') == 'owner' else 'board')
+            slot = self._reserve(c, it, at, origin, not legacy, actor)
             return {'scheduled': slot, 'origin': 'requested'}
         win = self.window(it)
         key = rules.rotation_key(it['format'], it['code'], it['name'], it['variety'])

@@ -148,6 +148,37 @@ class Monday:
             raise MondayError(f'Board {board_id} is outside the boards Bondok may write (owner rule allowed_boards); '
                               'nothing was written')
 
+    def activity(self, item_ids, column_ids, since, until=None, board_id=rules.BOARD) -> list[dict]:
+        """Monday's activity log for these items/columns (read-only): who/when changed a value. One shared account
+        writes for people and Bondok alike, so callers compare the times with Bondok's own acknowledged writes."""
+        import datetime as _dt
+        iso = lambda t: _dt.datetime.fromtimestamp(float(t), _dt.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+        out = []
+        for i in range(0, len(item_ids), 10):
+            page = 1
+            while True:
+                d = self.query('query($b:[ID!],$i:[ID!],$c:[String],$f:ISO8601DateTime,$t:ISO8601DateTime,$p:Int){boards'
+                               '(ids:$b){activity_logs(item_ids:$i,column_ids:$c,from:$f,to:$t,limit:500,page:$p)'
+                               '{id event data created_at user_id}}}',
+                               {'b': [str(board_id)], 'i': [str(x) for x in item_ids[i:i + 10]],
+                                'c': list(column_ids), 'f': iso(since), 't': iso(until or time.time() + 60), 'p': page})
+                logs = ((d.get('boards') or [{}])[0] or {}).get('activity_logs') or []
+                for l in logs:
+                    try:
+                        data = json.loads(l.get('data') or '{}')
+                    except ValueError:
+                        data = {}
+                    value = data.get('value')
+                    out.append({'id': l.get('id'), 'at': int(l['created_at']) / 1e7, 'event': l.get('event'),
+                                'user_id': l.get('user_id'), 'item_id': str(data.get('pulse_id')),
+                                'column_id': data.get('column_id'), 'value': value,
+                                'cleared': value in (None, {}, '') or (isinstance(value, dict) and not any(
+                                    v for k, v in value.items() if k not in ('changed_at', 'icon')))})
+                if len(logs) < 500:
+                    break
+                page += 1
+        return out
+
     def change_columns(self, item_id, columns: dict, group=None, board_id=rules.BOARD):
         self._scope(board_id)
         args = '$b:ID!,$i:ID!,$v:JSON!' + (',$g:String!' if group else '')

@@ -100,6 +100,16 @@ class OpsCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def prove_board_edits(self, at=None):
+        """What the runtime does with a held board value when Monday's activity log shows a person's edit: the
+        edit is applied (owner review 2026-10-15: a cleared value needs that evidence)."""
+        out = []
+        for j in self.ops.outbox_take(['board_evidence'], 'service:wf1', 100):
+            ev = {'id': f"act-{j['id']}", 'at': self.ops.now() if at is None else at, 'user_id': 'person',
+                  'cleared': True}
+            out.append(self.ops.resolve_board_evidence(j, [ev], ours_window=False))
+        return out
+
     def rid(self, prefix='r'):
         self.seq += 1
         return f'{prefix}-{self.seq}'
