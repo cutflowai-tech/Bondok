@@ -24,6 +24,7 @@ from bridge import Bridge, Turn
 from monday_read import MondayReader
 from store import Store
 from verifier import Verifier
+from voice import STYLE as VOICE_STYLE
 from waset_ops import Ops
 
 LOG = logging.getLogger('bondok')
@@ -76,20 +77,30 @@ class Core:
         self.stop = threading.Event()
 
     # ------------------------------------------------------------------ requests
-    def handle(self, e: dict) -> str:
+    def handle(self, e: dict, *, voice=False):
         """One Slack message -> reply text. Deterministic paths first (approvals, answers to the single open
         question, acknowledgments, "show it again", replies under alerts: no model call); the model only for
-        language understanding, and its proposals are checked against the owner's words (bridge.py)."""
+        language understanding, and its proposals are checked against the owner's words (bridge.py).
+        voice=True (a telephone turn, bondok/voice.py): the same path, returning (reply, outcomes) with the
+        outcomes left for the spoken renderer; the call's words stay in memory only."""
         text = re.sub(r'<@[A-Z0-9]+>', '', e.get('text') or '').strip()
         thread = e.get('thread_ts') or e['ts']
-        actor, event_id = e['user'], f"{self.env['SLACK_TEAM_ID']}:{e['channel']}:{e['ts']}"
-        quick = acceptance.handle(self, text, actor) if not e.get('acceptance') else None
+        actor = e['user']
+        event_id = e['event_key'] if voice else f"{self.env['SLACK_TEAM_ID']}:{e['channel']}:{e['ts']}"
+        restrict = e.get('restrict') if voice else None
+        quick = acceptance.handle(self, text, actor) if not (e.get('acceptance') or voice) else None
         if quick is None:
-            quick = self._deterministic(text, actor, thread, event_id)
+            if restrict:
+                # The test line: only the answer to its own open question; never an approval by id.
+                a = lang.answer(text) if actor == self.owner else None
+                quick = self._answer(a, actor, thread, event_id) if a in ('yes', 'no') and self._pending(thread) \
+                    else None
+            else:
+                quick = self._deterministic(text, actor, thread, event_id)
         if quick is not None:
             self.store.remember(thread, 'user', speaker(actor, self.owner) + text)
             self.store.remember(thread, 'assistant', quick)
-            return quick
+            return (quick, []) if voice else quick
         ctx = self.store.kv('thread_ctx:' + thread) or {}
         turn = Turn(text, thread, self.bridge.today(), context_items=[ctx['item_id']] if ctx.get('item_id') else [],
                     history_text=self.store.thread_text(thread))
@@ -98,7 +109,7 @@ class Core:
         owner = actor == self.owner
         try:
             reply, outcomes = self.agent.answer(text, actor=actor, thread=thread, event_id=event_id, history=history,
-                                                turn=turn)
+                                                turn=turn, style=VOICE_STYLE if voice else None, restrict=restrict)
         except ServiceError as e:
             # Model unavailable: nothing more is guessed or executed; automation continues. An open question
             # stays open (its "اه" needs no model).
@@ -108,9 +119,13 @@ class Core:
             done = getattr(e, 'outcomes', None)
             if done:
                 # Actions already ran before the model failed: report them, never "nothing was done" (audit H1).
+                if voice:
+                    return 'الموديل وقف في النص، بس الخطوات دي اتعملت.', list(done)
                 reply = '⚠️ الموديل وقف في النص، بس الخطوات دي اتنفذت:' + ''.join('\n\n' + render_outcome(o) for o in done)
                 self.store.remember(thread, 'assistant', reply)
                 return reply
+            if voice:
+                return 'مش قادر أفهم الطلب دلوقتي عشان الموديل مش متاح، ومعملتش أي حاجة. جرب تاني بعد شوية.', []
             return self._fallback(thread, e.code)
         if owner:
             self._set_pending(thread, turn.pending())     # the thread's single open question (or none)
@@ -119,6 +134,9 @@ class Core:
             LOG.warning('model_low_credit reduced_output_budget=%s', self.model.last_budget)
         self.store.kv('fallback:' + thread, {'code': None, 'at': 0})
         reply = PLACEHOLDER_ID.sub('رقم المقترح', (reply or '').strip())   # never show a made-up approval id
+        if voice:
+            self.store.remember(thread, 'assistant', reply)
+            return reply, outcomes
         if outcomes:
             reply += '\n\n' + render_outcomes(outcomes)
         self.store.remember(thread, 'assistant', reply)

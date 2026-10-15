@@ -1,0 +1,38 @@
+# Bondok on the telephone (extension 111): the custom-LLM endpoint ElevenLabs calls (loopback, behind nginx TLS) and
+# the call-session endpoint the PBX bridge calls over Tailscale. Same code, store and owner model as bondok.service.
+# Disable: `systemctl disable --now bondok-voice` (or VOICE_ENABLED=0 in voice.env); Slack and publishing unaffected.
+[Unit]
+Description=Bondok voice (telephone extension 111)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=bondok
+Group=bondok
+WorkingDirectory=/opt/waset-bondok
+Environment=BONDOK_VOICE_ENV=/etc/bondok-voice/voice.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/waset-bondok/venv/bin/python /opt/waset-bondok/voice.py
+Restart=always
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/bondok
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryMax=500M
+TasksMax=128
+
+[Install]
+WantedBy=multi-user.target

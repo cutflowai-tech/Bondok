@@ -1,0 +1,6 @@
+{
+  "_comment": "Extension -> role. Roles: owner (acts as the Bondok owner), member (questions only, no changes), test (owner on isolated acceptance items only). An extension not listed has no access. 99019 is the originate-only fixture line (no phone can dial it). Real extensions are added only on the owner's instruction.",
+  "extensions": {
+    "99019": {"role": "test", "label": "fixture line (originate only)"}
+  }
+}

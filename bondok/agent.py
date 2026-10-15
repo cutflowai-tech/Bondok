@@ -222,6 +222,10 @@ class Agent:
         ops = self.bridge.ops
         if name not in TOOL_NAMES:
             return {'error': 'tool not allowed'}
+        if ctx.get('restrict') == 'isolated':
+            refused = self._restricted(name, args)
+            if refused:
+                return refused
         if name == 'find_items':
             r = self.bridge.resolve(args.get('query'))
             if 'item_id' in r:
@@ -309,6 +313,21 @@ class Agent:
         return self.bridge.run(name, args, actor=ctx['actor'], event_id=ctx['event_id'], text=ctx['text'],
                                thread=ctx['thread'], turn=ctx.get('turn'))
 
+    def _restricted(self, name, args) -> dict | None:
+        """The test line sees and changes only items isolated from Instagram (acceptance items)."""
+        ref = args.get('query') if name == 'find_items' else args.get('item')
+        if ref is None:
+            return {'error': 'On the test line only test items can be used; name the test item.'}
+        r = self.bridge.resolve(ref)
+        if 'item_id' not in r:
+            return r if all(self._isolated(a.get('item_id')) for a in r.get('ambiguous', [])) else \
+                {'error': 'On the test line only test items can be used.'}
+        return None if self._isolated(r['item_id']) else {'error': 'On the test line only test items can be used.'}
+
+    def _isolated(self, item_id) -> bool:
+        with self.bridge.ops.store.read() as c:
+            return bool(item_id) and bool(self.bridge.ops.send_isolated(c, str(item_id)))
+
     def _files(self, item_id) -> dict:
         dbx = self.clients.get('dropbox')
         if dbx is None:
@@ -335,10 +354,13 @@ class Agent:
         self.bridge.remember_shown(ctx['thread'], item_id, it['asset_key'])
 
     # ------------------------------------------------------------------ conversation
-    def answer(self, text, *, actor, thread, event_id, history=(), turn=None):
+    def answer(self, text, *, actor, thread, event_id, history=(), turn=None, style=None, restrict=None):
         """Bounded tool loop. Returns (reply, outcomes). Outcomes are rendered by
-        trusted code; the model's own summary never stands in for them."""
-        ctx = {'actor': actor, 'thread': thread, 'event_id': event_id, 'text': text, 'turn': turn}
+        trusted code; the model's own summary never stands in for them. `style` adds channel instructions (the
+        telephone); `restrict='isolated'` limits every tool to items isolated from Instagram (test line)."""
+        ctx = {'actor': actor, 'thread': thread, 'event_id': event_id, 'text': text, 'turn': turn,
+               'restrict': restrict}
+        extra = {'instructions': self.model.policy + style} if style and hasattr(self.model, 'policy') else {}
         convo = list(history)[-HISTORY:] + [{'role': 'user', 'content': speaker(actor, self.bridge.owner) + text[:6000]}]
         outcomes = []
         try:
@@ -348,7 +370,7 @@ class Agent:
             steps = MAX_STEPS
         for _ in range(steps):
             try:
-                data = self.model(convo, TOOLS)
+                data = self.model(convo, TOOLS, **extra)
             except ServiceError as e:
                 e.outcomes = outcomes          # actions already taken must still be reported (audit H1)
                 raise

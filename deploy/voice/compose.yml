@@ -1,0 +1,26 @@
+# Bondok's telephone bridge on the PBX host: a second instance of Sara's bridge (same image, same audio code), in its
+# own compose project. Nothing of Sara's project, env, volume, port or agent is used or changed.
+#   docker compose -p bondok-voice -f compose.yml up -d        (disable: touch /etc/bondok-voice/switch/disabled, or `down`)
+name: bondok-voice
+services:
+  bridge:
+    image: ${SARA_IMAGE:-voice-monday-agent-api:latest}
+    entrypoint: ["python", "/bondok/bondok_bridge.py"]
+    network_mode: host                    # Asterisk reaches it on 127.0.0.1:9020; Bondok over Tailscale
+    env_file: /etc/bondok-voice/bridge.env
+    environment:
+      PYTHONPATH: /bondok
+    volumes:
+      - ./bondok_bridge.py:/bondok/bondok_bridge.py:ro
+      - /etc/bondok-voice/switch:/etc/bondok-voice/switch:ro
+    restart: unless-stopped
+    stop_grace_period: 15s
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    mem_limit: 256m
+    logging:
+      driver: json-file
+      options: {max-size: "5m", max-file: "3"}
+    # health: deploy/voice/health.sh (a TCP probe on 9020 would look like a call to the bridge)
