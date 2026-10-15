@@ -263,7 +263,9 @@ class Deployer:
         sidecar (-wal/-shm) is ever created with another owner (the 2026-10-09 ACL outage)."""
         side = {s: (Path(str(src) + s).stat().st_uid if Path(str(src) + s).exists() else None) for s in ('-wal', '-shm')}
         owner = src.stat().st_uid
-        tmpdir = Path(tempfile.mkdtemp(prefix='.sqlite-', dir=dst.parent))
+        # Run as the store owner, the copy is written beside the store (a folder that owner can write), then moved
+        # into the root-only backup by this root process.
+        tmpdir = Path(tempfile.mkdtemp(prefix='.sqlite-', dir=src.parent if self.cfg.get('sqlite_runner') else dst.parent))
         try:
             if os.geteuid() == 0 and self.cfg.get('sqlite_runner'):
                 os.chown(tmpdir, owner, src.stat().st_gid)
@@ -272,8 +274,10 @@ class Deployer:
                           str(src), str(out)], timeout=1800)
             if p.returncode or not out.exists():
                 raise Refused(f'SQLite backup of {src} failed: {p.stderr.strip()[-300:]}')
-            os.replace(out, dst)
+            shutil.move(str(out), str(dst))
             os.chmod(dst, 0o600)
+            if os.geteuid() == 0:
+                os.chown(dst, 0, 0)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
         for s, before in side.items():
