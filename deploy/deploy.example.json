@@ -28,9 +28,15 @@
   "db": "<Bondok sqlite file>",
   "unit_files": [
    "/etc/systemd/system/bondok.service",
-   "/etc/systemd/system/waset-runtime.service"
+   "/etc/systemd/system/waset-runtime.service",
+   "/etc/systemd/system/bondok-voice.service"
   ],
   "stop": [
+   [
+    "systemctl",
+    "stop",
+    "bondok-voice"
+   ],
    [
     "systemctl",
     "stop",
@@ -52,6 +58,11 @@
     "systemctl",
     "start",
     "waset-runtime"
+   ],
+   [
+    "systemctl",
+    "start",
+    "bondok-voice"
    ]
   ],
   "health": {

@@ -23,8 +23,10 @@ for name, src in (('state.sqlite', '/var/lib/bondok/pipeline/state.sqlite'),
 print('ok')
 PY
 cp -p /etc/systemd/system/bondok.service /etc/systemd/system/waset-runtime.service "$DEST/"
+[ -f /etc/systemd/system/bondok-voice.service ] && cp -p /etc/systemd/system/bondok-voice.service "$DEST/"
 # Configuration needed to restore (secrets: the folder is root-only and never leaves the host).
-for f in /opt/waset-bondok/.env /opt/waset-bondok/runtime.env /var/lib/bondok/pipeline/instagram-token.json; do
+for f in /opt/waset-bondok/.env /opt/waset-bondok/runtime.env /var/lib/bondok/pipeline/instagram-token.json \
+         /etc/bondok-voice/voice.env /etc/bondok-voice/voice-access.json; do
   if [ -f "$f" ]; then install -m 0600 "$f" "$DEST/$(basename "$f")"; fi
 done
 ( cd "$DEST" && sha256sum * > SHA256SUMS )

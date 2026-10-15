@@ -4,7 +4,7 @@
 name: bondok-voice
 services:
   bridge:
-    image: ${SARA_IMAGE:-voice-monday-agent-api:latest}
+    image: ${BONDOK_BRIDGE_IMAGE:-bondok-voice-bridge:sara-237cfd4}   # Sara's image, pinned under our own tag
     entrypoint: ["python", "/bondok/bondok_bridge.py"]
     network_mode: host                    # Asterisk reaches it on 127.0.0.1:9020; Bondok over Tailscale
     env_file: /etc/bondok-voice/bridge.env
