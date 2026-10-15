@@ -210,6 +210,8 @@ class PublishMixin:
             for r in rows:
                 if r['publication'] != 'not_started' or self.deadline(c, r) < now_dt:
                     continue
+                if self.publish_block(c, r['item_id']):
+                    continue                       # the owner said: never publish this item (it may stay scheduled)
                 att = self.active_attempt(c, r['item_id'])
                 if att and (att['stage'] not in PRE_COMMIT or (att['lease_until'] or 0) > now):
                     continue
@@ -303,6 +305,9 @@ class PublishMixin:
             res = self.reservation(c, item_id)
             if self.restore_gap(c):
                 return {'claimed': False, 'reason': 'publishing is paused until the post-restore check is done'}
+            blk = self.publish_block(c, item_id)
+            if blk:
+                return {'claimed': False, 'reason': 'the owner asked not to publish this item: ' + (blk['reason'] or '')}
             if source_status == 'Canceled':
                 # Same outcome WF1 records later; releasing now stops WF2 re-reading Monday every minute and WF3
                 # moving the item to the next slot (audit, publishing LOW). A pre-commit attempt is ended too: nothing
@@ -557,6 +562,8 @@ class PublishMixin:
                 problems.append('Instagram container is not ready')
             if it['owner_state'] != 'active':
                 problems.append('item is ' + it['owner_state'])
+            if self.publish_block(c, it['item_id']):
+                problems.append('the owner asked not to publish this item')
             if loads(it['hold'], None):
                 problems.append('item is held: ' + (loads(it['hold'], {}) or {}).get('reason', ''))
             if it['content_rev'] != a['content_rev']:
@@ -718,6 +725,8 @@ class PublishMixin:
                 problems.append('publication lease expired before the intent was acknowledged')
             if it['owner_state'] != 'active':
                 problems.append('item is ' + it['owner_state'])
+            if self.publish_block(c, it['item_id']):
+                problems.append('the owner asked not to publish this item')
             if loads(it['hold'], None):
                 problems.append('item is held: ' + (loads(it['hold'], {}) or {}).get('reason', ''))
             if it['content_rev'] != a['content_rev'] or not res or res['slot'] != a['slot'] or \

@@ -418,8 +418,11 @@ def markers(text: str, quote: str | None = None) -> dict:
         'future_day': any(t in _FUTURE_DAY for t in conj) or any(match(t, _lex('بكره', 'بكرا'), ('', 'و', 'ل', 'من'))
                                                                is not None for t in conj),
         'progressive': any(progressive(t) for t in conj),
+        # "حتى لو" / "even if" is concessive: the instruction holds in every case, it is not a condition.
         'conditional': any(t in _COND and not (t == 'لو' and nxt in ('سمحت', 'سمحتي', 'تسمح', 'سمحتو'))
-                           for t, nxt in zip(sent, sent[1:] + [''])) or _phrase(sent, ('اول', 'ما')) or
+                           and not (t in ('لو', 'اذا', 'if') and prv in ('حتى', 'even', 'حتي'))
+                           for prv, t, nxt in zip([''] + sent[:-1], sent, sent[1:] + [''])) or
+        _phrase(sent, ('اول', 'ما')) or
         _phrase(sent, ('بعد', 'ما')) or _phrase(sent, ('as', 'soon', 'as')) or _phrase(sent, ('in', 'case')),
         'quotation': quoted or any(t in _QUOTE for t in sent),
         'missed': _has_pairs(sent, _MISSED),
@@ -573,6 +576,8 @@ def supports(op: str, text: str, quote: str, args: dict | None = None) -> bool:
         return has(sent, TOPAZ) and (has(conj, DONE, _VERB_PRE) or has(conj, TOPAZ_DONE, _VERB_PRE))
     if op in ('waive_rule', 'restore_rule', 'set_policy'):
         return rule_supports(op, text, quote, args)
+    if op in ('publish_block', 'publish_allow'):
+        return has(sent, PUBLISH, _VERB_PRE) or any(w in text for w in ('نشر', 'تنشر', 'ينزل', 'publish', 'post'))
     if op == 'generic':
         return True
     if op in ('report_published', 'resolve_published'):
@@ -633,7 +638,7 @@ def explicit(op: str, args: dict, text: str) -> bool:
 
 
 # ---------------------------------------------------------------------------------------------- owner rules
-POLICY_OPS = ('waive_rule', 'restore_rule', 'set_policy')
+POLICY_OPS = ('waive_rule', 'restore_rule', 'set_policy', 'publish_block', 'publish_allow')
 _MAYBE = _lex('ممكن', 'يمكن', 'ياريت', 'maybe', 'perhaps', 'might', 'could')
 # Words that name each rule (any one is enough with an exemption/change marker).
 RULE_WORDS = {

@@ -134,6 +134,13 @@ TOOLS = [
          'action': {'type': 'string', 'enum': ['rename', 'move', 'delete']}, 'path': {'type': 'string'},
          'to': {'type': ['string', 'null'], 'description': 'New name (rename) or full new path (move)'},
          **MEANING}),
+    _fn('block_publishing', 'Owner directive: never publish this item until the owner allows it again (it can still '
+        'be checked and scheduled, e.g. a test item). Use for "do not actually publish it".',
+        {**ITEM, 'reason': {'type': ['string', 'null']}, **MEANING}),
+    _fn('allow_publishing', 'Owner withdraws the do-not-publish directive of an item.', {**ITEM, **MEANING}),
+    _fn('refresh_item', 'Read the item from Monday now, apply what the board shows (a board read is not an owner '
+        'instruction: values that would erase a decision wait for evidence), and report what changed and why.',
+        ITEM),
     _fn('get_history', 'What happened to an item: decisions, publication attempts and results, with who and when. '
         'Read-only.', ITEM),
     _fn('instagram_recent', 'Recent posts on the studio Instagram account, and the 24-hour publishing quota. '
@@ -240,6 +247,29 @@ class Agent:
             return ops.health()
         if name == 'get_rules':
             return ops.policy_report()
+        if name == 'refresh_item':
+            r = self.bridge.resolve(args.get('item'))
+            if 'item_id' not in r:
+                return r
+            m = self.clients.get('monday')
+            if m is None:
+                return {'error': 'Monday is not connected to Bondok on this host (configuration).'}
+            keys = ('readiness', 'owner_state', 'hold', 'publication', 'reservation', 'requested_at', 'publish_block',
+                    'topaz_confirmation', 'exemptions', 'caption_state')
+            before = ops.item_status(r['item_id'])
+            t0 = ops.now()
+            try:
+                fresh = m.fresh_item(r['item_id'])
+            except Exception as e:  # noqa: BLE001 - reported, never guessed
+                return {'error': f'Monday read failed: {str(e)[:200]}', 'status': before}
+            seen = ops.observe([{k: fresh[k] for k in ('id', 'name', 'column_values', 'group') if k in fresh}],
+                               actor='bondok-refresh', read_at=t0)
+            after = ops.item_status(r['item_id'])
+            self._shown(r['item_id'], ctx)
+            return {'read_at': ops.iso_ts(t0), 'board_edits': seen.get('edits') or [],
+                    'changed': {k: {'before': before.get(k), 'after': after.get(k)} for k in keys
+                                if before.get(k) != after.get(k)},
+                    'status': after}
         if name == 'get_history':
             r = self.bridge.resolve(args.get('item'))
             if 'item_id' not in r:

@@ -28,12 +28,12 @@ PROTECTED = {'pause_item', 'resume_item', 'skip_item', 'request_reschedule', 're
              'replace_source', 'update_caption', 'approve_existing_caption', 'approve_caption_draft', 'confirm_topaz',
              'resolve_publication', 'report_published', 'set_window', 'request_rework', 'waive_rule', 'restore_rule',
              'set_rule', 'publish_now', 'cancel_schedule', 'board_create_item', 'board_archive_item',
-             'board_delete_item', 'set_item_field', 'file_action'}
+             'board_delete_item', 'set_item_field', 'file_action', 'block_publishing', 'allow_publishing'}
 # Protected tools that are not about one item.
 GLOBAL = {'set_rule', 'board_create_item'}
 # Board/file administration and publish-now: read by the generic reader (language.contradiction 'generic').
 GENERIC = {'publish_now', 'board_create_item', 'board_archive_item', 'board_delete_item', 'set_item_field',
-           'file_action'}
+           'file_action', 'block_publishing', 'allow_publishing'}
 MUTATING = PROTECTED | {'request_recheck', 'draft_caption', 'approve_all_existing_captions'}
 EXECUTABLE_ACTS = ('imperative', 'completed_statement')
 # Reader kind per tool (language.contradiction / supports).
@@ -43,7 +43,8 @@ KIND = {'pause_item': 'pause', 'skip_item': 'skip', 'resume_item': 'resume', 're
         'approve_caption_draft': 'approve_caption', 'confirm_topaz': 'confirm_topaz',
         'report_published': 'report_published', 'set_window': 'set_window', 'request_rework': 'request_rework',
         'waive_rule': 'waive_rule', 'restore_rule': 'restore_rule', 'set_rule': 'set_policy',
-        'cancel_schedule': 'cancel_time', **{t: 'generic' for t in GENERIC}}
+        'cancel_schedule': 'cancel_time', **{t: 'generic' for t in GENERIC},
+        'block_publishing': 'publish_block', 'allow_publishing': 'publish_allow'}
 
 
 def key(text: str) -> str:
@@ -436,6 +437,11 @@ class Bridge:
                 raise Rejected('Which file exactly? Name it as list_files shows it.', 'question')
             return {'tool': tool, 'item': item, 'op': 'file_action', 'args': a}, \
                 f"{str(a.get('action') or '').capitalize()} {a.get('path')}" + (f" → {a['to']}" if a.get('to') else '')
+        if tool == 'block_publishing':
+            return {**act, 'op': 'publish_block', 'args': {'reason': (args.get('reason') or turn.text)[:300]}}, \
+                f'Never publish {label} until you allow it again (it can still be checked and scheduled)'
+        if tool == 'allow_publishing':
+            return {**act, 'op': 'publish_allow', 'args': {}}, f'Allow {label} to be published again'
         if tool == 'request_rework':
             return {**act, 'op': 'request_rework',
                     'args': {'reason': args.get('reason') or 'The owner asked for a new edit'}}, \

@@ -75,5 +75,17 @@ class CaptionApprovalExemption(OpsCase):
         self.assertEqual(rep['late_window_minutes']['source']['kind'], 'developer')
 
 
+
+class ConcessiveIsNotACondition(unittest.TestCase):
+    def test_even_if(self):
+        import sys
+        from support import ROOT
+        sys.path.insert(0, str(ROOT / 'bondok'))
+        import language as L
+        self.assertFalse(L.markers('متنفذش نشر فعلي له حتى لو حجزناله موعد', 'متنفذش نشر فعلي له')['conditional'])
+        self.assertFalse(L.markers('publish it even if it is late', 'publish it')['conditional'])
+        self.assertTrue(L.markers('انشره لو جاهز', 'انشره')['conditional'])
+
+
 if __name__ == '__main__':
     unittest.main()

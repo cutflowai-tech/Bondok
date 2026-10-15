@@ -210,7 +210,9 @@ class CoreMixin:
         'board_set_field': {OWNER},
         'file_action': {OWNER},
         'board_evidence_result': {'service:wf1', 'service:bondok'},
-        'attribution_correction': {'service:correction'},   # evidence-based correction of misattributed decisions
+        'attribution_correction': {'service:correction'},
+        'publish_block': {OWNER},       # owner directive: never publish this item (it may stay scheduled)
+        'publish_allow': {OWNER},   # evidence-based correction of misattributed decisions
         'waive_rule': {OWNER},          # owner exempts one item from a rule
         'restore_rule': {OWNER},
         'request_rework': {OWNER},

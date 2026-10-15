@@ -75,6 +75,27 @@ def create(env, out):
     Path(out).write_text(json.dumps(rec, indent=1, ensure_ascii=False))
 
 
+def add(env, out, n):
+    """One more dedicated item (same layout) appended to the fixtures file."""
+    rec = json.loads(Path(out).read_text())
+    d = Dropbox(refresh_token=env['DROPBOX_REFRESH_TOKEN'], app_key=env['DROPBOX_APP_KEY'],
+                app_secret=env['DROPBOX_APP_SECRET'])
+    m = Monday(env['MONDAY_API_TOKEN'])
+    name, folder = f'Acceptance {n} Bondok check', f"{rec['root']}/Acceptance {n}"
+    d.ensure_folder(folder)
+    local = Path(tempfile.mkdtemp()) / f'{n}.mp4'
+    video(local, n, 'v1')
+    d.upload(str(local), f'{folder}/{name} v1.mp4')
+    url = d.share(folder)
+    cols = {B.COL['format']: {'label': 'Story'}, B.COL['code']: f'ACC{n}', B.COL['style']: 'ACC',
+            B.COL['status']: {'label': B.LABELS['checking']}, B.COL['topaz']: {'label': 'Not yet'},
+            B.COL['dropbox']: {'url': url, 'text': 'Source'}}
+    rec['items'][str(n)] = {'name': name, 'code': f'ACC{n}', 'format': 'Story', 'folder': folder, 'folder_url': url,
+                            'files': [f'{name} v1.mp4'], 'item_id': m.create_item(name, cols, B.GROUPS['Story'])}
+    Path(out).write_text(json.dumps(rec, indent=1, ensure_ascii=False))
+    print(n, rec['items'][str(n)]['item_id'])
+
+
 def cleanup(env, out):
     rec = json.loads(Path(out).read_text())
     m = Monday(env['MONDAY_API_TOKEN'])
@@ -91,4 +112,7 @@ def cleanup(env, out):
 
 if __name__ == '__main__':
     e = read_env(sys.argv[1])
-    {'create': create, 'cleanup': cleanup}[sys.argv[2]](e, sys.argv[3])
+    if sys.argv[2] == 'add':
+        add(e, sys.argv[3], int(sys.argv[4]))
+    else:
+        {'create': create, 'cleanup': cleanup}[sys.argv[2]](e, sys.argv[3])

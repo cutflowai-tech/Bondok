@@ -69,7 +69,26 @@ class PolicyMixin:
         """Rules the owner exempted this item from. An exemption bound to a file version applies to that version
         only; one without a version applies to the item whatever file it has."""
         return {o['rule'] for o in self.overrides(c, it['item_id'])
-                if not o['asset_key'] or o['asset_key'] == it.get('asset_key')}
+                if o['rule'] != self.PUBLISH_BLOCK and (not o['asset_key'] or o['asset_key'] == it.get('asset_key'))}
+
+    def topaz_confirmation(self, c, it) -> dict | None:
+        """The recorded processing confirmation: which file version, who confirmed it, when, and whether it is the
+        version selected now."""
+        if not it.get('topaz_asset'):
+            return None
+        r = c.execute("SELECT id, actor, actor_kind, created FROM ops_commands WHERE item_id=? AND op='confirm_topaz' "
+                      "AND state='completed' ORDER BY created DESC LIMIT 1", (it['item_id'],)).fetchone()
+        return {'version': it['topaz_asset'], 'is_selected_version': it['topaz_asset'] == it.get('asset_key'),
+                'file_name': it.get('file_name') if it['topaz_asset'] == it.get('asset_key') else None,
+                'confirmed_by': ('the owner' if r and r['actor_kind'] == OWNER else
+                                 'a board edit (Topazed)' if r and r['actor_kind'] == 'monday' else
+                                 (r['actor'] if r else 'imported from the board')),
+                'confirmed_at': self.iso_ts(r['created']) if r else None, 'command': r['id'] if r else None}
+
+    def exemptions(self, c, it) -> list[dict]:
+        return [{'id': o['id'], 'rule': o['rule'], 'file_version': o['asset_key'], 'by': o['set_by'],
+                 'at': self.iso_ts(o['created']), 'reason': o['reason']}
+                for o in self.overrides(c, it['item_id']) if o['rule'] != self.PUBLISH_BLOCK]
 
     def topaz_ok(self, c, it: dict, policy=None) -> bool:
         """Topaz is satisfied: confirmed by the owner for the selected version, not required by the rule, or
@@ -99,6 +118,13 @@ class PolicyMixin:
                     'WHERE q.name = p.name)')}
             except sqlite3.OperationalError:
                 hist = {}
+            try:
+                exempt = {}
+                for r in c.execute("SELECT rule, item_id FROM ops_overrides WHERE state='active' AND rule!=?",
+                                   (self.PUBLISH_BLOCK,)):
+                    exempt.setdefault(r['rule'], []).append(r['item_id'])
+            except sqlite3.OperationalError:
+                exempt = {}
         out = []
         for name, spec in rules.POLICY.items():
             h = hist.get(name)
@@ -108,6 +134,7 @@ class PolicyMixin:
                         'set_at': self.iso_ts(h['created']) if h else None,
                         'effective': self.iso_ts(h['effective']) if h else None,
                         'reason': h['reason'] if h else None,
+                        'exempted_items': exempt.get(name, []),
                         'source': ({'kind': 'set', 'by': h['set_by'], 'reason': h['reason']} if h else
                                    dict(zip(('kind', 'evidence'), rules.SOURCES.get(name, ('unknown', None)))))})
         return {'rules': out, 'platform_limits': dict(rules.PLATFORM),
@@ -196,6 +223,48 @@ class PolicyMixin:
         obs = loads(self.item(c, item_id)['observed'], {}) or {}
         obs['_nudge'] = self.now()             # prepare it on the next preparation cycle
         c.execute('UPDATE ops_items SET observed=? WHERE item_id=?', (dumps(obs), str(item_id)))
+
+    # ------------------------------------------------------------------ owner directive: never publish this item
+    PUBLISH_BLOCK = 'publish_block'
+
+    def publish_block(self, c, item_id) -> dict | None:
+        """The owner's standing directive that this item is never published (for example a test item that may still
+        be scheduled). Enforced when work is listed, at the claim and at the commitment point."""
+        if not self._has_overrides(c):
+            return None
+        r = c.execute("SELECT * FROM ops_overrides WHERE item_id=? AND rule=? AND state='active' ORDER BY created DESC "
+                      'LIMIT 1', (str(item_id), self.PUBLISH_BLOCK)).fetchone()
+        return {'id': r['id'], 'reason': r['reason'], 'by': r['set_by'], 'at': self.iso_ts(r['created'])} if r else None
+
+    def op_publish_block(self, c, cmd: Command):
+        _ensure(c)
+        it = self.item(c, cmd.item_id)
+        cur = self.publish_block(c, it['item_id'])
+        if cur:
+            return {'unchanged': True, 'directive': cur, 'message': f"{it['name']} is already never published."}
+        oid = 'D-' + str(next_counter(c, 'override'))
+        c.execute('INSERT INTO ops_overrides(id,item_id,rule,asset_key,state,reason,set_by,source,created) '
+                  "VALUES(?,?,?,NULL,'active',?,?,?,?)", (oid, it['item_id'], self.PUBLISH_BLOCK,
+                                                          cmd.args.get('reason'), cmd.actor, dumps(cmd.auth or {}),
+                                                          self.now()))
+        audit(c, it['item_id'], 'publish_blocked', cmd.actor, {'directive': oid, 'command': cmd.id,
+                                                               'reason': cmd.args.get('reason')})
+        self.project(c, it['item_id'])
+        return {'directive': oid, 'item_id': it['item_id'],
+                'message': f"{it['name']} will not be published while this directive stands; it can still be checked "
+                           'and scheduled. Tell Bondok to allow publishing again to lift it.'}
+
+    def op_publish_allow(self, c, cmd: Command):
+        _ensure(c)
+        it = self.item(c, cmd.item_id)
+        cur = self.publish_block(c, it['item_id'])
+        if not cur:
+            return {'unchanged': True, 'message': f"{it['name']} has no do-not-publish directive."}
+        c.execute("UPDATE ops_overrides SET state='revoked', revoked=?, revoked_by=? WHERE id=?",
+                  (self.now(), cmd.actor, cur['id']))
+        audit(c, it['item_id'], 'publish_allowed', cmd.actor, {'directive': cur['id'], 'command': cmd.id})
+        self.project(c, it['item_id'])
+        return {'revoked': cur['id'], 'message': f"{it['name']} may be published again at its reserved time."}
 
     def op_waive_rule(self, c, cmd: Command):
         """Owner exempts one item from a rule ("publish it without Topaz"). Recorded as an exemption, never as the
@@ -306,8 +375,15 @@ class PolicyMixin:
             how = (f'Owner options: confirm what the rule asks for, exempt this item ("waive {with_rule}")'
                    if spec.get('waivable') else 'Owner options: confirm what the rule asks for')
             how += f', or change the rule itself (now {pol[with_rule]!r}).'
+        with self.store.read() as c:
+            block = self.publish_block(c, it['item_id'])
+            last_owner = c.execute('SELECT id, op, created FROM ops_commands WHERE item_id=? AND actor_kind=? '
+                                   'ORDER BY created DESC LIMIT 1', (it['item_id'], OWNER)).fetchone()
         return {'item_id': it['item_id'], 'name': it['name'], 'readiness': it['readiness'],
                 'owner_state': it['owner_state'], 'publication': it['publication'], 'hold': hold,
+                'publish_block': block,
+                'owner_last_instruction': {'op': last_owner['op'], 'at': self.iso_ts(last_owner['created']),
+                                           'command': last_owner['id']} if last_owner else None,
                 'scheduled': res['slot'] if res else None, 'reason': reason, 'rule': with_rule,
                 'waived_rules': waived, 'how_to_change': how}
 

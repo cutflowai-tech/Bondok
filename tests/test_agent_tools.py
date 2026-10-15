@@ -251,3 +251,50 @@ class A11_InstructionsInsideData(ToolCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DoNotPublishDirective(ToolCase):
+    """Owner directive (2026-10-16 test plan): "do not actually publish it during the test, even if scheduled"."""
+
+    def test_directive_keeps_the_schedule_and_never_publishes(self):
+        self.make_ready('650', 'Story', code='PB1')
+        slot = rules.instant(self.res('650')['slot'])
+        text = 'هنختبر على العنصر PB1 فقط. متنفذش نشر فعلي له خلال الاختبار، حتى لو حجزناله موعد. سجّل ده كتوجيه مني.'
+        core = self.run_core([act('block_publishing', text, 'imperative', 'PB1', item='PB1',
+                                  reason='test item: no real publication')], 'تمام')
+        reply = self.say(core, text)
+        self.assertIn('✅', reply)
+        st = self.ops.item_status('650')
+        self.assertIsNotNone(st['publish_block'])
+        self.assertIsNotNone(st['reservation'])                       # still scheduled
+        self.ops.run_finish('wf1', self.run_id, fence=self.fence)
+        ig, dbx = FakeInstagram(), FakeDropbox()
+        dbx.files['/p/video_v1.mp4'] = {'.tag': 'file', 'id': 'id:FILE1', 'rev': 'rev1', 'path_lower': '/p/video_v1.mp4'}
+        r = Runner(self.ops, FakeMonday(), dbx, ig, sleep=lambda s: None)
+        self.drain_monday()
+        r.monday.board.items['650'] = board_from_projection(self.ops, '650', code='PB1')
+        for n in range(4):
+            self.clock.set(slot + timedelta(seconds=5 + 60 * n))
+            r.publish_cycle()
+        self.assertEqual(ig.publish_calls(), [])
+        self.assertEqual(self.item('650')['publication'], 'not_started')
+        with self.ops.store.tx() as c:                                 # the commitment point refuses it too
+            self.assertTrue(self.ops.publish_block(c, '650'))
+        text2 = 'خلاص اسمح بنشر PB1 تاني'
+        core = self.run_core([act('allow_publishing', text2, 'imperative', 'PB1', item='PB1')], 'تمام')
+        self.say(core, text2)
+        self.assertIsNone(self.ops.item_status('650')['publish_block'])
+
+    def test_refresh_item_reports_what_changed(self):
+        self.make_ready('651', 'Story', code='PB2')
+        self.drain_monday()
+        self.clock.advance(1800)
+        mon = FakeMonday()
+        mon.board.items['651'] = board_from_projection(self.ops, '651', code='PB2')
+        core = self.core(Script([('refresh_item', {'item': 'PB2'})], 'تمام'))
+        core.agent.clients['monday'] = mon
+        out = core.agent.tool('refresh_item', {'item': 'PB2'}, {'thread': 't', 'actor': 'U1', 'event_id': 'e',
+                                                                 'text': 'x'})
+        self.assertEqual(out['changed'], {})
+        self.assertEqual(out['board_edits'], [])
+        self.assertEqual(out['status']['reservation']['slot'], self.res('651')['slot'])
