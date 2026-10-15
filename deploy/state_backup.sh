@@ -11,7 +11,7 @@ install -d -m 0700 "$ROOT" "$DEST"
 python3 - "$DEST" <<'PY'
 import sqlite3, sys
 dest = sys.argv[1]
-for name, src in (('state.sqlite', '/var/lib/docker/volumes/waset_social_data/_data/state.sqlite'),
+for name, src in (('state.sqlite', '/var/lib/bondok/pipeline/state.sqlite'),
                   ('bondok.sqlite', '/var/lib/bondok/bondok.sqlite')):
     s = sqlite3.connect(f'file:{src}?mode=ro', uri=True, timeout=60)
     d = sqlite3.connect(f'{dest}/{name}')

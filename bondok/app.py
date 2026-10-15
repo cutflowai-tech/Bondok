@@ -17,6 +17,7 @@ import threading
 import time
 from pathlib import Path
 
+import acceptance
 import language as lang
 from agent import Agent, Model, ServiceError, policy_text, render_outcome, speaker
 from bridge import Bridge, Turn
@@ -76,7 +77,9 @@ class Core:
         text = re.sub(r'<@[A-Z0-9]+>', '', e.get('text') or '').strip()
         thread = e.get('thread_ts') or e['ts']
         actor, event_id = e['user'], f"{self.env['SLACK_TEAM_ID']}:{e['channel']}:{e['ts']}"
-        quick = self._deterministic(text, actor, thread, event_id)
+        quick = acceptance.handle(self, text, actor) if not e.get('acceptance') else None
+        if quick is None:
+            quick = self._deterministic(text, actor, thread, event_id)
         if quick is not None:
             self.store.remember(thread, 'user', speaker(actor, self.owner) + text)
             self.store.remember(thread, 'assistant', quick)
@@ -286,6 +289,34 @@ class Core:
         return (': ' + '; '.join(parts)) if parts else ''
 
     # ------------------------------------------------------------------ notifications (no model)
+    def process_one(self) -> bool:
+        """Take one queued Slack event: answer it (or resend a reply that was ready), post the reply in its thread."""
+        r = self.store.next_event()
+        if not r:
+            return False
+        e = json.loads(r['payload'])
+        thread = e.get('thread_ts') or e['ts']
+        if r['state'] == 'reply_ready':
+            reply = r['reply']
+        else:
+            try:
+                if r['created'] + 1800 < time.time():
+                    reply = 'This message is older than 30 minutes (service was down); send it again if still needed.'
+                else:
+                    reply = self.handle(e)
+            except Exception as ex:  # noqa: BLE001
+                LOG.error('request_failed type=%s', type(ex).__name__)
+                reply = 'An error stopped this request. I did not confirm any change; check status before retrying.'
+            self.store.set_event(r['id'], 'reply_ready', reply)
+        self.store.set_event(r['id'], 'sending')
+        try:
+            self.post(reply, thread)
+            self.store.set_event(r['id'], 'done')
+        except Exception as ex:  # noqa: BLE001
+            LOG.error('reply_failed type=%s', type(ex).__name__)
+            self.store.set_event(r['id'], 'send_uncertain')
+        return True
+
     def deliver_notifications(self, limit=10) -> int:
         n = 0
         for job in self.ops.outbox_take(['slack'], 'bondok', limit, lease=120):
@@ -331,7 +362,7 @@ class Core:
                               'n8n automation may also be failing.')
         if db_ok and self._flip('db_down', False):
             alerts.append('✅ Operational database is readable again.')
-        owner = self.ops.runtime_owner() if db_ok else 'n8n'
+        owner = self.ops.runtime_owner() if db_ok else 'bondok'
         where = 'the Bondok runtime service (waset-runtime)' if owner == 'bondok' else 'n8n executions'
         for name, limit in HEARTBEAT_LIMITS.items():
             if name not in ages:
@@ -483,32 +514,9 @@ class Runtime(Core):
     def worker(self):
         self.store.recover_working()
         while not self.stop.is_set():
-            r = self.store.next_event()
-            if not r:
+            if not self.process_one():
                 self.wake.wait(3)
                 self.wake.clear()
-                continue
-            e = json.loads(r['payload'])
-            thread = e.get('thread_ts') or e['ts']
-            if r['state'] == 'reply_ready':
-                reply = r['reply']
-            else:
-                try:
-                    if r['created'] + 1800 < time.time():
-                        reply = 'This message is older than 30 minutes (service was down); send it again if still needed.'
-                    else:
-                        reply = self.handle(e)
-                except Exception as ex:  # noqa: BLE001
-                    LOG.error('request_failed type=%s', type(ex).__name__)
-                    reply = 'An error stopped this request. I did not confirm any change; check status before retrying.'
-                self.store.set_event(r['id'], 'reply_ready', reply)
-            self.store.set_event(r['id'], 'sending')
-            try:
-                self._post(reply, thread)
-                self.store.set_event(r['id'], 'done')
-            except Exception as ex:  # noqa: BLE001
-                LOG.error('reply_failed type=%s', type(ex).__name__)
-                self.store.set_event(r['id'], 'send_uncertain')
 
     def background(self):
         while not self.stop.wait(20):

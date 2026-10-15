@@ -277,15 +277,16 @@ class CoreMixin:
             with self.store.read() as c:
                 r = c.execute("SELECT value FROM ops_meta WHERE key='runtime_owner'").fetchone()
         except sqlite3.Error:
-            return 'n8n'
-        return r['value'] if r and r['value'] in self.RUNTIME_OWNERS else 'n8n'
+            return 'bondok'
+        # n8n is retired (2026-10-15): without an explicit 'n8n' (a rollback), scheduled work is Bondok's.
+        return r['value'] if r and r['value'] in self.RUNTIME_OWNERS else 'bondok'
 
     def op_set_runtime_owner(self, c, cmd: Command):
         new = str(cmd.args.get('owner') or '')
         if new not in self.RUNTIME_OWNERS:
             raise Rejected('Runtime owner is n8n or bondok', 'invalid')
         r = c.execute("SELECT value FROM ops_meta WHERE key='runtime_owner'").fetchone()
-        old = r['value'] if r else 'n8n'
+        old = r['value'] if r else 'bondok'
         if old == new:
             return {'owner': new, 'unchanged': True}
         c.execute("INSERT OR REPLACE INTO ops_meta VALUES('runtime_owner',?)", (new,))

@@ -1,0 +1,36 @@
+# Bondok chat service (Slack Socket Mode). Operational store: /var/lib/bondok/pipeline (Bondok-owned, not shared with n8n).
+[Unit]
+Description=Bondok - Waset Social Media AI Manager
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=bondok
+Group=bondok
+WorkingDirectory=/opt/waset-bondok
+Environment=BONDOK_ENV_FILE=/opt/waset-bondok/.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/waset-bondok/venv/bin/python /opt/waset-bondok/app.py
+Restart=always
+RestartSec=15
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/bondok
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryMax=600M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

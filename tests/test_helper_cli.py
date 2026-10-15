@@ -24,6 +24,7 @@ class HelperCli(OpsCase):
         super().setUp()
         self.clock.set(datetime.now(timezone.utc).replace(microsecond=0))
         self.env = {**os.environ, 'WASET_SOCIAL_DATA_DIR': str(self.dir)}
+        self.ops.submit(owner_cmd('legacy-owner', 'set_runtime_owner', None, explicit=True, owner='n8n'))   # the retired n8n path, set explicitly
 
     def call(self, path, body):
         arg = base64.b64encode(json.dumps({'path': path, 'body': body}).encode()).decode()

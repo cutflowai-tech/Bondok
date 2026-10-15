@@ -43,7 +43,8 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from . import rules
 from .db import Store, dumps, loads
 
-ROOT = Path(os.environ.get('WASET_SOCIAL_DATA_DIR', str(Path.home() / '.n8n-files/waset-social')))
+# Data directory beside the operational store: Bondok's /var/lib/bondok/pipeline (the old n8n volume is retired).
+ROOT = Path(os.environ.get('WASET_SOCIAL_DATA_DIR') or '/var/lib/bondok/pipeline')
 CAPACITY = 2
 TARGET_BYTES = 140_000_000            # DEFAULT encode target under TRANSFER_MAX_BYTES
 SOURCE_MAX_BYTES = 5_000_000_000      # largest source the worker downloads

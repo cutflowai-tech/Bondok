@@ -2,7 +2,7 @@
 # Starts idle: it executes nothing until scheduled work is switched to it (ops_meta.runtime_owner = bondok).
 [Unit]
 Description=Waset Bondok runtime (import, preparation, publishing, reconciliation, supervision)
-After=network-online.target docker.service
+After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=0
 
@@ -25,7 +25,6 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/bondok
-BindPaths=/var/lib/docker/volumes/waset_social_data/_data:/var/lib/bondok/pipeline
 ProtectKernelTunables=true
 ProtectKernelModules=true
 ProtectControlGroups=true
