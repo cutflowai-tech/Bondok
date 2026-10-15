@@ -246,8 +246,11 @@ class Deployer:
             p = rel_dir / k
             if not p.is_file() or sha256(p) != v:
                 bad.append(k)
+        # Interpreter caches and macOS metadata are never deployed (staging copies manifest files only) and are not
+        # a reason to refuse; any other unlisted file still is.
         extra = [p.relative_to(rel_dir).as_posix() for p in rel_dir.rglob('*')
-                 if p.is_file() and p.name != 'MANIFEST.json' and p.relative_to(rel_dir).as_posix() not in m['files']]
+                 if p.is_file() and p.name != 'MANIFEST.json' and p.relative_to(rel_dir).as_posix() not in m['files']
+                 and '__pycache__' not in p.parts and not p.name.startswith('._') and p.name != '.DS_Store']
         if bad or extra:
             raise Refused('release does not match its manifest: ' + ', '.join(sorted(bad + extra)[:20]))
         if not m.get('deployable', {}).get(part):
@@ -449,8 +452,16 @@ class Deployer:
             time.sleep(float(d.get('poll_seconds', 10)))
 
     def service(self, which):
+        # Stopping waits for in-flight publications (waset-runtime TimeoutStopSec=960): the wait here is longer, and
+        # a timeout is a failed step (handled by the caller: fence removed, services restarted), never a crash that
+        # leaves the fence up.
+        timeout = float((self.bondok or {}).get('service_timeout_seconds', 1080))
         for cmd in (self.bondok or {}).get(which) or []:
-            p = self.run(cmd, timeout=180)
+            try:
+                p = self.run(cmd, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self.journal(f'bondok_{which}', rc='timeout')
+                return False
             self.journal(f'bondok_{which}', rc=p.returncode)
             if p.returncode:
                 return False
@@ -470,11 +481,14 @@ class Deployer:
             raise Refused(f'{dest} exists with different content (releases are immutable)')
         tmp = self.data / 'releases' / ('.staging-' + manifest['release'])
         shutil.rmtree(tmp, ignore_errors=True)
-        shutil.copytree(rel / 'helper', tmp)
+        shutil.copytree(rel / 'helper', tmp, ignore=shutil.ignore_patterns('__pycache__', '._*', '.DS_Store'))
         for p in tmp.rglob('*'):
             os.chmod(p, 0o755 if p.is_dir() else 0o644)
         os.chmod(tmp, 0o755)
-        self._own(tmp, (self.cfg['helper'].get('owner')))
+        # Released code belongs to root (readable by the service group): the service account runs it but cannot
+        # change it (ops review 2026-10-16).
+        owner = self.cfg['helper'].get('owner')
+        self._own(tmp, ([0, owner[1]] if owner else None))
         os.replace(tmp, dest)
         self.created_helper_stage = dest
         return dest
@@ -764,13 +778,37 @@ class Deployer:
             'deployed_at': utc(), 'files': live, 'backup': str(bdir)}, indent=1))
         self.remove_fence('deployed')
         t_end = time.time()
+        pruned = self.prune_old(int((self.bondok or {}).get('keep_previous', 3)))
+        if pruned:
+            self.journal('pruned', removed=pruned)
         say(f'DEPLOYED release {rid} (commit {manifest["commit"][:12]}). Backup: {bdir}')
         say(f"Cross-service interval: fence {utc(t_fence)} -> helper switch {utc(ctx['t_helper'])}"
             + (f" -> Bondok switch {utc(ctx['t_bondok'])}" if ctx.get('t_bondok') else '')
-            + f' -> fence removed {utc(t_end)} ({t_end - t_fence:.1f} s fenced). During this interval the n8n '
-              'writers were fenced and Bondok was stopped; no two code versions ran unfenced.')
-        say('Workflows are NOT changed by this command (deploy.py workflows; activation is a separate step).')
+            + f' -> fence removed {utc(t_end)} ({t_end - t_fence:.1f} s fenced). During this interval scheduled work '
+              'was fenced and Bondok was stopped; no two code versions ran unfenced.')
         return 0
+
+    def prune_old(self, keep=3) -> list[str]:
+        """Old code directories (they hold old copies of the .env) and helper releases beyond the newest ``keep``;
+        the live ones are never touched and every rollback still has its backup (ops review 2026-10-16)."""
+        removed = []
+        if self.code_dir:
+            olds = sorted(self.code_dir.parent.glob(self.code_dir.name + '.prev-*')) + \
+                sorted(self.code_dir.parent.glob(self.code_dir.name + '.failed-*'))
+            for d in olds[:-keep] if len(olds) > keep else []:
+                shutil.rmtree(d, ignore_errors=True)
+                removed.append(str(d))
+        rels = self.data / 'releases'
+        live = os.path.realpath(self.data / 'helper.py')
+        if rels.is_dir():
+            dirs = sorted((d for d in rels.iterdir() if d.is_dir() and not d.name.startswith('.')),
+                          key=lambda d: d.stat().st_mtime)
+            for d in dirs[:-keep] if len(dirs) > keep else []:
+                if live.startswith(str(d.resolve()) + os.sep):
+                    continue
+                shutil.rmtree(d, ignore_errors=True)
+                removed.append(str(d))
+        return removed
 
     # ------------------------------------------------------------------ workflows (inactive import)
     def export_workflow(self, wid, dest: Path) -> dict:
@@ -934,6 +972,9 @@ def main(argv=None) -> int:
             raise Refused('--release is required')
         if a.command == 'code':
             return dep.deploy_code(Path(a.release), a.expect_live)
+        if not dep.cfg.get('n8n'):
+            raise Refused('n8n workflows are retired (2026-10-15): Bondok runs on its own runtime service; there is '
+                          'nothing to import')
         return dep.deploy_workflows(Path(a.release))
     except Refused as e:
         say(f'REFUSED: {e}')

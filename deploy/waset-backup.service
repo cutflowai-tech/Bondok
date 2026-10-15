@@ -1,0 +1,5 @@
+[Unit]
+Description=Daily backup of Bondok stores
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/waset-state-backup

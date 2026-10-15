@@ -154,7 +154,8 @@ class MonitorMixin:
                             'action': 'notify', 'notify': True,
                             'detail': f"⚠️ {name} run {failed.get('run')} stopped without completing "
                                       f"(last step: {failed.get('step') or 'unknown'}; {failed.get('reason')}). "
-                                      'Check its n8n execution; later runs will retry.'})
+                                      'Check the waset-runtime service log (journalctl -u waset-runtime); later runs '
+                                      'will retry.'})
             since = st.get('since', st['at'])
             if not (done.get('run') == st['run']) and now - since > self.RUN_COMPLETION_SECONDS[kind]:
                 last = (f"last completed {int((now - done['at']) / 60)} minutes ago" if done else

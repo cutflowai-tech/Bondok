@@ -89,11 +89,10 @@ class R5_LOW19_ReleasePackaging(ReleaseFixture):
 
     def test_allowlist_only(self):
         tops = {n.split('/')[0] for n in self.manifest['files']}
-        self.assertEqual(tops, {'helper', 'bondok', 'workflows'})
+        self.assertEqual(tops, {'helper', 'bondok'})               # n8n retired: no workflow JSON in a release
         for n in self.manifest['files']:
             self.assertRegex(n, r'^(helper/(helper\.py|drain_probe\.py|RELEASE\.json|waset_(ops|runtime)/[a-z_]+\.py)|'
-                                r'bondok/([a-z_]+\.py|policy\.txt|RELEASE\.json|waset_(ops|runtime)/[a-z_]+\.py)|'
-                                r'workflows/[A-Za-z0-9_]+\.v2\.json)$')
+                                r'bondok/([a-z_]+\.py|policy\.txt|RELEASE\.json|waset_(ops|runtime)/[a-z_]+\.py))$')
         rel = json.loads((self.release / 'helper' / 'RELEASE.json').read_text())
         self.assertEqual(rel['release'], self.manifest['release'])
         self.assertEqual(rel['schema_version'], self.manifest['schema_version'])
@@ -104,7 +103,6 @@ class R5_LOW19_ReleasePackaging(ReleaseFixture):
             if p.is_file():
                 self.assertNotIn(b'<IG_ACCOUNT>', p.read_bytes(), p)
         self.assertIn('17800000000000001', (self.release / 'helper' / 'waset_ops' / 'rules.py').read_text())
-        self.assertIn('/v26.0/17800000000000001/media', next(self.release.glob('workflows/pUIshuf16zIYoYRz*')).read_text())
         p = build_release(self.repo, Path(self.tmp_cls.name) / 'release-nosite')
         self.assertEqual(p.returncode, 0, p.stderr)
         m = json.loads((Path(p.stdout.strip().splitlines()[-1]) / 'MANIFEST.json').read_text())
@@ -112,26 +110,18 @@ class R5_LOW19_ReleasePackaging(ReleaseFixture):
         self.assertFalse(m['deployable']['workflows'])
         self.assertEqual(m['unresolved_placeholders'], ['IG_ACCOUNT'])
 
-    def test_redacted_credentials_are_not_deployable(self):
-        self.assertTrue(self.manifest['unresolved_credentials'])
+    def test_workflows_are_never_deployable(self):
+        """n8n retired (2026-10-15): a release carries no workflows and says so."""
         self.assertFalse(self.manifest['deployable']['workflows'])
         self.assertTrue(self.manifest['deployable']['code'])
-        self.assertTrue(any('credential' in b for b in self.manifest['blockers']))
 
-    def test_uncommitted_changes_or_stale_exports_refuse_to_build(self):
+    def test_uncommitted_changes_refuse_to_build(self):
         with tempfile.TemporaryDirectory() as d:
             repo = make_repo(Path(d) / 'repo')
             (repo / 'src' / 'helper.py').write_text((repo / 'src' / 'helper.py').read_text() + '\n# local edit\n')
             p = build_release(repo, Path(d) / 'out1')
             self.assertNotEqual(p.returncode, 0)
             self.assertIn('uncommitted', p.stdout + p.stderr)
-            git(repo, 'checkout', '--', 'src/helper.py')
-            dist = next((repo / 'workflows' / 'dist').glob('*.json'))
-            dist.write_text(dist.read_text().replace('"active": false', '"active": false ', 1))
-            git(repo, 'commit', '-qam', 'hand edit of a generated export')
-            p = build_release(repo, Path(d) / 'out2')
-            self.assertNotEqual(p.returncode, 0)
-            self.assertIn('stale', p.stdout + p.stderr)
 
 
 # ----------------------------------------------------------------------------------- fake server layout
@@ -521,61 +511,16 @@ class R5_Deploy_Rollback(DeployCase):
         self.assertIn('contained', out.lower())
 
 
-class R5_Deploy_Workflows(DeployCase):
-    def setUp(self):
-        super().setUp()
-        self.lay.store.mkdir()
-        for p in (self.release / 'workflows').glob('*.json'):
-            w = json.loads(p.read_text())
-            live = {**w, 'versionId': w['meta']['built_from'], 'active': True, 'activeVersionId': w['meta']['built_from']}
-            (self.lay.store / (w['id'] + '.json')).write_text(json.dumps(live))
-        self.creds = {}
-        for p in (self.release / 'workflows').glob('*.json'):
-            for n in json.loads(p.read_text())['nodes']:
-                for t, c in (n.get('credentials') or {}).items():
-                    self.creds[f"{t}:{c['name']}"] = 'cred-' + t
+class N8nWorkflowsRetired(DeployCase):
+    """2026-10-15: Bondok's n8n workflows are archived; deploy.py has nothing to import and says why."""
 
-    def with_creds(self, creds):
+    def test_workflows_command_refuses_without_an_n8n_section(self):
         cfg = json.loads(self.cfg.read_text())
-        cfg['n8n']['credentials'] = creds
+        cfg.pop('n8n', None)
         self.cfg.write_text(json.dumps(cfg))
-
-    def test_unresolved_redacted_credential_blocks_the_import(self):
         code, out = self.run_tool('workflows', '--release', str(self.release))
         self.assertEqual(code, 2, out)
-        self.assertIn('<REDACTED>', out)
-        self.assertFalse((self.lay.store / 'IMPORTED').exists())
-
-    def test_import_is_inactive_compared_and_never_activates(self):
-        self.with_creds(self.creds)
-        code, out = self.run_tool('workflows', '--release', str(self.release))
-        self.assertEqual(code, 0, out)
-        for p in (self.release / 'workflows').glob('*.json'):
-            w = json.loads(p.read_text())
-            got = json.loads((self.lay.store / (w['id'] + '.json')).read_text())
-            self.assertEqual(got['activeVersionId'], w['meta']['built_from'])   # still the old active version
-            for n in got['nodes']:
-                for c in (n.get('credentials') or {}).values():
-                    self.assertNotEqual(c['id'], '<REDACTED>')
-        self.assertIn('activation is a separate', out)
-
-    def test_import_that_does_not_match_the_artifact_is_reported_and_restored(self):
-        self.with_creds(self.creds)
-        (self.lay.store / 'TAMPER').write_text('x')
-        code, out = self.run_tool('workflows', '--release', str(self.release))
-        self.assertNotEqual(code, 0, out)
-        self.assertIn('differs', out)
-
-    def test_live_workflow_drift_refuses(self):
-        self.with_creds(self.creds)
-        p = next(self.lay.store.glob('*.json'))
-        w = json.loads(p.read_text())
-        w['versionId'] = 'someone-else-edited'
-        p.write_text(json.dumps(w))
-        code, out = self.run_tool('workflows', '--release', str(self.release))
-        self.assertEqual(code, 2, out)
-        self.assertIn('drift', out)
-        self.assertFalse((self.lay.store / 'IMPORTED').exists())
+        self.assertIn('retired', out)
 
 
 if __name__ == '__main__':

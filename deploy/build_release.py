@@ -42,8 +42,9 @@ ALLOW = [  # (pattern in the repository, destination prefixes)
     (re.compile(r'deploy/drain_probe\.py'), ['helper/drain_probe.py']),
     (re.compile(r'bondok/([a-z_]+\.py)'), ['bondok/{0}']),
     (re.compile(r'bondok/policy\.txt'), ['bondok/policy.txt']),
-    (re.compile(r'workflows/dist/([A-Za-z0-9_]+\.v2\.json)'), ['workflows/{0}']),
 ]
+# n8n is retired (2026-10-15): releases carry no workflow JSON and do not depend on workflows/ any more; the
+# generator and its output stay in the repository as history only.
 SECRET = re.compile(rb'xox[abposr]-[A-Za-z0-9-]{10,}|xapp-[0-9]-[A-Za-z0-9-]{10,}|sk-or-v1-[A-Za-z0-9]{16,}|'
                     rb'sk-[A-Za-z0-9]{32,}|-----BEGIN [A-Z ]*PRIVATE KEY-----|eyJhbGciOi[A-Za-z0-9_-]{20,}\.')
 REDACTED = '<REDACTED>'
@@ -113,7 +114,6 @@ def build(repo: Path, out_root: Path, creds_file: Path | None = None, site_file:
     commit = git(repo, 'rev-parse', 'HEAD').strip()
     rid = commit[:12]
     tree = committed_tree(repo)
-    check_exports_fresh(tree)
     files: dict[str, bytes] = {}
     for name, data in sorted(tree.items()):
         for pat, dests in ALLOW:
@@ -166,7 +166,7 @@ def build(repo: Path, out_root: Path, creds_file: Path | None = None, site_file:
         p.write_bytes(data)
     manifest = {**identity, 'built_at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
                 'files': {k: sha(v) for k, v in sorted(files.items())},
-                'deployable': {'code': not missing, 'workflows': not unresolved and not missing},
+                'deployable': {'code': not missing, 'workflows': False},
                 'unresolved_placeholders': sorted(missing),
                 'unresolved_credentials': unresolved, 'credentials_resolved': bool(creds) and not unresolved,
                 'blockers': blockers}

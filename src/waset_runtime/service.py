@@ -67,6 +67,7 @@ def build(env: dict, dry_run=False):
     ops.store.migrate()
     if not dry_run:
         detect_restore(ops, Path(db).parent / 'store-generation.json')
+        check_tools(ops)
     monday = Monday(env['MONDAY_API_TOKEN'], boards=lambda: ops.policy_value('allowed_boards'))
     dropbox = Dropbox(token=env.get('DROPBOX_TOKEN'), refresh_token=env.get('DROPBOX_REFRESH_TOKEN'),
                       app_key=env.get('DROPBOX_APP_KEY'), app_secret=env.get('DROPBOX_APP_SECRET'))
@@ -80,6 +81,20 @@ def build(env: dict, dry_run=False):
         from .dry import dry
         monday, dropbox, ig, captions = dry(monday), dry(dropbox), dry(ig), None
     return ops, Runner(ops, monday, dropbox, ig, captions, name='bondok')
+
+
+def check_tools(ops):
+    """ffmpeg/ffprobe come from this host's PATH (not a container): a missing one is one owner alert at start, not
+    six failed preparations per item (ops review 2026-10-16)."""
+    import shutil
+    missing = [t for t in ('ffmpeg', 'ffprobe') if not shutil.which(t)]
+    if missing:
+        LOG.error('media_tools_missing %s', missing)
+        with ops.store.tx() as c:
+            ops.notify(c, 'tools-missing:' + ','.join(missing), '⚠️ ' + ', '.join(missing) + ' is not installed on the '
+                       'Bondok host: videos cannot be checked or prepared until it is (publishing of already prepared '
+                       'videos continues).')
+    return missing
 
 
 def latest_command(ops) -> float:
