@@ -341,7 +341,7 @@ class MonitorMixin:
                 'item_id': it['item_id'], 'name': it['name'], 'code': it['code'], 'format': it['format'],
                 'version': it['version'], 'content_rev': it['content_rev'],
                 'readiness': it['readiness'], 'reason': it['block_reason'], 'owner_state': it['owner_state'],
-                'hold': loads(it['hold'], None), 'publication': it['publication'],
+                'hold': self.hold_provenance(c, it), 'publication': it['publication'],
                 'caption_state': it['caption_state'], 'topaz_confirmed_for_selected': bool(
                     it['asset_key'] and it['topaz_asset'] == it['asset_key']),
                 'selected_file': it['file_name'], 'infra_issue': it['infra_issue'],

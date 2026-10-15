@@ -280,6 +280,21 @@ class PolicyMixin:
             elif it['format'] == 'Post' and it['caption_state'] != 'approved' and pol['post_caption_approval']:
                 reason, with_rule = 'the caption is not approved yet', 'post_caption_approval'
             res = self.reservation(c, it['item_id'])
+            hold = self.hold_provenance(c, it) if it['owner_state'] == 'active' else None
+            if hold and not reason:
+                reason = f"{hold['reason'] or hold['kind']} ({hold['note']}"
+                reason += f", {hold['set_at']})" if hold.get('set_at') else ')'
+                last = hold.get('owner_last_time_instruction')
+                if last and last.get('requested'):
+                    reason += f". The owner's last time instruction ({last['at']}) asked for {last['requested']}"
+            elif not reason and not res and it['requested_at'] and it['readiness'] == 'ready':
+                taken = c.execute('SELECT item_id FROM ops_reservations WHERE account=? AND format=? AND slot=?',
+                                  (rules.ACCOUNT, it['format'], it['requested_at'])).fetchone()
+                if taken:
+                    who = 'the owner' if it['requested_by'] not in ('board', None) else 'the board Publish at'
+                    reason = (f"its requested time {it['requested_at']} (from {who}) is reserved by item "
+                              f"{taken['item_id']}; moving that item needs the owner's approval of the swap proposal")
+                    with_rule = 'occupied_slot_needs_approval'
         how = None
         if with_rule:
             spec = rules.POLICY[with_rule]
@@ -287,7 +302,7 @@ class PolicyMixin:
                    if spec.get('waivable') else 'Owner options: confirm what the rule asks for')
             how += f', or change the rule itself (now {pol[with_rule]!r}).'
         return {'item_id': it['item_id'], 'name': it['name'], 'readiness': it['readiness'],
-                'owner_state': it['owner_state'], 'publication': it['publication'],
+                'owner_state': it['owner_state'], 'publication': it['publication'], 'hold': hold,
                 'scheduled': res['slot'] if res else None, 'reason': reason, 'rule': with_rule,
                 'waived_rules': waived, 'how_to_change': how}
 

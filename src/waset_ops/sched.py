@@ -259,6 +259,55 @@ class SchedMixin:
             return {'scheduled': None, 'waiting': 'no free slot' + where}
         return {'scheduled': self._reserve(c, it, at, 'auto', False, actor), 'origin': 'auto'}
 
+    def hold_source(self, cmd) -> dict:
+        """Who set a hold, as recorded: the owner's own instruction (Slack), a board read (Monday does not say who
+        edited, and the system writes the same columns), or the system. A board read is never the owner's will."""
+        kind = {OWNER: 'owner', MONDAY: 'board'}.get(cmd.actor_kind, 'system')
+        return {'origin': kind, 'set_by': cmd.actor, 'command': cmd.id, 'set_at': self.now()}
+
+    HOLD_REASONS = {'unscheduled': 'unscheduled', 'incomplete_time': 'incomplete time',
+                    'missed_time': 'requested time missed'}
+
+    def hold_provenance(self, c, it) -> dict | None:
+        """The hold of an item with its true source. Holds written before 2026-10-15 said origin "owner" for every
+        cleared time, including board reads; their source is taken from the audit (the actor of the update that set
+        the hold) instead. Includes the owner's last explicit time instruction, if any."""
+        hold = loads(it.get('hold'), None)
+        if not hold:
+            return None
+        kind = hold.get('kind')
+        src, actor, at = hold.get('origin'), hold.get('set_by'), hold.get('set_at')
+        if not actor and kind in self.HOLD_REASONS:
+            r = c.execute("SELECT actor, at FROM ops_audit WHERE item_id=? AND kind='item_update' AND "
+                          "json_extract(detail,'$.reason')=? ORDER BY at DESC, id DESC LIMIT 1",
+                          (it['item_id'], self.HOLD_REASONS[kind])).fetchone()
+            if r:
+                actor, at = r['actor'], r['at']
+                if actor == MONDAY:
+                    src = 'board'
+                elif str(actor).startswith('service:') or kind == 'missed_time':
+                    src = 'system'
+                elif c.execute("SELECT 1 FROM ops_commands WHERE actor=? AND actor_kind=? LIMIT 1",
+                               (actor, OWNER)).fetchone():
+                    src = 'owner'
+                else:
+                    src = 'system'
+        last = c.execute("SELECT created, result FROM ops_commands WHERE item_id=? AND actor_kind=? AND "
+                         "op='request_reschedule' ORDER BY created DESC LIMIT 1", (it['item_id'], OWNER)).fetchone()
+        owner_time = None
+        if last:
+            res = loads(last['result'], {}) or {}
+            owner_time = {'at': self.iso_ts(last['created']), 'requested': res.get('requested') or res.get('scheduled') or res.get('slot'),
+                          'cleared': bool(res.get('unscheduled'))}
+        note = {'owner': 'set by the owner\'s own instruction',
+                'board': 'set when the board was read with an empty Publish at; Monday does not record who emptied '
+                         'it and there is no instruction from the owner in Slack, so this is not the owner\'s decision',
+                'system': 'set by the system (the requested time passed or could not be used); not the owner\'s '
+                          'decision'}.get(src, 'source not recorded')
+        return {'kind': kind, 'reason': hold.get('reason'), 'source': src or 'unknown', 'note': note,
+                'set_by': actor, 'set_at': self.iso_ts(at) if at else None, 'recover': hold.get('recover'),
+                'owner_last_time_instruction': owner_time}
+
     def _missed_request(self, c, it, actor, why) -> dict:
         """An owner time that passed (or can no longer be honoured) is closed with its cause and one question;
         it never stays 'Scheduled' in the past or silently becomes another time (R5 A1, A5)."""
@@ -343,7 +392,7 @@ class SchedMixin:
             day = cmd.args['incomplete_date']
             self.release(c, it, 'incomplete requested time', keep_request=False)
             self.update_item(c, it['item_id'], cmd.actor, 'incomplete time', requested_at=None, requested_by=None,
-                             hold=dumps({'kind': 'incomplete_time', 'date': day, 'origin': 'owner', 'party': 'owner',
+                             hold=dumps({'kind': 'incomplete_time', 'date': day, **self.hold_source(cmd), 'party': 'owner',
                                          'recover': 'a complete time, a cleared Publish at, or a time in Slack',
                                          'reason': f'Publish at has the date {day} but no time. Add the time '
                                                    '(Cairo); it will not be published until then.'}))
@@ -356,7 +405,7 @@ class SchedMixin:
             self.release(c, it, 'unscheduled by request', keep_request=False)
             self._store_window(c, it['item_id'], None, cmd.actor)
             self.update_item(c, it['item_id'], cmd.actor, 'unscheduled', requested_at=None, requested_by=None,
-                             hold=dumps({'kind': 'unscheduled', 'origin': 'owner', 'party': 'owner',
+                             hold=dumps({'kind': 'unscheduled', **self.hold_source(cmd), 'party': 'owner',
                                          'recover': 'a new time, "publish it", or resume',
                                          'reason': 'Publish time was cleared; set a new time or tell Bondok to '
                                                    'publish it'}))
