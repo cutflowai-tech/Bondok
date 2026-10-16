@@ -246,7 +246,8 @@ class Voice:
             COMMIT_GATE.check = None
         said, check = speakable(reply), spoken_outcomes(outcomes)
         LOG.info('voice_turn call=%s outcomes=%s', s['call_id'],
-                 ','.join(f"{o.get('tool')}:{(o.get('result') or {}).get('state')}" for o in outcomes or []) or '-')
+                 ','.join(f"{o.get('tool')}:{(o.get('result') or {}).get('state')}:{(o.get('args') or {}).get('item', '')}"
+                          for o in outcomes or []) or '-')
         return (said + (' ' + check if check else '')).strip() or 'تمام.'
 
 
