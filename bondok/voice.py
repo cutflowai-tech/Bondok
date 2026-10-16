@@ -47,7 +47,11 @@ STYLE = (
     'is not a cancellation: cancel only when he asks to cancel. A tool result "superseded" means it was NOT done '
     'because he kept talking: read his newer words together with the older ones and act on what he finally means, '
     'without asking him to confirm again. If he corrects something a tool result says was already done, say it was '
-    'already done, and undo it (the opposite tool) when he asks for that or his words clearly mean it.')
+    'already done, and reverse it (the opposite tool) when he asks for that or his words in context clearly mean '
+    'it; if it could mean more than one item or action, ask one short question naming them. Reversing changes '
+    'Bondok\'s own state only (resume a pause, cancel a schedule): something that already happened outside, like a '
+    'post or story published on Instagram, is not undone by that; say plainly it is published and that Bondok '
+    'cannot remove it from Instagram.')
 
 TOOL_AR = {
     'pause_item': 'إيقاف', 'resume_item': 'استئناف', 'skip_item': 'تخطي', 'request_recheck': 'إعادة الفحص',

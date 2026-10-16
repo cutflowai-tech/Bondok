@@ -44,8 +44,10 @@ Sara's two words-carrying log events are suppressed for Bondok's calls.
   if the bridge heard the caller speak again in that time or ElevenLabs dropped the request (barge-in). A held
   change is **not executed and not asked about**; the caller's next words, read with the earlier ones, decide.
   This narrows the window, it does not close it: a correction that comes after submission meets a change that is
-  done; Bondok says so ("كان اتنفذ") and reverses it with the opposite action where one exists (pause/resume,
-  schedule/cancel); some actions have no reversal (a publication that has started).
+  done; Bondok says so ("كان اتنفذ") and reverses it with the opposite action where one exists. Reversing
+  changes Bondok's execution state only (resume a pause, cancel a schedule, restore a rule); an external effect
+  that already happened (a post or story published on Instagram) is not undone, and Bondok says so instead of
+  calling it undone.
 * Each turn's memory records what every action really did (completed, accepted, superseded, refused).
 * One turn per call at a time, in order. Each turn has a stable key (call, position, text); its answer is stored,
   so a provider retry returns the same answer and runs nothing. Command ids derive from it (`voice:<call>:<key>`).
