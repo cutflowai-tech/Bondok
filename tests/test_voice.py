@@ -158,6 +158,71 @@ class OwnerTurns(VoiceCase):
         self.assertIn('ماتنفذش', said)
 
 
+class CommitGate(VoiceCase):
+    """A spoken correction can never race an action: nothing is committed until SETTLE after the turn arrived,
+    and not at all if the caller spoke again or the provider dropped the turn."""
+
+    def pausing(self):
+        self.observe(monday_item('520', code='LIP20'))
+        return self.voice(FakeModel([{'tool': 'pause_item', 'args': {'item': 'LIP20', 'reason': 'x',
+                                                                     'meaning': M('وقف LIP20')}},
+                                     {'say': 'تمام'}] * 2))
+
+    def test_caller_speech_after_the_turn_holds_the_change_as_one_question(self):
+        v = self.pausing()
+        r = self.call(v, '101', 'call-0020-aaaa')
+        ctx = voice.new_ctx()
+        threading.Timer(0.6, lambda: v.speech({'call_id': 'call-0020-aaaa'})).start()   # "...لا استنى"
+        said, _ = v.turn({'messages': [{'role': 'user', 'content': 'وقف LIP20'}],
+                          'elevenlabs_extra_body': {'session': r['token']}}, ctx)
+        self.assertEqual(ctx['held'], 'caller_spoke')
+        self.assertEqual(self.item('520')['owner_state'], 'active')
+        self.assertIn('لسه منفذتش', said)
+        # Only an explicit yes, in a later turn, executes it.
+        self.say(v, r['token'], 'وقف LIP20', 'اه')
+        self.assertEqual(self.item('520')['owner_state'], 'paused')
+
+    def test_a_correction_in_the_next_turn_replaces_the_held_action(self):
+        self.observe(monday_item('523', code='LIP23'))
+        v = self.voice(FakeModel([{'tool': 'pause_item', 'args': {'item': 'LIP23', 'reason': 'x',
+                                                                  'meaning': M('وقف LIP23')}},
+                                  {'say': 'تمام'}, {'say': 'تمام، مش هوقف حاجة'}]))
+        r = self.call(v, '101', 'call-0023-aaaa')
+        ctx = voice.new_ctx()
+        threading.Timer(0.6, lambda: v.speech({'call_id': 'call-0023-aaaa'})).start()
+        v.turn({'messages': [{'role': 'user', 'content': 'وقف LIP23'}],
+                'elevenlabs_extra_body': {'session': r['token']}}, ctx)
+        self.say(v, r['token'], 'وقف LIP23', 'لا لا استنى، متوقفش حاجة')
+        self.say(v, r['token'], 'وقف LIP23', 'لا لا استنى، متوقفش حاجة', 'اه')    # stale question is gone
+        self.assertEqual(self.item('523')['owner_state'], 'active')
+
+    def test_a_dropped_turn_commits_nothing(self):
+        v = self.pausing()
+        r = self.call(v, '101', 'call-0021-aaaa')
+        ctx = voice.new_ctx()
+        threading.Timer(0.3, ctx['cancelled'].set).start()      # ElevenLabs closed the request (barge-in)
+        v.turn({'messages': [{'role': 'user', 'content': 'وقف LIP20'}],
+                'elevenlabs_extra_body': {'session': r['token']}}, ctx)
+        self.assertEqual(ctx['held'], 'turn_cancelled')
+        self.assertEqual(self.item('520')['owner_state'], 'active')
+
+    def test_the_turns_own_last_words_do_not_hold_it(self):
+        v = self.pausing()
+        r = self.call(v, '101', 'call-0022-aaaa')
+        v.speech({'call_id': 'call-0022-aaaa'})                  # the tail of "وقف LIP20" itself
+        ctx = voice.new_ctx()
+        t0 = time.monotonic()
+        v.turn({'messages': [{'role': 'user', 'content': 'وقف LIP20'}],
+                'elevenlabs_extra_body': {'session': r['token']}}, ctx)
+        self.assertNotIn('held', ctx)
+        self.assertEqual(self.item('520')['owner_state'], 'paused')
+        self.assertGreaterEqual(time.monotonic() - t0, voice.SETTLE)    # it waited out the settle window
+
+    def test_slack_has_no_gate(self):
+        from bridge import COMMIT_GATE
+        self.assertIsNone(getattr(COMMIT_GATE, 'check', None))
+
+
 class TestLine(VoiceCase):
     def setUp(self):
         super().setUp()
@@ -287,6 +352,10 @@ class Http(VoiceCase):
         st, out = self.post(port, '/session', raw, {'X-Bondok-Signature': voice.sign('s' * 40, raw)})
         self.assertEqual(st, 200)
         self.assertEqual(json.loads(out)['role'], 'owner')
+        sp = json.dumps({'call_id': 'call-0011-aaaa', 'ts': time.time()}).encode()
+        self.assertEqual(self.post(port, '/speech', sp, {'X-Bondok-Signature': 'bad'})[0], 401)
+        self.assertEqual(self.post(port, '/speech', sp, {'X-Bondok-Signature': voice.sign('s' * 40, sp)})[0], 200)
+        self.assertIn('call-0011-aaaa', v._speech)
         old = json.dumps({'endpoint': '101', 'call_id': 'call-0011-bbbb', 'ts': time.time() - 300}).encode()
         self.assertEqual(self.post(port, '/session', old, {'X-Bondok-Signature': voice.sign('s' * 40, old)})[0], 401)
 

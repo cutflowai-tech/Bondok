@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from datetime import date, timedelta
 
 import language as lang
@@ -58,6 +59,9 @@ def key(text: str) -> str:
 
 def _bounded(needle: str, hay: str) -> bool:
     return bool(needle) and re.search(r'(?<![^\W_])' + re.escape(needle) + r'(?![^\W_])', hay) is not None
+
+
+COMMIT_GATE = threading.local()     # .check() -> bool, set only while a telephone turn runs in this thread
 
 
 class Turn:
@@ -166,9 +170,19 @@ class Bridge:
             else f"{it['name']} ({it['item_id']})"
 
     # ------------------------------------------------------------------ execution
-    def execute(self, action: dict, *, actor, cid, thread, event_id, turn: Turn | None = None) -> dict:
+    def execute(self, action: dict, *, actor, cid, thread, event_id, turn: Turn | None = None,
+                summary: str | None = None) -> dict:
         """Submit one validated owner decision to the handler (the only writer). A clear instruction with a defined
-        scope runs for every item it names; there is no item-count limit."""
+        scope runs for every item it names; there is no item-count limit.
+        On the telephone a commit gate runs first (COMMIT_GATE, set per turn by voice.py): if the caller kept
+        talking after the words this action came from (a correction may be coming), or the provider dropped the
+        turn, nothing is submitted; the action becomes the thread's single open question instead."""
+        gate = getattr(COMMIT_GATE, 'check', None)
+        if gate is not None and turn is not None and not gate():
+            what = summary or (self._label(action['item']) if action.get('item') else action['op'])
+            q = f'لسه منفذتش ده عشان سمعتك بتكمل كلام: {what}. أنفذه؟'
+            turn.ask(q, action)
+            return {'state': 'needs_confirmation', 'question': q, 'held': 'caller_still_speaking'}
         if turn is not None:
             turn.executed += 1
         return self.ops.submit(Command(cid, action['op'], actor, 'owner', action['item'], action['args'],
@@ -261,9 +275,11 @@ class Bridge:
                      'which video and I will exempt just that one.)')
                 turn.ask(q + '؟', action)
                 return {'state': 'needs_confirmation', 'question': q + '؟'}
-            return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn)
+            return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn,
+                                summary=summary)
         if tool == 'board_create_item':
-            return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn)
+            return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn,
+                                summary=summary)
 
         # ---- targets: the owner's words and the thread's named set, never extra items (R5 B6, A14)
         m = lang.markers(text, quote)
@@ -288,7 +304,8 @@ class Bridge:
             if ask:
                 turn.ask(ask, action)
                 return {'state': 'needs_confirmation', 'question': ask}
-        return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn)
+        return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn,
+                                summary=summary)
 
     @staticmethod
     def _clarify(question: str) -> dict:
@@ -497,7 +514,8 @@ class Bridge:
             q = f'Was it published on the studio Instagram account? If yes: {summary}؟'
             turn.ask(q, action)
             return {'state': 'needs_confirmation', 'question': q}
-        return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn)
+        return self.execute(action, actor=actor, cid=cid, thread=thread, event_id=event_id, turn=turn,
+                                summary=summary)
 
     # ------------------------------------------------------------------ constraints
     @staticmethod

@@ -29,8 +29,12 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from bridge import COMMIT_GATE
+
 LOG = logging.getLogger('bondok.voice')
 SESSION_TTL = 2 * 3600
+SETTLE = 1.5            # seconds after a turn arrives before any change is committed (a correction may follow)
+SPEECH_MARGIN = 0.35    # caller speech this long after the turn arrived is new speech, not the turn's own tail
 ROLES = ('owner', 'member', 'test')
 
 # ----------------------------------------------------------------------------------------------- spoken output
@@ -119,6 +123,7 @@ class Voice:
         self.session_secret = env.get('VOICE_SESSION_SECRET') or ''
         self._locks: dict[str, threading.Lock] = {}
         self._guard = threading.Lock()
+        self._speech: dict[str, float] = {}       # call id -> when the bridge last heard the caller (monotonic)
 
     # sessions -------------------------------------------------------------------------------------
     def open_session(self, body: dict) -> dict:
@@ -154,9 +159,31 @@ class Voice:
         LOG.info('voice_session_end call=%s', call_id)
         return {'ok': True}
 
+    def speech(self, body: dict) -> dict:
+        """The bridge heard the caller speaking (at least 200 ms within 600 ms). Kept in memory only."""
+        self._speech[str(body.get('call_id') or '')] = time.monotonic()
+        return {'ok': True}
+
+    def gate(self, call_id: str, ctx: dict) -> bool:
+        """May a change from this turn be committed now? Waits until SETTLE after the turn arrived; refuses if the
+        caller spoke again meanwhile (a correction may be coming) or the provider dropped the turn."""
+        while True:
+            if ctx['cancelled'].is_set():
+                ctx['held'] = 'turn_cancelled'
+            elif self._speech.get(call_id, 0) > ctx['received'] + SPEECH_MARGIN:
+                ctx['held'] = 'caller_spoke'
+            elif time.monotonic() >= ctx['received'] + SETTLE:
+                return True
+            else:
+                time.sleep(0.05)
+                continue
+            LOG.info('voice_commit_held call=%s reason=%s', call_id, ctx['held'])
+            return False
+
     # turns ----------------------------------------------------------------------------------------
-    def turn(self, body: dict) -> tuple[str, str | None]:
+    def turn(self, body: dict, ctx: dict | None = None) -> tuple[str, str | None]:
         """(what to say, turn key or None). The key marks the answer delivered once it was streamed."""
+        ctx = ctx if ctx is not None else new_ctx()
         extra = body.get('elevenlabs_extra_body') or {}
         s = self.session(str(extra.get('session') or ''))
         if not s:
@@ -178,7 +205,7 @@ class Voice:
             if missed:
                 spoken = 'الطلب ده وصلني في المكالمة اللي فاتت قبل ما تقطع، ومش هكرره. ' + missed
             else:
-                spoken = self._run(s, text, key)
+                spoken = self._run(s, text, key, ctx)
             self.core.store.kv('voice-turn:' + key, {'spoken': spoken, 'at': time.time()})
             self.core.store.kv('voice-last:' + s['endpoint'], {
                 'call_id': s['call_id'], 'key': key, 'text': hashlib.sha256(_norm(text).encode()).hexdigest(),
@@ -205,19 +232,26 @@ class Voice:
         with self._guard:
             return self._locks.setdefault(call_id, threading.Lock())
 
-    def _run(self, s, text, key) -> str:
+    def _run(self, s, text, key, ctx) -> str:
         e = {'user': s['actor'], 'text': text, 'ts': f'{time.time():.6f}', 'channel': 'voice',
              'thread_ts': 'voice:' + s['call_id'], 'restrict': 'isolated' if s['role'] == 'test' else None,
              'event_key': f"voice:{s['call_id']}:{key}"}
+        COMMIT_GATE.check = lambda: self.gate(s['call_id'], ctx)
         try:
             reply, outcomes = self.core.handle(e, voice=True)
         except Exception as ex:  # noqa: BLE001 - never a silent failure on the phone
             LOG.error('voice_turn_failed type=%s', type(ex).__name__)
             return 'حصلت مشكلة عندي ومقدرتش أكمل الطلب ده، ومأكدتش أي تغيير. جرب تاني بعد شوية.'
+        finally:
+            COMMIT_GATE.check = None
         said, check = speakable(reply), spoken_outcomes(outcomes)
         LOG.info('voice_turn call=%s outcomes=%s', s['call_id'],
                  ','.join(f"{o.get('tool')}:{(o.get('result') or {}).get('state')}" for o in outcomes or []) or '-')
         return (said + (' ' + check if check else '')).strip() or 'تمام.'
+
+
+def new_ctx() -> dict:
+    return {'received': time.monotonic(), 'received_at': time.time(), 'cancelled': threading.Event()}
 
 
 def _norm(text) -> str:
@@ -315,22 +349,25 @@ def make_llm_handler(voice: Voice):
             self.send_header('Cache-Control', 'no-cache')
             self.send_header('Connection', 'close')
             self.end_headers()
-            result, done = {}, threading.Event()
+            result, done, ctx = {}, threading.Event(), new_ctx()
 
             def work():
                 try:
-                    result['text'], result['key'] = voice.turn(body)
+                    result['text'], result['key'] = voice.turn(body, ctx)
                 except Exception as ex:  # noqa: BLE001
                     LOG.error('voice_turn_crashed type=%s', type(ex).__name__)
                     result['text'], result['key'] = 'حصلت مشكلة عندي، ومأكدتش أي تغيير.', None
                 done.set()
             threading.Thread(target=work, daemon=True).start()
+            timing = {}
             try:
                 out = Stream(self)
-                if not done.wait(FIRST_WAIT):
-                    out.say(secrets.choice(FILLERS))      # a buffer phrase: the caller hears Bondok at once
-                    while not done.wait(2.0):             # keep the stream alive while the tools run
-                        out.keepalive()
+                while not done.wait(0.4):                 # a dropped request is noticed within 0.4 s
+                    out.keepalive()
+                    if 'filler' not in timing and time.monotonic() - ctx['received'] >= FIRST_WAIT:
+                        out.say(secrets.choice(FILLERS))  # a buffer phrase: the caller hears Bondok at once
+                        timing['filler'] = time.time()
+                timing['answer'] = time.time()
                 out.say(result['text'])
                 out.end()
                 if result.get('key'):
@@ -338,7 +375,13 @@ def make_llm_handler(voice: Voice):
                     if s:
                         voice.delivered(result['key'], s['endpoint'])
             except (BrokenPipeError, ConnectionResetError):
+                ctx['cancelled'].set()                   # nothing from this turn is committed after this
+                timing['dropped'] = time.time()
                 LOG.info('voice_turn_interrupted (the answer is kept for the next turn)')
+            t0 = ctx['received_at']
+            LOG.info('voice_turn_timing received=%.3f filler_s=%s answer_s=%s dropped_s=%s held=%s', t0,
+                     *(f'{timing[k] - t0:.2f}' if k in timing else '-' for k in ('filler', 'answer', 'dropped')),
+                     ctx.get('held', '-'))
 
         def _json(self, code, obj):
             data = json.dumps(obj).encode()
@@ -375,6 +418,8 @@ def make_session_handler(voice: Voice):
                 return self._json(200, voice.open_session(body))
             if self.path.rstrip('/') == '/session/end':
                 return self._json(200, voice.end_session(body))
+            if self.path.rstrip('/') == '/speech':
+                return self._json(200, voice.speech(body))
             self._json(404, {'ok': False})
 
         def _json(self, code, obj):

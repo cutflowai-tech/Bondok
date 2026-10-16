@@ -9,8 +9,8 @@ Settings that matter for correctness and privacy:
 * ``speculative_turn`` off and ``turn_eagerness`` normal: only final transcripts reach Bondok, so a sentence the
   owner is still saying (or correcting) is never acted on;
 * no backup LLM: if Bondok cannot answer, ElevenLabs must not let a hosted model improvise in Bondok's name;
-* ``record_voice`` off, audio and transcript/PII deletion on, 1-day retention (zero-retention mode is refused by
-  ElevenLabs for agents with a custom LLM);
+* ``record_voice`` off, audio and transcript/PII deletion on, retention 0 days (scheduled deletion after the call;
+  zero-retention mode is refused by ElevenLabs for agents with a custom LLM);
 * only audio, interruption and ping events are sent to the bridge (no transcript events);
 * signed URLs only (``enable_auth``), per-call ``custom_llm_extra_body`` allowed (the session token), at most two
   concurrent calls and a ten-minute cap per call (cost guard on a quota shared with Sara).
@@ -73,8 +73,9 @@ def agent_body(url: str, secret_id: str, *, zero_retention=False) -> dict:
             'overrides': {'custom_llm_extra_body': True},
             'call_limits': {'agent_concurrency_limit': 2, 'daily_limit': 40, 'bursting_enabled': False},
             'privacy': {'record_voice': False, 'delete_audio': True, 'delete_transcript_and_pii': True,
-                        # zero-retention mode keeps nothing and requires -1; without it, the shortest retention
-                        'retention_days': -1 if zero_retention else 1, 'zero_retention_mode': zero_retention},
+                        # zero-retention mode keeps nothing and requires -1; without it, 0 days = scheduled deletion
+                        # right after the call (ElevenLabs' "maximum privacy": no audio saving, retention 0)
+                        'retention_days': -1 if zero_retention else 0, 'zero_retention_mode': zero_retention},
         },
     }
 

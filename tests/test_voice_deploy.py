@@ -37,7 +37,7 @@ class AgentSettings(unittest.TestCase):
         self.assertIs(ps['privacy']['delete_audio'], True)
         # ElevenLabs refuses zero-retention mode with a custom LLM: shortest retention, audio and transcript deleted
         self.assertIs(ps['privacy']['zero_retention_mode'], False)
-        self.assertEqual(ps['privacy']['retention_days'], 1)
+        self.assertEqual(ps['privacy']['retention_days'], 0)
         self.assertIs(ps['privacy']['delete_transcript_and_pii'], True)
         zrm = load('el_agent2', VOICE / 'el_agent.py').agent_body('https://h', 's', zero_retention=True)
         self.assertEqual(zrm['platform_settings']['privacy']['retention_days'], -1)   # what ZRM requires

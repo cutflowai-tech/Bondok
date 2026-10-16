@@ -13,6 +13,7 @@ services:
     volumes:
       - ./bondok_bridge.py:/bondok/bondok_bridge.py:ro
       - /etc/bondok-voice/switch:/etc/bondok-voice/switch:ro
+      - /var/lib/bondok-voice:/var/lib/bondok-voice         # usage ledger (owner uid 10001, the image's user)
     restart: unless-stopped
     stop_grace_period: 15s
     read_only: true
