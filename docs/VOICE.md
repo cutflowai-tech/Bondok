@@ -54,7 +54,8 @@ Sara's two words-carrying log events are suppressed for Bondok's calls.
   command/result records. Turn records hold the spoken answer for dedupe.
 * PBX host: no recording; bridge logs carry timings, endpoint and role, not words (5 MB × 3 rotation).
 * ElevenLabs (provider): `record_voice` off, `delete_audio` on, `delete_transcript_and_pii` on, retention 1 day,
-  zero-retention mode requested; transcript events are not sent to the bridge. ElevenLabs still processes audio and
+  transcript events are not sent to the bridge. Zero-retention mode is not available: ElevenLabs refuses it for
+  agents with a custom LLM. ElevenLabs still processes audio and
   text to transcribe and speak, and keeps conversation metadata and billing data. OpenRouter (Bondok's model)
   receives the turn text, as for Slack.
 
