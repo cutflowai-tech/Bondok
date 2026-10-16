@@ -33,8 +33,9 @@ Sara's two words-carrying log events are suppressed for Bondok's calls.
   asks questions, cannot change anything (same rule as Slack members); `test` acts as the owner on items isolated
   from Instagram only (no other item, no schedule/rules/global actions, no approval by id). An extension not listed
   has no access and never reaches the model.
-* Currently mapped: only the fixture line `99019` (reachable only by an originate on the PBX host). **101, 102 and
-  106 are not mapped until the owner says which is the owner and what the others may do.**
+* Mapped on the owner's instruction (2026-10-16): **101, 102 and 106 → owner** (102 is the owner's line; all three
+  act with owner authority and every session records which extension called), plus the fixture line `99019`
+  (role `test`, reachable only by an originate on the PBX host). Other extensions: no access.
 
 ## Turns, corrections, duplicates
 * The ElevenLabs agent has `speculative_turn` off and normal eagerness: only final transcripts reach Bondok, so a
@@ -61,7 +62,8 @@ Sara's two words-carrying log events are suppressed for Bondok's calls.
 A Sara call cost 171 credits for 0.43 min: **≈ 400 credits per agent-minute (≈ $0.08/min)**. The Starter plan has
 30,000 credits/month shared with Sara (4,661 used; resets 2026-11-15) and cannot exceed it: about 63 minutes remain
 for both. Bondok's LLM turns are billed by OpenRouter (Bondok's existing key). The agent is capped at 2 concurrent
-calls, 40 calls/day, 10 minutes per call and 40 s of silence.
+calls, 40 calls/day, 10 minutes per call and 40 s of silence. Approved budget (2026-10-16): test calls only, about
+10 minutes (~4,000 credits) from the current quota; a plan decision comes after the owner has tried it.
 
 ## Operations
 | What | How |
