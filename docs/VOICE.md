@@ -38,33 +38,49 @@ Sara's two words-carrying log events are suppressed for Bondok's calls.
   (role `test`, reachable only by an originate on the PBX host). Other extensions: no access.
 
 ## Turns, corrections, duplicates
-* The ElevenLabs agent has `speculative_turn` off and normal eagerness: only final transcripts reach Bondok, so a
-  sentence still being said or corrected is never executed. The model is told to act on the final meaning of a
-  self-correction; the verifier checks the meaning as on Slack.
+* The ElevenLabs agent has `speculative_turn` off and normal eagerness: Bondok receives final transcripts only.
+  That alone does not prove a correction cannot be overtaken; see the commit gate and the phone tests.
+* Commit gate (telephone only): a change is submitted no earlier than 1.5 s after its turn arrived, and not at all
+  if the bridge heard the caller speak again in that time or ElevenLabs dropped the request (barge-in). A held
+  change is **not executed and not asked about**; the caller's next words, read with the earlier ones, decide.
+  This narrows the window, it does not close it: a correction that comes after submission meets a change that is
+  done; Bondok says so ("كان اتنفذ") and reverses it with the opposite action where one exists (pause/resume,
+  schedule/cancel); some actions have no reversal (a publication that has started).
+* Each turn's memory records what every action really did (completed, accepted, superseded, refused).
 * One turn per call at a time, in order. Each turn has a stable key (call, position, text); its answer is stored,
   so a provider retry returns the same answer and runs nothing. Command ids derive from it (`voice:<call>:<key>`).
 * Dropped call: if the line drops before the answer was streamed, the same request from the same line within
   10 minutes is answered from the record ("وصلني في المكالمة اللي فاتت… ومش هكرره"), not executed again.
 * Slow tools: after 1.2 s a short buffer phrase is spoken ("ثانية واحدة... "), then the answer.
-* Interrupting Bondok is not a cancellation; it stops speech only.
+* Interrupting Bondok stops its speech; it cancels nothing by itself.
 
 ## Privacy and retention
 * Bondok host: no audio, no transcript on disk. The call's words live in memory for the call (multi-turn context)
   and are dropped at hangup. Audit: `voice_session` rows (call id, endpoint, role, how verified) and the usual
   command/result records. Turn records hold the spoken answer for dedupe.
-* PBX host: no recording; bridge logs carry timings, endpoint and role, not words (5 MB × 3 rotation).
-* ElevenLabs (provider): `record_voice` off, `delete_audio` on, `delete_transcript_and_pii` on, retention 1 day,
-  transcript events are not sent to the bridge. Zero-retention mode is not available: ElevenLabs refuses it for
-  agents with a custom LLM. ElevenLabs still processes audio and
-  text to transcribe and speak, and keeps conversation metadata and billing data. OpenRouter (Bondok's model)
-  receives the turn text, as for Slack.
+* PBX host: real calls are not recorded; bridge logs carry timings, endpoint and role, never words (filter checked
+  by the self-test, 5 MB × 3 rotation). The originate-only fixture line records both directions for its own check
+  and deletes the files right after.
+* ElevenLabs, configured: audio saving off (`record_voice: false`), `delete_audio` and `delete_transcript_and_pii`
+  on, retention **0 days** (ElevenLabs: scheduled deletion after the call); transcript events not sent to the
+  bridge. Zero-retention mode is **not** available: ElevenLabs refuses it for an agent with a custom LLM. Configured
+  deletion is not verified deletion: what the API still shows after the test calls is recorded in the test report.
+  ElevenLabs keeps billing/usage records regardless. OpenRouter (Bondok's model) receives the turn text, as for
+  Slack.
 
-## Cost (measured on this account, 2026-10-16)
-A Sara call cost 171 credits for 0.43 min: **≈ 400 credits per agent-minute (≈ $0.08/min)**. The Starter plan has
-30,000 credits/month shared with Sara (4,661 used; resets 2026-11-15) and cannot exceed it: about 63 minutes remain
-for both. Bondok's LLM turns are billed by OpenRouter (Bondok's existing key). The agent is capped at 2 concurrent
-calls, 40 calls/day, 10 minutes per call and 40 s of silence. Approved budget (2026-10-16): test calls only, about
-10 minutes (~4,000 credits) from the current quota; a plan decision comes after the owner has tried it.
+## Cost and budget
+* Rate observed once on this account (a Sara call): 171 credits for 0.43 min, ≈ 400 credits per agent-minute.
+  Bondok's own calls are billed per conversation; the bridge records the billed credits when ElevenLabs reports them.
+* Approved budget (2026-10-16): test calls only, about 10 minutes. Two limits, measured separately in the bridge's
+  ledger (`/var/lib/bondok-voice/ledger.json`, `bondok_bridge.py --budget`):
+  * call time: measured seconds per call against 600 s; each call is granted only what remains and is cut off
+    there (two calls never both get it). This is a duration limit, not a spending cap;
+  * credits: billed credits per call + other billed usage (fixture TTS: 43 credits, from the ElevenLabs history)
+    against a 4,000-credit ceiling, checked before each call; a call whose bill is unknown counts at an estimate
+    (marked as such). One call can overshoot the ceiling by its own cost.
+  * No call starts when the account's remaining credits would fall below 15,000 (kept for Sara).
+* The agent is also capped at 2 concurrent calls, 40 calls/day, 10 minutes per call, 40 s of silence, no burst.
+* Bondok's model turns are billed by OpenRouter (Bondok's existing key).
 
 ## Operations
 | What | How |
@@ -92,5 +108,7 @@ calls, 40 calls/day, 10 minutes per call and 40 s of silence. Approved budget (2
 ## Limitations
 * Some confirmation and refusal texts come from Bondok's English summaries; the voice reads them as they are.
 * "Delivered" means the answer was streamed to ElevenLabs; a hangup during speech after that counts as delivered.
-* The public endpoint needs a DNS name for the Bondok host (pending the owner).
-* The Starter quota is shared with Sara: heavy Bondok use would stop both until the reset.
+* The Starter quota is shared with Sara: heavy Bondok use would stop both until the reset (the 15,000 reserve
+  stops Bondok first).
+* Mutation tests use the dedicated isolated item ACC90 (`/root/acceptance/voice-fixtures.json`), never the
+  acceptance suite's items; it is restored to its baseline after each test.
