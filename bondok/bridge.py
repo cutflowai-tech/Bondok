@@ -175,14 +175,15 @@ class Bridge:
         """Submit one validated owner decision to the handler (the only writer). A clear instruction with a defined
         scope runs for every item it names; there is no item-count limit.
         On the telephone a commit gate runs first (COMMIT_GATE, set per turn by voice.py): if the caller kept
-        talking after the words this action came from (a correction may be coming), or the provider dropped the
-        turn, nothing is submitted; the action becomes the thread's single open question instead."""
+        talking after the words this action came from, or the provider dropped the turn (barge-in), nothing is
+        submitted and no question is asked: the caller's next words, read together with these, decide (the next
+        turn re-plans). This narrows the window for a correction; it does not close it: once submitted, a change
+        is done, is reported as done, and a later correction is a new instruction (e.g. resume after pause)."""
         gate = getattr(COMMIT_GATE, 'check', None)
         if gate is not None and turn is not None and not gate():
             what = summary or (self._label(action['item']) if action.get('item') else action['op'])
-            q = f'لسه منفذتش ده عشان سمعتك بتكمل كلام: {what}. أنفذه؟'
-            turn.ask(q, action)
-            return {'state': 'needs_confirmation', 'question': q, 'held': 'caller_still_speaking'}
+            return {'state': 'superseded', 'held': 'caller_kept_talking',
+                    'message': f'Not executed: {what}. The caller kept talking; his next words decide.'}
         if turn is not None:
             turn.executed += 1
         return self.ops.submit(Command(cid, action['op'], actor, 'owner', action['item'], action['args'],

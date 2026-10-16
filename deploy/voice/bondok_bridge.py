@@ -11,9 +11,9 @@ Changed here only:
 * no Sara features (typing sound, outbound calls, pranks, Redis); its own port, agent id and env file;
 * caller speech is reported to Bondok (signed, throttled: >= 200 ms of speech within 600 ms) so a change is not
   committed while the caller is still talking (Bondok's commit gate);
-* a hard usage budget (``Budget``): a durable ledger of Bondok's own agent time, prior test usage included; each
-  call is granted at most what remains (two calls never both get it) and is cut off there; no call starts when the
-  budget is spent or when the account's remaining credits would fall below the reserve kept for Sara;
+* a usage budget (``Budget``): measured call seconds against the approved call time (enforced per call), billed
+  credits (and fixture TTS) against a credit ceiling (checked between calls); no call starts when either is spent
+  or when the account's remaining credits would fall below the reserve kept for Sara;
 * a disable switch: ``/etc/bondok-voice/switch/disabled`` present (or ``BONDOK_VOICE_ENABLED=0``) refuses calls at once,
   and the dialplan plays the busy tone.
 """
@@ -37,69 +37,6 @@ from voice_agent.telephony.el_bridge import KIND_HANGUP, BridgeCall, ElevenLabsB
 
 log = get_logger('bondok_bridge')
 DISABLED_FLAG = '/etc/bondok-voice/switch/disabled'
-CREDITS_PER_MINUTE = 400        # measured on this account (2026-10-16): 171 credits for 0.43 min
-MAX_CALL_SECONDS = 600
-MIN_CALL_SECONDS = 20           # less than this left: the call is not started
-
-
-class Budget:
-    """Bondok's own ElevenLabs usage, in agent seconds, kept in a durable ledger. A call's cost counts as the larger
-    of its measured duration and its billed credits (when ElevenLabs reports them)."""
-
-    def __init__(self, path, total_seconds, prior_seconds=0.0, prior_note=''):
-        self.path, self.total = path, float(total_seconds)
-        self.active: dict[str, float] = {}
-        if not os.path.exists(path):
-            self._write({'prior': {'seconds': float(prior_seconds), 'note': prior_note}, 'calls': []})
-
-    def _read(self) -> dict:
-        with open(self.path) as f:
-            return json.load(f)
-
-    def _write(self, data):
-        tmp = self.path + '.tmp'
-        with open(tmp, 'w') as f:
-            json.dump(data, f)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp, self.path)
-
-    @staticmethod
-    def cost(c) -> float:
-        return max(float(c.get('seconds') or 0), float(c.get('credits') or 0) * 60 / CREDITS_PER_MINUTE)
-
-    def used(self) -> float:
-        d = self._read()
-        return float(d['prior']['seconds']) + sum(self.cost(c) for c in d['calls'])
-
-    def remaining(self) -> float:
-        return max(0.0, self.total - self.used() - sum(self.active.values()))
-
-    def reserve(self, call_id) -> float:
-        grant = min(MAX_CALL_SECONDS, self.remaining())
-        if grant < MIN_CALL_SECONDS:
-            return 0.0
-        self.active[call_id] = grant
-        return grant
-
-    def finish(self, call_id, seconds, conversation_id=None):
-        self.active.pop(call_id, None)
-        d = self._read()
-        d['calls'].append({'call_id': call_id, 'seconds': round(seconds, 1), 'conversation_id': conversation_id,
-                           'at': time.time()})
-        self._write(d)
-
-    def set_credits(self, call_id, credits):
-        d = self._read()
-        for c in d['calls']:
-            if c['call_id'] == call_id:
-                c['credits'] = credits
-        self._write(d)
-
-    def summary(self) -> dict:
-        d = self._read()
-        return {'total_s': self.total, 'used_s': round(self.used(), 1), 'remaining_s': round(self.remaining(), 1),
-                'calls': len(d['calls']), 'prior_s': d['prior']['seconds']}
 WORDS = ('el_bridge.heard', 'el_bridge.said')     # Sara's bridge logs what was said: never for Bondok's calls
 
 
@@ -118,6 +55,94 @@ class _NoWords:
 
 
 el_bridge.log = _NoWords(el_bridge.log)
+
+
+EST_CREDITS_PER_MINUTE = 400    # estimate only (one measured Sara call: 171 credits / 0.43 min); billed values win
+MAX_CALL_SECONDS = 600
+MIN_CALL_SECONDS = 20           # less than this left: the call is not started
+
+
+class Budget:
+    """Bondok's own ElevenLabs usage, in a durable ledger, with two separate limits and separate measurements:
+
+    * call time: measured seconds per call (bridge clock, from the call's start to its end) against the approved
+      call-time budget; enforced exactly: each call is granted only what remains and is cut off there;
+    * credits: what ElevenLabs actually billed (per conversation, when it reports it), plus other billed usage
+      (fixture TTS, from the account counter), against a credit ceiling. A call whose bill is not (yet) known counts
+      at an *estimate* until it is; the credit limit is checked between calls, so a single call can overshoot it
+      by its own cost: it is not a precise spending cap.
+    """
+
+    def __init__(self, path, total_seconds, total_credits, other_credits=0, other_note=''):
+        self.path, self.total, self.total_credits = path, float(total_seconds), float(total_credits)
+        self.active: dict[str, float] = {}
+        if not os.path.exists(path):
+            self._write({'calls': [], 'other': [{'what': other_note, 'credits': int(other_credits)}]
+                         if other_credits else []})
+
+    def _read(self) -> dict:
+        with open(self.path) as f:
+            d = json.load(f)
+        d.setdefault('other', [])
+        return d
+
+    def _write(self, data):
+        tmp = self.path + '.tmp'
+        with open(tmp, 'w') as f:
+            json.dump(data, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, self.path)
+
+    def seconds_used(self) -> float:
+        return sum(float(c.get('seconds') or 0) for c in self._read()['calls'])
+
+    def credits(self) -> dict:
+        d = self._read()
+        billed = sum(int(c['credits']) for c in d['calls'] if c.get('credits') is not None)
+        est = sum(float(c.get('seconds') or 0) * EST_CREDITS_PER_MINUTE / 60 for c in d['calls']
+                  if c.get('credits') is None)
+        other = sum(int(o['credits']) for o in d['other'])
+        return {'billed_calls': billed, 'estimated_unbilled_calls': round(est), 'other_billed': other,
+                'total_counted': round(billed + est + other)}
+
+    def remaining(self) -> float:
+        by_time = self.total - self.seconds_used() - sum(self.active.values())
+        left_credits = self.total_credits - self.credits()['total_counted']
+        by_credits = left_credits * 60 / EST_CREDITS_PER_MINUTE   # estimated seconds those credits may cover
+        return max(0.0, min(by_time, by_credits))
+
+    def reserve(self, call_id) -> float:
+        grant = min(MAX_CALL_SECONDS, self.remaining())
+        if grant < MIN_CALL_SECONDS:
+            return 0.0
+        self.active[call_id] = grant
+        return grant
+
+    def finish(self, call_id, seconds, conversation_id=None, account_delta=None):
+        self.active.pop(call_id, None)
+        d = self._read()
+        d['calls'].append({'call_id': call_id, 'seconds': round(seconds, 1), 'conversation_id': conversation_id,
+                           'credits': None, 'account_delta': account_delta, 'at': time.time()})
+        self._write(d)
+
+    def set_credits(self, call_id, credits):
+        d = self._read()
+        for c in d['calls']:
+            if c['call_id'] == call_id:
+                c['credits'] = int(credits)
+        self._write(d)
+
+    def add_other(self, what, credits):
+        d = self._read()
+        d['other'].append({'what': what, 'credits': int(credits)})
+        self._write(d)
+
+    def summary(self) -> dict:
+        d = self._read()
+        return {'call_seconds_limit': self.total, 'call_seconds_measured': round(self.seconds_used(), 1),
+                'credit_limit': self.total_credits, 'credits': self.credits(), 'calls': len(d['calls']),
+                'grantable_s': round(self.remaining(), 1)}
 
 
 class BondokBridge(ElevenLabsBridge):
@@ -172,7 +197,8 @@ class BondokBridge(ElevenLabsBridge):
                                       'verified_by': 'dialplan:CHANNEL(endpoint)'}),
             self.signed_url(), self.account_remaining())
         st['session'] = bool(session.get('ok'))          # ended at hangup whatever happens next
-        need = st['grant'] * CREDITS_PER_MINUTE / 60
+        st['account_before'] = left
+        need = st['grant'] * EST_CREDITS_PER_MINUTE / 60
         if left - need < self.sara_reserve:
             log.warning('bondok_bridge.sara_reserve', account_remaining=left, reserve=self.sara_reserve)
             raise RuntimeError('account credits at the reserve kept for Sara')
@@ -230,7 +256,11 @@ class BondokBridge(ElevenLabsBridge):
             if st.get('grant'):
                 seconds = time.monotonic() - st['started'] if st.get('connected') else 0.0
                 conv = getattr(call, 'conversation_id', None)
-                self.budget.finish(st['id'], seconds, conv)
+                delta = None
+                if st.get('account_before') is not None:
+                    with contextlib.suppress(Exception):     # all account usage in the window (Sara's too)
+                        delta = st['account_before'] - await self.account_remaining()
+                self.budget.finish(st['id'], seconds, conv, delta)
                 log.info('bondok_bridge.usage', call_seconds=round(seconds, 1), **self.budget.summary())
                 if conv:
                     asyncio.create_task(self._billed(st['id'], conv))
@@ -253,9 +283,14 @@ async def main():
     env = os.environ
     configure_logging(env.get('LOG_LEVEL', 'INFO'), env.get('LOG_FORMAT', 'json'))
     budget = Budget(env.get('BONDOK_LEDGER', '/var/lib/bondok-voice/ledger.json'),
-                    float(env.get('BONDOK_BUDGET_SECONDS', '600')), float(env.get('BONDOK_PRIOR_SECONDS', '0')),
-                    env.get('BONDOK_PRIOR_NOTE', ''))
+                    float(env.get('BONDOK_BUDGET_SECONDS', '600')), float(env.get('BONDOK_BUDGET_CREDITS', '4000')),
+                    int(env.get('BONDOK_OTHER_CREDITS', '0')), env.get('BONDOK_OTHER_NOTE', ''))
     if '--budget' in sys.argv:
+        print(json.dumps(budget.summary()))
+        return
+    if '--add-other' in sys.argv:                  # --add-other <credits> <what>: other billed usage (fixture TTS)
+        i = sys.argv.index('--add-other')
+        budget.add_other(' '.join(sys.argv[i + 2:]), int(sys.argv[i + 1]))
         print(json.dumps(budget.summary()))
         return
     bridge = BondokBridge(

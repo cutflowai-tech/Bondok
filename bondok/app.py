@@ -135,7 +135,10 @@ class Core:
         self.store.kv('fallback:' + thread, {'code': None, 'at': 0})
         reply = PLACEHOLDER_ID.sub('رقم المقترح', (reply or '').strip())   # never show a made-up approval id
         if voice:
-            self.store.remember(thread, 'assistant', reply)
+            # what each action really did travels with the call's memory (the spoken reply alone may not say it)
+            done = '; '.join(f"{o['tool']}({(o.get('args') or {}).get('item', '')}): "
+                             f"{(o.get('result') or {}).get('state')}" for o in outcomes)
+            self.store.remember(thread, 'assistant', reply + (f'\n[actions: {done}]' if done else ''))
             return reply, outcomes
         if outcomes:
             reply += '\n\n' + render_outcomes(outcomes)

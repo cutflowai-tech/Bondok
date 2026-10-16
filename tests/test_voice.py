@@ -168,21 +168,24 @@ class CommitGate(VoiceCase):
                                                                      'meaning': M('وقف LIP20')}},
                                      {'say': 'تمام'}] * 2))
 
-    def test_caller_speech_after_the_turn_holds_the_change_as_one_question(self):
+    def test_caller_speech_after_the_turn_holds_the_change_without_a_question(self):
         v = self.pausing()
         r = self.call(v, '101', 'call-0020-aaaa')
         ctx = voice.new_ctx()
-        threading.Timer(0.6, lambda: v.speech({'call_id': 'call-0020-aaaa'})).start()   # "...لا استنى"
+        threading.Timer(0.6, lambda: v.speech({'call_id': 'call-0020-aaaa'})).start()   # "...ايوه"
         said, _ = v.turn({'messages': [{'role': 'user', 'content': 'وقف LIP20'}],
                           'elevenlabs_extra_body': {'session': r['token']}}, ctx)
         self.assertEqual(ctx['held'], 'caller_spoke')
         self.assertEqual(self.item('520')['owner_state'], 'active')
-        self.assertIn('لسه منفذتش', said)
-        # Only an explicit yes, in a later turn, executes it.
-        self.say(v, r['token'], 'وقف LIP20', 'اه')
+        self.assertIn('لسه منفذتهوش', said)
+        self.assertNotIn('قول اه', said)                                   # no confirmation question
+        self.assertFalse(self.core._pending('voice:call-0020-aaaa'))
+        self.assertIn('pause_item(LIP20): superseded', self.core.store.history('voice:call-0020-aaaa')[-1]['content'])
+        # His next words decide: here he meant it, the next turn re-plans and it runs, with no question asked.
+        self.say(v, r['token'], 'وقف LIP20', 'وقف LIP20 فعلا')
         self.assertEqual(self.item('520')['owner_state'], 'paused')
 
-    def test_a_correction_in_the_next_turn_replaces_the_held_action(self):
+    def test_a_correction_in_the_next_turn_means_nothing_runs(self):
         self.observe(monday_item('523', code='LIP23'))
         v = self.voice(FakeModel([{'tool': 'pause_item', 'args': {'item': 'LIP23', 'reason': 'x',
                                                                   'meaning': M('وقف LIP23')}},
@@ -193,8 +196,24 @@ class CommitGate(VoiceCase):
         v.turn({'messages': [{'role': 'user', 'content': 'وقف LIP23'}],
                 'elevenlabs_extra_body': {'session': r['token']}}, ctx)
         self.say(v, r['token'], 'وقف LIP23', 'لا لا استنى، متوقفش حاجة')
-        self.say(v, r['token'], 'وقف LIP23', 'لا لا استنى، متوقفش حاجة', 'اه')    # stale question is gone
         self.assertEqual(self.item('523')['owner_state'], 'active')
+        self.assertFalse(self.core._pending('voice:call-0023-aaaa'))
+
+    def test_a_correction_after_execution_is_reported_and_reversed(self):
+        self.observe(monday_item('524', code='LIP24'))
+        v = self.voice(FakeModel([{'tool': 'pause_item', 'args': {'item': 'LIP24', 'reason': 'x',
+                                                                  'meaning': M('وقف LIP24')}},
+                                  {'say': 'وقفته'},
+                                  {'tool': 'resume_item', 'args': {'item': 'LIP24',
+                                                                   'meaning': M('شغل LIP24 تاني')}},
+                                  {'say': 'كان اتوقف فعلا، ورجعته'}]))
+        r = self.call(v, '101', 'call-0024-aaaa')
+        said, _ = self.say(v, r['token'], 'وقف LIP24')
+        self.assertIn('إيقاف: اتنفذ', said)
+        self.assertEqual(self.item('524')['owner_state'], 'paused')
+        said, _ = self.say(v, r['token'], 'وقف LIP24', 'غلطت، شغل LIP24 تاني')
+        self.assertIn('استئناف: اتنفذ', said)
+        self.assertEqual(self.item('524')['owner_state'], 'active')
 
     def test_a_dropped_turn_commits_nothing(self):
         v = self.pausing()

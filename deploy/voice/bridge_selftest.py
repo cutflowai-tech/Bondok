@@ -123,12 +123,20 @@ async def main():
     log_buf = io.StringIO()
     logging.basicConfig(stream=log_buf, level=logging.INFO)
     bb.configure_logging('INFO', 'json')
+
+    class Words(logging.Handler):                               # any log record carrying the call's words
+        hits = 0
+
+        def emit(self, record):
+            if 'SECRET-WORDS' in str(record.__dict__):
+                Words.hits += 1
+    logging.getLogger().addHandler(Words())
     httpd = ThreadingHTTPServer(('127.0.0.1', 0), FakeBondok)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
     async with serve(fake_agent, '127.0.0.1', 0) as ws_server:
         ws_port = ws_server.sockets[0].getsockname()[1]
         ledger = tempfile.mkdtemp() + '/ledger.json'
-        budget = bb.Budget(ledger, 600, prior_seconds=8, prior_note='fixture TTS')
+        budget = bb.Budget(ledger, 600, 4000, other_credits=11, other_note='fixture TTS')
         bridge = bb.BondokBridge(api_key='k', agent_id='a', base_url='http://127.0.0.1:1', host='127.0.0.1', port=0,
                                  typing_volume=0, bondok_url=f'http://127.0.0.1:{httpd.server_address[1]}',
                                  session_secret=SECRET, budget=budget, sara_reserve_credits=15000)
@@ -173,12 +181,16 @@ async def main():
             account['left'] = 25000
             # the budget cuts a call off where it runs out: 3 s left -> ended at ~3 s although the caller stays on
             bb.MIN_CALL_SECONDS = 1
-            budget.total = budget.used() + 3
+            budget.total = budget.seconds_used() + 3
             await asyncio.wait_for(asterisk_call(port, frames=400), 30)
             cut_after = asterisk_call.hangup_after
             # spent: nothing starts
-            budget.total = budget.used()
+            budget.total = budget.seconds_used()
             spent_refused = await refused()
+            # credits spent (billed bill recorded) while call time is left: refused too
+            budget.total = 600
+            budget.set_credits(first['call_id'], 3990)
+            credits_refused = await refused()
     checks = {
         'session_signed': bool(seen['session']) and seen['session'][0][0],
         'endpoint_from_uuid': bool(seen['session']) and seen['session'][0][1]['endpoint'] == '99019',
@@ -197,6 +209,10 @@ async def main():
         'budget_cuts_call_off': cut_after is not None and 2.0 <= cut_after <= 6.0,
         'budget_spent_refuses': spent_refused,
         'sara_reserve_refuses': sara_protected,
+        'credit_limit_refuses': credits_refused,
+        'no_words_in_logs': Words.hits == 0,
+        'seconds_and_credits_separate': all('credits' in c and 'seconds' in c for c in json.load(open(ledger))['calls'])
+                                        and json.load(open(ledger))['other'][0]['credits'] == 11,
     }
     print(json.dumps({'checks': checks, 'agent_frames_heard': got, 'last_voiced_frame': max(voiced) if voiced else None, 'caller_frames_sent': seen['audio_in'],
                       'cut_after_s': cut_after and round(cut_after, 1), 'speech_reports': len(seen['speech']),

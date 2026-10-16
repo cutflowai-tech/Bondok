@@ -44,7 +44,10 @@ STYLE = (
     'letter by letter only when needed. Say dates as weekday plus date and times as Cairo time ("الخميس 20 نوفمبر '
     'الساعة 4 العصر"). If the caller corrects himself ("الخميس... لا، الجمعة"), act on the final meaning only. Never '
     'say something was done unless a tool result says so; say "اتقبل ولسه بيتنفذ" for accepted work. Interrupting you '
-    'is not a cancellation: cancel only when he asks to cancel.')
+    'is not a cancellation: cancel only when he asks to cancel. A tool result "superseded" means it was NOT done '
+    'because he kept talking: read his newer words together with the older ones and act on what he finally means, '
+    'without asking him to confirm again. If he corrects something a tool result says was already done, say it was '
+    'already done, and undo it (the opposite tool) when he asks for that or his words clearly mean it.')
 
 TOOL_AR = {
     'pause_item': 'إيقاف', 'resume_item': 'استئناف', 'skip_item': 'تخطي', 'request_recheck': 'إعادة الفحص',
@@ -82,6 +85,8 @@ def spoken_outcomes(outcomes) -> str:
             parts.append(f'{name}: اتقبل ولسه بيتنفذ.')
         elif st == 'awaiting_approval':
             parts.append(f'{name}: محتاج موافقتك الأول.')
+        elif st == 'superseded':
+            parts.append(f'{name}: لسه منفذتهوش، مستنيك تكمل.')
         elif st == 'needs_confirmation':
             parts.append(clean(r.get('question') or '') + ' قول اه عشان أنفذ، أو لا.')
         elif st == 'needs_clarification':
