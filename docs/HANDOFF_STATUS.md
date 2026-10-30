@@ -1,5 +1,11 @@
 # Handoff Status
 
+## Team publishing — implementation pending owner cutover (2026-10-31)
+
+See `TEAM_PUBLISHING.md` for the opt-in adapter, file policy, dry-run evidence, activation gates and containment.
+Production has not been switched. The old n8n publishing workflows must remain archived.
+
+
 ## Agent migration — deployed (cutover 2026-10-14, closed 2026-10-15)
 Plan and evidence: `bondok-agent-migration/` (`08-tracker.md` §الانتقال الحي and §الإغلاق, `CUTOVER_PACKAGE.md`,
 `AUTHORITY_INVENTORY.md`). Owner rules and exemptions, Topaz confirmation without file-name conditions, Bondok
