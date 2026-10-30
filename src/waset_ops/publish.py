@@ -129,6 +129,17 @@ def summary(error) -> str:
 
 
 class PublishMixin:
+    def source_allows(self, c, item_id):
+        source = c.execute("SELECT value FROM ops_meta WHERE key='publishing_source'").fetchone()
+        if not source:
+            return True  # legacy behavior until an explicit cutover
+        return bool(source[0] == 'team' and getattr(self, 'team_publisher', False) and
+                    c.execute('SELECT 1 FROM ops_team WHERE item_id=?', (str(item_id),)).fetchone())
+
+    def prepare_lead(self, c, item_id):
+        from datetime import timedelta
+        return timedelta(0)
+
     # ------------------------------------------------------------------ account circuit breaker (R5 A2)
     def breaker(self, c) -> dict | None:
         r = c.execute("SELECT value FROM ops_meta WHERE key='breaker:instagram'").fetchone()
@@ -300,6 +311,8 @@ class PublishMixin:
         now, now_dt = self.now(), self.now_dt()
         with self.store.tx() as c:
             it = self.item(c, item_id)
+            if not self.source_allows(c, item_id):
+                return {"claimed": False, "reason": "Legacy publishing intake retired"}
             res = self.reservation(c, item_id)
             if self.restore_gap(c):
                 return {'claimed': False, 'reason': 'publishing is paused until the post-restore check is done'}
@@ -381,7 +394,7 @@ class PublishMixin:
                             it['item_id'])
                 return {'claimed': False, 'reason': reason, 'held': True}
             slot = rules.instant(res['slot'])
-            if now_dt < slot or now_dt > self.deadline(c, res):
+            if now_dt < slot - self.prepare_lead(c, item_id) or now_dt > self.deadline(c, res):
                 return self._refuse(c, it, 'Outside the allowed publication window', quiet=now_dt < slot)
             att = self.active_attempt(c, item_id)
             why = self.eligible(c, {**it}) if not att else self._eligible_ignoring_attempt(c, it)
@@ -553,6 +566,8 @@ class PublishMixin:
             it = self.item(c, a['item_id'])
             res = self.reservation(c, a['item_id'])
             problems = []
+            if not self.source_allows(c, a['item_id']):
+                problems.append('Publication source is disabled')
             if container_status != 'FINISHED':
                 problems.append('Instagram container is not ready')
             if it['owner_state'] != 'active':

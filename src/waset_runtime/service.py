@@ -63,17 +63,30 @@ def build(env: dict, dry_run=False):
     os.environ['WASET_SOCIAL_DATA_DIR'] = str(Path(db).parent)
     media.ROOT = Path(db).parent                         # prepared files and job records live beside the store
     os.environ.setdefault('WASET_HELPER', str(HERE / 'helper.py'))   # detached media jobs run through the helper
-    ops = Ops(db)
+    team_board = env.get('TEAM_PUBLISH_BOARD_ID')
+    if team_board:
+        from waset_ops.team import TeamOps
+        ops = TeamOps(db, config={'notify_published': False})
+    else:
+        ops = Ops(db)
     ops.store.migrate()
-    monday = Monday(env['MONDAY_API_TOKEN'], boards=lambda: ops.policy_value('allowed_boards'))
+    if team_board:
+        ops.setup_team()
+    monday = Monday(env['MONDAY_API_TOKEN'], boards=lambda: [team_board] if team_board else ops.policy_value('allowed_boards'))
     dropbox = Dropbox(token=env.get('DROPBOX_TOKEN'), refresh_token=env.get('DROPBOX_REFRESH_TOKEN'),
                       app_key=env.get('DROPBOX_APP_KEY'), app_secret=env.get('DROPBOX_APP_SECRET'))
     token = env['INSTAGRAM_TOKEN']
     if env.get('INSTAGRAM_TOKEN_KIND') == 'instagram_login':      # 60-day token: refreshed automatically
         from .instagram import TokenStore
         token = TokenStore(Path(env.get('INSTAGRAM_TOKEN_FILE') or Path(db).parent / 'instagram-token.json'), token)
+    if team_board:
+        from waset_ops import rules
+        if env['INSTAGRAM_ACCOUNT_ID'] != rules.ACCOUNT:raise SystemExit('Account does not match the release/journal account')
     ig = Instagram(token, env['INSTAGRAM_ACCOUNT_ID'])
-    captions = CaptionWriter(env['OPENROUTER_API_KEY']) if env.get('OPENROUTER_API_KEY') else None
+    captions = CaptionWriter(env['OPENROUTER_API_KEY']) if env.get('OPENROUTER_API_KEY') and not team_board else None
+    if team_board:
+        from .team import TeamRunner
+        return ops, TeamRunner(ops, monday, dropbox, ig, team_board, dry_run=dry_run)
     if dry_run:
         from .dry import dry
         monday, dropbox, ig, captions = dry(monday), dry(dropbox), dry(ig), None
@@ -183,6 +196,7 @@ def main(argv=None):
     p.add_argument('--env', default=os.environ.get('WASET_RUNTIME_ENV', '/opt/waset-bondok/runtime.env'))
     p.add_argument('--once', choices=sorted(CADENCE))
     p.add_argument('--dry-run', action='store_true')
+    p.add_argument('--team-source', choices=['inventory','enable','pause'], help='Explicit Team cutover/containment command')
     p.add_argument('--mark-restored', metavar='BACKUP_TIME',
                    help='after restoring a backup: its time (ISO, with zone); publishing pauses until the gap since '
                         'then is checked on Instagram')
@@ -191,6 +205,15 @@ def main(argv=None):
                         'scheduled work')
     p.add_argument('--authorized-by', help='reference of the owner authorization for --switch-owner')
     a = p.parse_args(argv)
+    if a.team_source:
+        from waset_ops.team import TeamOps
+        env=read_env(a.env)
+        if not env.get('TEAM_PUBLISH_BOARD_ID'):raise SystemExit('TEAM_PUBLISH_BOARD_ID is required')
+        if a.team_source!='inventory' and not a.authorized_by:raise SystemExit('Specific owner authorization reference required')
+        db=shadow_copy(env['PIPELINE_DB']) if a.dry_run or a.team_source=='inventory' else env['PIPELINE_DB']
+        ops=TeamOps(db);ops.store.migrate();ops.setup_team()
+        print(json.dumps(ops.team_cutover(enable=a.team_source=='enable',pause=a.team_source=='pause',authorized_by=a.authorized_by)))
+        return
     if a.switch_owner:
         from waset_ops import OWNER, Command
         if not a.authorized_by:
