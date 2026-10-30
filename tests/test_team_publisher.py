@@ -141,9 +141,28 @@ class TeamCase(unittest.TestCase):
         s = {**self.snap, "id": "2", "status": "In Progress"}
         iid = self.approve(s)
         self.assertIsNone(self.state(iid)[2])
-        s = {**self.snap, "id": "3", "status": "In Progress"}
-        iid = self.approve(s, {**self.info, "sha256": "other", "content_hash": "other"})
+        s = {**self.snap, "id": "3", "code": "OTHER", "status": "In Progress"}
+        iid = self.approve(
+            s,
+            {
+                **self.info,
+                "assetKey": "other@v1",
+                "sha256": "other",
+                "content_hash": "other",
+            },
+        )
         self.assertIsNone(self.state(iid)[2])
+        self.assertIn("same format", self.state(iid)[1]["reason"])
+
+    def test_legacy_deleted_item_receipt_blocks_team(self):
+        with self.ops.store.tx() as c:
+            c.execute(
+                "INSERT INTO assets VALUES(?,?)",
+                (rules.ACCOUNT + "|Post|src:hash", "old-board-item"),
+            )
+        iid = self.approve()
+        self.assertIsNone(self.state(iid)[2])
+        self.assertIn("old-board-item", self.state(iid)[1]["reason"])
 
     def test_publish_receipt_survives_no_monday(self):
         iid = self.approve()
@@ -311,6 +330,31 @@ class TeamRunnerCase(unittest.TestCase):
         self.assertEqual(len(self.updates), count)
         self.assertEqual(self.snap["status"], "Published")
         self.assertTrue(self.snap["notes"].startswith("Human note"))
+
+    def test_container_error_blocks_employee_review(self):
+        iid = self.approve()
+        r = self.runner()
+        self.ig.container_status.return_value = {"status_code": "ERROR"}
+        r.publish_one(self.ops.team_candidates()[0])
+        self.ig.publish.assert_not_called()
+        self.assertEqual(self.state(iid)[1]["desired_status"], "Blocked")
+
+    def test_notes_added_after_system_section_survive_retry(self):
+        iid = self.approve()
+        r = self.runner()
+        with self.ops.store.tx() as c:
+            self.ops.team_stop(c, iid, "Blocked", "Bad file")
+        self.monday.create_update.side_effect = ConnectionError("offline")
+        r.flush()
+        self.snap["notes"] += "\nEmployee added a note"
+        self.clock.advance(3600)
+        self.monday.create_update.side_effect = lambda item, text: self.updates.append(
+            {"text_body": text}
+        )
+        r.flush()
+        self.assertIn("Human note", self.snap["notes"])
+        self.assertIn("Employee added a note", self.snap["notes"])
+        self.assertEqual(self.snap["notes"].count("[Bondok]"), 1)
 
     def test_monday_outage_prevents_publish(self):
         iid = self.approve()
