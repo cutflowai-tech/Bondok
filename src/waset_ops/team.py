@@ -187,6 +187,19 @@ class TeamOps(Ops):
                     "Approved content changed; review the final version and approve again.",
                 )
                 return iid
+            if (
+                snap["status"] == "Ready to Publish"
+                and snap.get("publish_at")
+                and rules.instant(snap["publish_at"]) + timedelta(minutes=15)
+                < self.now_dt()
+            ):
+                self.team_stop(
+                    c,
+                    iid,
+                    "Blocked",
+                    "Publishing time passed by more than 15 minutes; choose a new time and approve.",
+                )
+                return iid
             if snap["status"] != "Ready to Publish":
                 if t["approved"]:
                     self.team_stop(

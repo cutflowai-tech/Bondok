@@ -131,6 +131,15 @@ class TeamCase(unittest.TestCase):
         self.assertIsNone(self.state(iid)[2])
         self.assertEqual(self.state(iid)[1]["desired_status"], "Blocked")
 
+    def test_expired_unverified_item_is_blocked(self):
+        iid = self.ops.team_observe("team", self.snap)
+        self.snap["status"] = "Ready to Publish"
+        self.ops.team_observe("team", self.snap)
+        self.clock.advance(1501)
+        self.ops.team_observe("team", self.snap)
+        self.assertIsNone(self.state(iid)[1]["approved"])
+        self.assertEqual(self.state(iid)[1]["desired_status"], "Blocked")
+
     def test_version_changed(self):
         iid = self.approve()
         self.ops.team_verified(iid, {**self.info, "assetKey": "id:file@v2"})
