@@ -257,7 +257,7 @@ class TeamOps(Ops):
                     "Dropbox file version changed; review and approve again.",
                 )
                 return False
-            mid = "T-" + fingerprint(info)
+            mid = "T-" + fingerprint({"item_id": iid, "info": info})
             c.execute(
                 "INSERT OR REPLACE INTO media VALUES(?,?,?,?,?)",
                 (mid, iid, "", info["assetKey"], dumps(info)),
